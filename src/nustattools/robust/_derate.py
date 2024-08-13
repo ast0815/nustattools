@@ -65,7 +65,10 @@ def fill_max_correlation(cor: ArrayLike, target: ArrayLike) -> NDArray[Any]:
 
 
 def derate_covariance(
-    cov: ArrayLike, *, jacobian: ArrayLike | None = None, sigma: float = 3.0
+    cov: list[NDArray[Any]] | NDArray[Any],
+    *,
+    jacobian: ArrayLike | None = None,
+    sigma: float = 3.0,
 ) -> float:
     """Derate the covariance of some data to account for unknown correaltions.
 
