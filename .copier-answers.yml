@@ -1,0 +1,12 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: 2024.04.23
+_src_path: gh:scientific-python/cookie
+backend: hatch
+email: lukas.koch@mailbox.org
+full_name: Lukas Koch
+license: MIT
+org: ast0815
+project_name: nustattools
+project_short_description: Statistical tools for neutrino physics
+url: https://github.com/ast0815/nustattools
+vcs: true
