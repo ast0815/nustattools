@@ -87,6 +87,7 @@ run.source = ["nustattools"]
 report.exclude_also = [
   '\.\.\.',
   'if typing.TYPE_CHECKING:',
+  '@njit',
 ]
 
 [tool.mypy]
