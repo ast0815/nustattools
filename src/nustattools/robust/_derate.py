@@ -5,6 +5,8 @@ from typing import Any
 import numpy as np
 from numba import njit
 from numpy.typing import ArrayLike, NDArray
+from scipy.linalg import block_diag, sqrtm
+from scipy.stats import chi2
 
 
 @njit()  # type: ignore[misc]
@@ -64,11 +66,46 @@ def fill_max_correlation(cor: ArrayLike, target: ArrayLike) -> NDArray[Any]:
     return cora
 
 
+def get_blocks(cov: NDArray[Any]) -> list[int]:
+    """Determine the sizes of known block matrices."""
+
+    blocks = []
+    n = 0
+    i = 0
+    for j in range(cov.shape[0]):
+        if np.isnan(cov[i, j]):
+            blocks.append(n)
+            n = 1
+            i = j
+        else:
+            n += 1
+
+    # Add last block
+    blocks.append(n)
+
+    return blocks
+
+
+def get_whitening_transform(cov: NDArray[Any]) -> NDArray[Any]:
+    """Get the blockwise whitening matrix."""
+
+    blocks = get_blocks(cov)
+    W_l = []
+    i = 0
+    for n in blocks:
+        c = cov[i : i + n, :][:, i : i + n]
+        W_l.append(np.linalg.inv(sqrtm(c)))
+        i += n
+
+    return np.asarray(block_diag(*W_l))
+
+
 def derate_covariance(
     cov: list[NDArray[Any]] | NDArray[Any],
     *,
     jacobian: ArrayLike | None = None,
     sigma: float = 3.0,
+    accuracy: float = 0.01,
 ) -> float:
     """Derate the covariance of some data to account for unknown correaltions.
 
@@ -85,6 +122,9 @@ def derate_covariance(
         The desired confidence level up to which the derated covariance should
         be conservative, expressed in standard-normal stadard deviations. E.g.
         ``sigma=3.`` corresponds to ``CL=0.997``.
+    accuracy : float, default=0.01
+        The derating factor is calculated using numerical sampling. This parameter
+        determines how many samples to throw. Lower values mean more samples.
 
     Returns
     -------
@@ -93,12 +133,65 @@ def derate_covariance(
 
     """
 
+    # Make sure we have a list of covariances
     if isinstance(cov, list):
         covl = [np.asarray(item) for item in cov]
     else:
         covl = [np.asarray(cov)]
 
-    if jacobian is None:
-        jacobian = np.eye(covl[0].shape[0])
+    # Assumed covariance
+    # All unkonown elements aet to 0.
+    cov_0_l = [np.nan_to_num(c) for c in covl]
+    cov_0 = np.sum(cov_0_l, axis=0)
+    cov_0_inv = np.linalg.inv(cov_0)
 
-    return sigma / 3.0
+    # If no Jacobian is specified, assume we cover full parameter space
+    n_var = covl[0].shape[0]
+    if jacobian is None:
+        jacobian = np.eye(n_var)
+
+    # Determine the whitening transform for each covariance
+    W_l = [get_whitening_transform(c) for c in covl]
+
+    # Transform to whitened coordinate systems and calculate "nightmare"
+    # covariance, then transform back
+    nightmarel = []
+    for c, W in zip(covl, W_l):
+        cor = W @ c @ W.T
+        A = W @ jacobian
+        Q = np.linalg.inv(A.T @ A) @ A.T
+        P = A @ Q
+        cor_nightmare = fill_max_correlation(cor, P)
+        Wi = np.linalg.inv(W)
+        cov_nightmare = Wi @ cor_nightmare @ Wi.T
+        nightmarel.append(cov_nightmare)
+
+    # Total nightmare covariance
+    nightmare = np.sum(nightmarel, axis=0)
+
+    # Desired significance
+    alpha = chi2.sf(sigma**2, df=1)
+
+    # Assumed critical value
+    crit_0 = chi2.isf(alpha, df=n_var)
+
+    # Nightmare critical value from random throws
+    rng = np.random.default_rng()
+    # Estimate necessary precision
+    # var = alpha(1-alpha) / (n f(crit_0)**2) != (crit_0 * rel_error)**2
+    n_throws = (
+        int(
+            (alpha * (1.0 - alpha))
+            / (chi2.pdf(crit_0, df=n_var) ** 2 * (crit_0 * accuracy) ** 2)
+        )
+        + 1
+    )
+    throws = rng.multivariate_normal(mean=[0.0] * n_var, cov=nightmare, size=n_throws)
+    dist = np.einsum("ai,ij,aj->a", throws, cov_0_inv, throws)
+    crit_nightmare = -np.quantile(-dist, alpha)
+
+    derate = crit_nightmare / crit_0
+
+    derate = max(1.0, derate)
+
+    return float(derate)

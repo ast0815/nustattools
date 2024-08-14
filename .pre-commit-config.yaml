@@ -55,7 +55,6 @@ repos:
         additional_dependencies:
           - pytest
           - numpy
-          - numba
 
   - repo: https://github.com/codespell-project/codespell
     rev: "v2.2.6"

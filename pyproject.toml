@@ -33,6 +33,7 @@ dynamic = ["version"]
 dependencies = [
   "numpy >= 1.22.3",
   "numba >= 0.58.1",
+  "scipy >= 1.8.0",
 ]
 
 [project.optional-dependencies]
@@ -103,9 +104,11 @@ module = "nustattools.*"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
-
 [[tool.mypy.overrides]]
-module = "numba.*"
+module = [
+    "numba.*",
+    "scipy.*",
+]
 ignore_missing_imports = true
 
 [tool.ruff]
@@ -162,3 +165,5 @@ messages_control.disable = [
   "missing-function-docstring",
   "wrong-import-position",
 ]
+# Allow non-snake_case variables names as long as they are short
+basic.variable-rgx = "([a-zA-Z_][a-zA-Z0-9_]{0,3}$)|([a-z_][a-z0-9_]{2,30}$)"
