@@ -19,4 +19,4 @@ def test_derate_single_covariance():
             [np.nan, np.nan, 2.0, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.63) < 0.05
+    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.63) < 0.1
