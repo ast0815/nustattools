@@ -19,4 +19,21 @@ def test_derate_single_covariance():
             [np.nan, np.nan, 2.0, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.63) < 0.1
+    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
+
+
+def test_derate_single_covariance_fit():
+    cov = np.block(
+        [
+            [np.eye(5), np.full((5, 5), np.nan)],
+            [np.full((5, 5), np.nan), np.eye(5)],
+        ]
+    )
+    A = np.array(
+        [
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
+        ],
+        dtype=float,
+    ).T
+    assert np.abs(r.derate_covariance(cov, jacobian=A, sigma=3) - 1.82) < 0.1

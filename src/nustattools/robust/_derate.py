@@ -146,18 +146,25 @@ def derate_covariance(
     cov_0_inv = np.linalg.inv(cov_0)
 
     # If no Jacobian is specified, assume we cover full parameter space
-    n_var = covl[0].shape[0]
+    n_data = covl[0].shape[0]
     if jacobian is None:
-        jacobian = np.eye(n_var)
+        jacobian = np.eye(n_data)
+    else:
+        jacobian = np.asarray(jacobian)
 
     # Determine the whitening transform for each covariance
     W_l = [get_whitening_transform(c) for c in covl]
 
-    # Transform to whitened coordinate systems and calculate "nightmare"
+    # Transform to whitened coordinate systems and calculate "nightmare_cov"
     # covariance, then transform back
     nightmarel = []
-    for c, W in zip(covl, W_l):
-        cor = W @ c @ W.T
+    for c, c0, W in zip(covl, cov_0_l, W_l):
+        # NaNs turn everything into NaN, use zeroed covs
+        cor = W @ c0 @ W.T
+        # Set unknowns back to NaN
+        cor[np.isnan(c)] = np.nan
+        # Set almost 0 to 0
+        cor[np.abs(cor) < 1e-15] = 0.0
         A = W @ jacobian
         Q = np.linalg.inv(A.T @ A) @ A.T
         P = A @ Q
@@ -166,29 +173,45 @@ def derate_covariance(
         cov_nightmare = Wi @ cor_nightmare @ Wi.T
         nightmarel.append(cov_nightmare)
 
-    # Total nightmare covariance
-    nightmare = np.sum(nightmarel, axis=0)
+    # Total nightmare_cov covariance
+    nightmare_cov = np.sum(nightmarel, axis=0)
 
     # Desired significance
     alpha = chi2.sf(sigma**2, df=1)
 
-    # Assumed critical value
-    crit_0 = chi2.isf(alpha, df=n_var)
+    # Assumed critical value in parameter space
+    n_param = jacobian.shape[1]
+    crit_0 = chi2.isf(alpha, df=n_param)
 
     # Nightmare critical value from random throws
     rng = np.random.default_rng()
+    # Matrix that solves the least suqares problem
+    # Uses assumed covariance
+    parameter_estimator = (
+        np.linalg.inv(jacobian.T @ cov_0_inv @ jacobian) @ jacobian.T @ cov_0_inv
+    )
+    # Assumed covariance in parameter space
+    assumed_parameter_cov = parameter_estimator @ cov_0 @ parameter_estimator.T
+    assumed_parameter_cov_inv = np.linalg.inv(assumed_parameter_cov)
+    # Actual nightmare_cov covariance
+    nightmare_parameter_cov = (
+        parameter_estimator @ nightmare_cov @ parameter_estimator.T
+    )
     # Estimate necessary precision
     # var = alpha(1-alpha) / (n f(crit_0)**2) != (crit_0 * rel_error)**2
     n_throws = (
         int(
             (alpha * (1.0 - alpha))
-            / (chi2.pdf(crit_0, df=n_var) ** 2 * (crit_0 * accuracy) ** 2)
+            / (chi2.pdf(crit_0, df=n_param) ** 2 * (crit_0 * accuracy) ** 2)
         )
         + 1
     )
-    throws = rng.multivariate_normal(mean=[0.0] * n_var, cov=nightmare, size=n_throws)
-    dist = np.einsum("ai,ij,aj->a", throws, cov_0_inv, throws)
+    throws = rng.multivariate_normal(
+        mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=n_throws
+    )
+    dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
     crit_nightmare = -np.quantile(-dist, alpha)
+    crit_nightmare = np.quantile(dist, 1.0 - alpha)
 
     derate = crit_nightmare / crit_0
 
