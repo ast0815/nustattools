@@ -31,9 +31,13 @@ def test_derate_single_covariance_fit():
     )
     A = np.array(
         [
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [2, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
         ],
         dtype=float,
     ).T
-    assert np.abs(r.derate_covariance(cov, jacobian=A, sigma=3) - 1.82) < 0.1
+    A = A / np.sqrt(np.sum(A**2, axis=0, keepdims=True))
+    assert (
+        np.abs(r.derate_covariance(cov, jacobian=A, sigma=3, accuracy=0.001) - 1.827)
+        < 0.02
+    )

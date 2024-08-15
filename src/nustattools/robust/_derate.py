@@ -152,29 +152,29 @@ def derate_covariance(
     else:
         jacobian = np.asarray(jacobian)
 
-    # Determine the whitening transform for each covariance
-    W_l = [get_whitening_transform(c) for c in covl]
-
     # Transform to whitened coordinate systems and calculate "nightmare_cov"
     # covariance, then transform back
-    nightmarel = []
-    for c, c0, W in zip(covl, cov_0_l, W_l):
+    nightmare_cov = np.zeros_like(cov_0)
+    for c, c0 in zip(covl, cov_0_l):
+        # Determine the whitening transform for each covariance
+        W = get_whitening_transform(c)
         # NaNs turn everything into NaN, use zeroed covs
         cor = W @ c0 @ W.T
         # Set unknowns back to NaN
         cor[np.isnan(c)] = np.nan
         # Set almost 0 to 0
         cor[np.abs(cor) < 1e-15] = 0.0
+        # Assumed total covariance in whitened coordinates
+        S = W @ cov_0 @ W.T
+        Si = np.linalg.inv(S)
         A = W @ jacobian
-        Q = np.linalg.inv(A.T @ A) @ A.T
+        Q = np.linalg.inv(A.T @ Si @ A) @ A.T @ Si
         P = A @ Q
-        cor_nightmare = fill_max_correlation(cor, P)
+        T = Si @ P
+        cor_nightmare = fill_max_correlation(cor, T)
         Wi = np.linalg.inv(W)
         cov_nightmare = Wi @ cor_nightmare @ Wi.T
-        nightmarel.append(cov_nightmare)
-
-    # Total nightmare_cov covariance
-    nightmare_cov = np.sum(nightmarel, axis=0)
+        nightmare_cov = nightmare_cov + cov_nightmare
 
     # Desired significance
     alpha = chi2.sf(sigma**2, df=1)
@@ -198,7 +198,7 @@ def derate_covariance(
         parameter_estimator @ nightmare_cov @ parameter_estimator.T
     )
     # Estimate necessary precision
-    # var = alpha(1-alpha) / (n f(crit_0)**2) != (crit_0 * rel_error)**2
+    # var = alpha(1-alpha) / (n f(crit_0)**2) =!= (crit_0 * rel_error)**2
     n_throws = (
         int(
             (alpha * (1.0 - alpha))
@@ -209,9 +209,9 @@ def derate_covariance(
     throws = rng.multivariate_normal(
         mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=n_throws
     )
+
     dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
     crit_nightmare = -np.quantile(-dist, alpha)
-    crit_nightmare = np.quantile(dist, 1.0 - alpha)
 
     derate = crit_nightmare / crit_0
 
