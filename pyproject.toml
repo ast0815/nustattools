@@ -30,7 +30,11 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = ["version"]
-dependencies = []
+dependencies = [
+  "numpy >= 1.22.3",
+  "numba >= 0.58.1",
+  "scipy >= 1.8.0",
+]
 
 [project.optional-dependencies]
 test = [
@@ -83,6 +87,7 @@ run.source = ["nustattools"]
 report.exclude_also = [
   '\.\.\.',
   'if typing.TYPE_CHECKING:',
+  '@njit',
 ]
 
 [tool.mypy]
@@ -99,7 +104,14 @@ disallow_incomplete_defs = false
 module = "nustattools.*"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+    "numba.*",
+    "scipy.*",
+]
+ignore_missing_imports = true
 
 [tool.ruff]
 src = ["src"]
@@ -132,6 +144,7 @@ ignore = [
   "PLR09",    # Too many <...>
   "PLR2004",  # Magic value used in comparison
   "ISC001",   # Conflicts with formatter
+  "SIM108",   # Opinion: if-else-blocks are more readable
 ]
 isort.required-imports = ["from __future__ import annotations"]
 # Uncomment if using a _compat.typing backport
@@ -155,3 +168,5 @@ messages_control.disable = [
   "missing-function-docstring",
   "wrong-import-position",
 ]
+# Allow non-snake_case variables names as long as they are short
+basic.variable-rgx = "([a-zA-Z_][a-zA-Z0-9_]{0,3}$)|([a-z_][a-z0-9_]{2,30}$)"
