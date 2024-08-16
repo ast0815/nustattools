@@ -6,6 +6,7 @@
 [![PyPI version][pypi-version]][pypi-link]
 [![Conda-Forge][conda-badge]][conda-link]
 [![PyPI platforms][pypi-platforms]][pypi-link]
+[![Zenodo][zenodo-badge]][zenodo-link]
 
 [![GitHub Discussion][github-discussions-badge]][github-discussions-link]
 
@@ -23,5 +24,7 @@
 [pypi-version]:             https://img.shields.io/pypi/v/nustattools
 [rtd-badge]:                https://readthedocs.org/projects/nustattools/badge/?version=latest
 [rtd-link]:                 https://nustattools.readthedocs.io/en/latest/?badge=latest
+[zenodo-badge]:             https://zenodo.org/badge/841949970.svg
+[zenodo-link]:              https://zenodo.org/doi/10.5281/zenodo.13331496
 
 <!-- prettier-ignore-end -->
