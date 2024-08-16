@@ -35,11 +35,16 @@ myst_enable_extensions = [
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable", None),
 }
 
 nitpick_ignore = [
     ("py:class", "_io.StringIO"),
     ("py:class", "_io.BytesIO"),
+]
+
+nitpick_ignore_regex = [
+    ("py:class", "default=.*"),
 ]
 
 always_document_param_types = True

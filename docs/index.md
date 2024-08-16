@@ -3,7 +3,7 @@
 ```{toctree}
 :maxdepth: 2
 :hidden:
-
+api/nustattools
 ```
 
 ```{include} ../README.md

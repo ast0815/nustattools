@@ -113,10 +113,10 @@ def derate_covariance(
 
     Parameters
     ----------
-    cov : ndarray or list of ndarrays
+    cov : numpy.ndarray or list of numpy.ndarray
         The covariance matrix of the data or a list of covariances that add up
         to the total. Unknown covariances must be ``np.nan``.
-    jacobian : ndarray, default=None
+    jacobian : numpy.ndarray, default=None
         Jacobian matrix of the model prediction wrt to the best-fit parameters.
     sigma : float, default=3.
         The desired confidence level up to which the derated covariance should
