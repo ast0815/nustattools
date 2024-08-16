@@ -1,4 +1,6 @@
-# nustattools
+# NuStatTools
+
+Statistical tools for neutrino physics
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
@@ -11,6 +13,12 @@
 [![GitHub Discussion][github-discussions-badge]][github-discussions-link]
 
 <!-- SPHINX-START -->
+
+Install via pip:
+
+```bash
+$ pip install nustattools
+```
 
 <!-- prettier-ignore-start -->
 [actions-badge]:            https://github.com/ast0815/nustattools/workflows/CI/badge.svg
