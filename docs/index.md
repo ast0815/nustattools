@@ -1,4 +1,4 @@
-# nustattools
+# NuStatTools
 
 ```{toctree}
 :maxdepth: 2

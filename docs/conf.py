@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.metadata
 
-project = "nustattools"
+project = "NuStatTools"
 copyright = "2024, Lukas Koch"
 author = "Lukas Koch"
 version = release = importlib.metadata.version("nustattools")
