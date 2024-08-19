@@ -1,5 +1,7 @@
 # NuStatTools
 
+Statistical tools (not just) for neutrino physics
+
 ```{toctree}
 :maxdepth: 2
 :hidden:

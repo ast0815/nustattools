@@ -1,6 +1,6 @@
 # NuStatTools
 
-Statistical tools for neutrino physics
+Statistical tools (not just) for neutrino physics
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
@@ -8,7 +8,6 @@ Statistical tools for neutrino physics
 [![PyPI version][pypi-version]][pypi-link]
 [![Conda-Forge][conda-badge]][conda-link]
 [![PyPI platforms][pypi-platforms]][pypi-link]
-[![Zenodo][zenodo-badge]][zenodo-link]
 
 <!-- SPHINX-START -->
 
@@ -21,6 +20,15 @@ Install via pip:
 ```bash
 $ pip install nustattools
 ```
+
+## Citing
+
+If you use this package in your research, please cite the papers linked to in
+the respective documentation of the algorithms.
+
+Alternatively or additionally you can cite this code directly on Zenodo:
+
+[![Zenodo][zenodo-badge]][zenodo-link]
 
 <!-- prettier-ignore-start -->
 [actions-badge]:            https://github.com/ast0815/nustattools/workflows/CI/badge.svg
