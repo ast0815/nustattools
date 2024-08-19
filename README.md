@@ -10,9 +10,11 @@ Statistical tools for neutrino physics
 [![PyPI platforms][pypi-platforms]][pypi-link]
 [![Zenodo][zenodo-badge]][zenodo-link]
 
-[![GitHub Discussion][github-discussions-badge]][github-discussions-link]
-
 <!-- SPHINX-START -->
+
+Ask for help on GitHub:
+
+[![GitHub Discussion][github-discussions-badge]][github-discussions-link]
 
 Install via pip:
 
