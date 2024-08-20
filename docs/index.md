@@ -6,6 +6,7 @@ Statistical tools (not just) for neutrino physics
 :maxdepth: 2
 :hidden:
 api/nustattools
+changelog
 ```
 
 ```{include} ../README.md
