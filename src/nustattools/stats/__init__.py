@@ -16,6 +16,7 @@ __all__ = _dist.__all__
 
 # Some extra effort, so Sphinx picks up the data docstrings
 # mypy: disable-error-code=name-defined
+# pylint: disable=self-assigning-variable
 
 #: Use this instance of :class:`Bee`.
 bee = bee  # noqa: PLW0127, F405
