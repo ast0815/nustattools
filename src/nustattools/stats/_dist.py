@@ -22,18 +22,16 @@ from scipy.stats import chi, chi2, rv_continuous
 class Bee(rv_continuous):
     """A random variable representing the maximum of `df` chi distributions.
 
-    Each :any:`scipy.stats.chi` disitribution has ``df = 1``.
+    Each :any:`chi <scipy.stats.chi>` disitribution has ``df = 1``.
+
+    .. note::
+        You probably do not need to use this class directly. Instead work with
+        the instance :data:`bee`.
 
     Parameters
     ----------
     df : int
         The number of chi-distirbuted variables to take the maximum of.
-
-    Note
-    ----
-
-    You probably do not need to use this class directly. Instead work with the
-    instance :data:`bee`.
 
     """
 
@@ -48,18 +46,30 @@ bee = Bee(name="bee", a=0)
 class Bee2(rv_continuous):
     """A random variable representing the maximum of `df` chi2 distributions.
 
-    Each :any:`scipy.stats.chi` disitribution has ``df = 1``.
+    Each :any:`chii2 <scipy.stats.chi2>` disitribution has ``df = 1``.
+
+    .. note::
+        You probably do not need to use this class directly. Instead work with
+        the instance :data:`bee2`.
 
     Parameters
     ----------
     df : int
         The number of chi-distirbuted variables to take the maximum of.
 
-    Note
-    ----
+    Notes
+    -----
 
-    You probably do not need to use this class directly. Instead work with the
-    instance :data:`bee2`.
+    This distribution is discussed in [1]_ in the context of robust test
+    statistics.
+
+
+    References
+    ----------
+
+    .. [1] L. Koch, "Robust test statistics for data sets with missing
+        correlation information," Phys. Rev. D 103, 113008 (2021) , Vol. 103, No.
+        11 p. 113008, https://arxiv.org/abs/2102.06172
 
     """
 
@@ -74,21 +84,19 @@ bee2 = Bee2(name="bee2", a=0)
 class Cee(rv_continuous):
     """A random variable representing the maximum of multiple chi distributions.
 
-    Each :any:`scipy.stats.chi` disitribution can have a different ``df``. If
+    Each :any:`chi <scipy.stats.chi>` disitribution can have a different ``df``. If
     all ``df`` are equal to 1, this is identical to the :class:`Bee`
     distribution with ``df = len(k)``.
+
+    .. note::
+        You probably do not need to use this class directly. Instead work with
+        the instance :data:`cee`.
 
     Parameters
     ----------
     k : list of int or int
         List of degrees of freedom of the chi-distirbuted variables to take the
         maximum of.
-
-    Note
-    ----
-
-    You probably do not need to use this class directly. Instead work with the
-    instance :data:`cee`.
 
     """
 
@@ -105,9 +113,13 @@ cee = Cee(name="cee", a=0)
 class Cee2(rv_continuous):
     """A random variable representing the maximum of multiple chi2 distributions.
 
-    Each :any:`scipy.stats.chi2` disitribution can have a different ``df``. If
+    Each :any:`chi2 <scipy.stats.chi2>` disitribution can have a different ``df``. If
     all ``df`` are equal to 1, this is identical to a :class:`Bee2`
     disritbution with ``df = len(k)``.
+
+    .. note::
+        You probably do not need to use this class directly. Instead work with
+        the instance :data:`cee2`.
 
     Parameters
     ----------
@@ -115,11 +127,11 @@ class Cee2(rv_continuous):
         List of degrees of freedom of the chi2-distirbuted variables to take the
         maximum of.
 
-    Note
-    ----
+    Notes
+    -----
 
-    You probably do not need to use this class directly. Instead work with the
-    instance :data:`cee2`.
+    TODO: Add reference to paper.
+
 
     """
 
