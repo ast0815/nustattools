@@ -29,6 +29,12 @@ class Bee(rv_continuous):
     df : int
         The number of chi-distirbuted variables to take the maximum of.
 
+    Note
+    ----
+
+    You probably do not need to use this class directly. Instead work with the
+    instance :data:`bee`.
+
     """
 
     def _cdf(self, x: float, df: int) -> float:
@@ -48,6 +54,12 @@ class Bee2(rv_continuous):
     ----------
     df : int
         The number of chi-distirbuted variables to take the maximum of.
+
+    Note
+    ----
+
+    You probably do not need to use this class directly. Instead work with the
+    instance :data:`bee2`.
 
     """
 
@@ -71,6 +83,12 @@ class Cee(rv_continuous):
     k : list of int or int
         List of degrees of freedom of the chi-distirbuted variables to take the
         maximum of.
+
+    Note
+    ----
+
+    You probably do not need to use this class directly. Instead work with the
+    instance :data:`cee`.
 
     """
 
@@ -96,6 +114,12 @@ class Cee2(rv_continuous):
     k : list of int or int
         List of degrees of freedom of the chi2-distirbuted variables to take the
         maximum of.
+
+    Note
+    ----
+
+    You probably do not need to use this class directly. Instead work with the
+    instance :data:`cee2`.
 
     """
 
