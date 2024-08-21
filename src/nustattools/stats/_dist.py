@@ -16,7 +16,7 @@ from scipy.stats import chi, chi2, rv_continuous
 # pylint: disable=arguments-differ
 
 # We need to inherit from non-typed scipy
-# mypy: disable-error-code=misc
+# mypy: disable-error-code="misc, no-any-return"
 
 
 class Bee(rv_continuous):
@@ -35,8 +35,8 @@ class Bee(rv_continuous):
 
     """
 
-    def _cdf(self, x: float, df: int) -> float:
-        return float(chi.cdf(x, df=1) ** df)
+    def _cdf(self, x: ArrayLike, df: int) -> ArrayLike:
+        return chi.cdf(x, df=1) ** df
 
 
 #: Use this instance of :class:`Bee`
@@ -73,8 +73,8 @@ class Bee2(rv_continuous):
 
     """
 
-    def _cdf(self, x: float, df: int) -> float:
-        return float(chi2.cdf(x, df=1) ** df)
+    def _cdf(self, x: ArrayLike, df: int) -> ArrayLike:
+        return chi2.cdf(x, df=1) ** df
 
 
 #: Use this instance of :class:`Bee2`
@@ -100,10 +100,10 @@ class Cee(rv_continuous):
 
     """
 
-    def _cdf(self, x: float, k: ArrayLike) -> float:
+    def _cdf(self, x: ArrayLike, k: ArrayLike) -> ArrayLike:
         k = np.atleast_1d(k)
         p = [chi.cdf(x, df=n) for n in k]
-        return float(np.prod(p, axis=0))
+        return np.prod(p, axis=0)
 
 
 #: Use this instance of :class:`Cee`
@@ -135,10 +135,10 @@ class Cee2(rv_continuous):
 
     """
 
-    def _cdf(self, x: float, k: ArrayLike) -> float:
+    def _cdf(self, x: ArrayLike, k: ArrayLike) -> ArrayLike:
         k = np.atleast_1d(k)
         p = [chi2.cdf(x, df=n) for n in k]
-        return float(np.prod(p, axis=0))
+        return np.prod(p, axis=0)
 
 
 #: Use this instance of :class:`Cee2`
