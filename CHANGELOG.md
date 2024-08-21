@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Added
 
 - Distributions used for robust test statistics.
