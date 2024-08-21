@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.metadata
 
+from intersphinx_registry import get_intersphinx_mapping
+
 project = "NuStatTools"
 copyright = "2024, Lukas Koch"
 author = "Lukas Koch"
@@ -34,10 +36,11 @@ myst_enable_extensions = [
     "colon_fence",
 ]
 
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "numpy": ("https://numpy.org/doc/stable", None),
-}
+intersphinx_mapping = get_intersphinx_mapping(packages={"python", "numpy", "scipy"})
+# intersphinx_mapping.update({
+#    'my-package' : ('<url>', None),
+# })
+
 
 nitpick_ignore = [
     ("py:class", "_io.StringIO"),
