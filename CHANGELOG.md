@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Cee and Cee2
+
 ## [0.2.0]
 
 ### Added
