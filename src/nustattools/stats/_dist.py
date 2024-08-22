@@ -8,7 +8,7 @@ Statistical distributions that are useful, but not available in
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -83,7 +83,7 @@ class Bee2(rv_continuous):
 bee2 = Bee2(name="bee2", a=0)
 
 
-class DF(np.generic):
+class DF:
     """Helper class to get around limitations of `rv_continuous`.
 
     This class represents the shape parameter for the :class:`Cee` and
@@ -117,7 +117,7 @@ class Cee(rv_continuous):
 
     Parameters
     ----------
-    k : DF or iterable of DF
+    k : DF or Iterable of DF
         Special class to pass variable length list of degrees of freedom of the
         chi-distirbuted variables to take the maximum of.
 
@@ -129,7 +129,7 @@ class Cee(rv_continuous):
 
     """
 
-    def _cdf(self, x: NDArray[Any], k: NDArray[DF]) -> NDArray[Any]:
+    def _cdf(self, x: NDArray[Any], k: Iterable[DF]) -> NDArray[Any]:
         # Translate each DF object into df tuple
         dof = [_k.df for _k in k]
         # Calculate and return cdf for each
@@ -153,7 +153,7 @@ class Cee2(rv_continuous):
 
     Parameters
     ----------
-    k : DF or iterable of DF
+    k : DF or Iterable of DF
         Special class to pass variable length list of degrees of freedom of the
         chi-distirbuted variables to take the maximum of.
 
@@ -171,7 +171,7 @@ class Cee2(rv_continuous):
 
     """
 
-    def _cdf(self, x: NDArray[Any], k: NDArray[DF]) -> NDArray[Any]:
+    def _cdf(self, x: NDArray[Any], k: Iterable[DF]) -> NDArray[Any]:
         # Translate each DF object into df tuple
         dof = [_k.df for _k in k]
         # Calculate and return cdf for each
