@@ -8,8 +8,10 @@ Statistical distributions that are useful, but not available in
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from scipy.stats import chi, chi2, rv_continuous
 
 # We need to define methods with the new distributions' parameters
@@ -81,6 +83,27 @@ class Bee2(rv_continuous):
 bee2 = Bee2(name="bee2", a=0)
 
 
+class DF(np.generic):
+    """Helper class to get around limitations of `rv_continuous`.
+
+    This class represents the shape parameter for the :class:`Cee` and
+    :class:`Cee2` distributions.
+
+    Parameters
+    ----------
+
+    *args : tuple of int
+        The `df` for each chi(2) distribution
+
+    """
+
+    def __init__(self, *args: tuple[int]) -> None:
+        self.df = args
+
+    def __gt__(self, other: Any) -> bool:
+        return True
+
+
 class Cee(rv_continuous):
     """A random variable representing the maximum of multiple chi distributions.
 
@@ -94,16 +117,23 @@ class Cee(rv_continuous):
 
     Parameters
     ----------
-    k : list of int or int
-        List of degrees of freedom of the chi-distirbuted variables to take the
-        maximum of.
+    k : DF or iterable of DF
+        Special class to pass variable length list of degrees of freedom of the
+        chi-distirbuted variables to take the maximum of.
+
+    Examples
+    --------
+
+    >>> cee(k=DF(1,2,3)).pdf(1)
+    0.2501359390297275
 
     """
 
-    def _cdf(self, x: ArrayLike, k: ArrayLike) -> ArrayLike:
-        k = np.atleast_1d(k)
-        p = [chi.cdf(x, df=n) for n in k]
-        return np.prod(p, axis=0)
+    def _cdf(self, x: NDArray[Any], k: NDArray[DF]) -> NDArray[Any]:
+        # Translate each DF object into df tuple
+        dof = [_k.df for _k in k]
+        # Calculate and return cdf for each
+        return np.array([np.prod([chi.cdf(x, df=n) for n in _k], axis=0) for _k in dof])
 
 
 #: Use this instance of :class:`Cee`
@@ -123,9 +153,15 @@ class Cee2(rv_continuous):
 
     Parameters
     ----------
-    k : list of int or int
-        List of degrees of freedom of the chi2-distirbuted variables to take the
-        maximum of.
+    k : DF or iterable of DF
+        Special class to pass variable length list of degrees of freedom of the
+        chi-distirbuted variables to take the maximum of.
+
+    Examples
+    --------
+
+    >>> cee2(k=DF(1,2,3)).pdf(1)
+    0.12506796951321578
 
     Notes
     -----
@@ -135,17 +171,23 @@ class Cee2(rv_continuous):
 
     """
 
-    def _cdf(self, x: ArrayLike, k: ArrayLike) -> ArrayLike:
-        k = np.atleast_1d(k)
-        p = [chi2.cdf(x, df=n) for n in k]
-        return np.prod(p, axis=0)
+    def _cdf(self, x: NDArray[Any], k: NDArray[DF]) -> NDArray[Any]:
+        # Translate each DF object into df tuple
+        dof = [_k.df for _k in k]
+        # Calculate and return cdf for each
+        return np.array(
+            [np.prod([chi2.cdf(x, df=n) for n in _k], axis=0) for _k in dof]
+        )
 
 
 #: Use this instance of :class:`Cee2`
-cee2 = Cee2(name="cee2", a=0)
+cee2 = Cee2(
+    name="cee2",
+    a=0,
+)
 
+__all__ = ["DF"]
 # Export all distributions and their instances
-__all__ = []
 _g = dict(globals().items())
 for _s, _x in _g.items():
     # Only look at distribution classes
