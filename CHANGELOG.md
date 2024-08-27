@@ -14,7 +14,7 @@ and this project adheres to
 
 ### Added
 
-- FMaxStatistic
+- FMaxStatistic, OptimalFMaxStatistic
 
 ## [0.2.1]
 

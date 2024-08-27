@@ -60,4 +60,24 @@ class FMaxStatistic:
         return np.asarray(np.prod(cdf))
 
 
-__all__ = ["FMaxStatistic"]
+class OptimalFMaxStatistic(FMaxStatistic):
+    """blub"""
+
+    def __init__(
+        self,
+        *,
+        k: Iterable[int],
+        # funcs: Iterable[Callable[..., NDArray[Any]] | None] | None = None,
+        # inv_funcs: Iterable[Callable[..., NDArray[Any]] | None] | None = None,
+    ) -> None:
+        funcs = []
+        for n in k:
+
+            def fun(x: ArrayLike, df: int = n) -> NDArray[Any]:
+                return np.asarray(chi2(df=df).logcdf(x) - chi2(df=df).logpdf(x))
+
+            funcs.append(fun)
+        super().__init__(k=k, funcs=funcs)
+
+
+__all__ = ["FMaxStatistic", "OptimalFMaxStatistic"]

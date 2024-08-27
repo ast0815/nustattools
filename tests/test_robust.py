@@ -117,6 +117,10 @@ def test_optimal_fmax():
     for n in k:
         funcs.append(lambda x, df=n: chi2(df=df).logcdf(x) - chi2(df=df).logpdf(x))
 
-    fitted = r.FMaxStatistic(k=k, funcs=funcs)
-    assert np.abs(fitted([17.03, 19.10]) - 5.04) < 0.01
-    assert np.abs(1 - fitted.cdf(5.04) - 0.038) < 0.001
+    fmax = r.FMaxStatistic(k=k, funcs=funcs)
+    assert np.abs(fmax([17.03, 19.10]) - 5.04) < 0.01
+    assert np.abs(1 - fmax.cdf(5.04) - 0.038) < 0.001
+
+    optimal = r.OptimalFMaxStatistic(k=k)
+    assert np.abs(optimal([17.03, 19.10]) - 5.04) < 0.01
+    assert np.abs(1 - optimal.cdf(5.04) - 0.038) < 0.001
