@@ -218,3 +218,6 @@ def derate_covariance(
     derate = max(1.0, derate)
 
     return float(derate)
+
+
+__all__ = ["derate_covariance"]

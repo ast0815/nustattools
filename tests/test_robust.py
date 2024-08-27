@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-import nustattools.robust as r
+import nustattools.stats as r
 
 
 def test_derate_unity_covariance():
