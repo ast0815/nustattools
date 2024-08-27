@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.stats import chi2
 
 import nustattools.stats as r
 
@@ -94,3 +95,28 @@ def test_derate_multi_covariance_fit():
         np.abs(r.derate_covariance([cov1, cov2, cov3], jacobian=A, sigma=2) - 1.54)
         < 0.1
     )
+
+
+def test_fitted_fmax():
+    fitted = r.FMaxStatistic(k=[7, 13])
+    assert fitted([17, 19]) == 19
+    assert np.abs(1.0 - fitted.cdf(19.1) - 0.127) < 0.001
+
+
+def test_pmin_fmax():
+    fitted = r.FMaxStatistic(
+        k=[7, 13], funcs=[lambda x: chi2(df=7).cdf(x), lambda x: chi2(df=13).cdf(x)]
+    )
+    assert np.abs(1.0 - fitted([17.03, 19.10]) - 0.02) < 0.01
+    assert np.abs(1 - fitted.cdf(1 - 0.02) - 0.034) < 0.01
+
+
+def test_optimal_fmax():
+    k = [7, 13]
+    funcs = []
+    for n in k:
+        funcs.append(lambda x, df=n: chi2(df=df).logcdf(x) - chi2(df=df).logpdf(x))
+
+    fitted = r.FMaxStatistic(k=k, funcs=funcs)
+    assert np.abs(fitted([17.03, 19.10]) - 5.04) < 0.01
+    assert np.abs(1 - fitted.cdf(5.04) - 0.038) < 0.001

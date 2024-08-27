@@ -12,6 +12,10 @@ and this project adheres to
 
 - Moved `robust` module into `stats`.
 
+### Added
+
+- FMaxStatistic
+
 ## [0.2.1]
 
 ### Fixed

@@ -8,12 +8,13 @@ Statistical distributions that are useful, but not available in
 
 from __future__ import annotations
 
-from . import _derate, _dist
+from . import _derate, _dist, _fmax
 from ._derate import *  # noqa: F403
 from ._dist import *  # noqa: F403
+from ._fmax import *  # noqa: F403
 
 # Export all exports from the sub-modules
-__all__ = _dist.__all__ + _derate.__all__
+__all__ = _dist.__all__ + _derate.__all__ + _fmax.__all__
 
 # Some extra effort, so Sphinx picks up the data docstrings
 # mypy: disable-error-code=name-defined
