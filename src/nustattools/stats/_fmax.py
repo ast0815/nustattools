@@ -32,7 +32,6 @@ class TestStatistic:
             calculated over the last dimension of the array, so the return
             shape will be ``input_shape[:-1]``.
 
-
         Returns
         -------
         statistic_value : numpy.ndarray
@@ -73,7 +72,28 @@ class TestStatistic:
 
 
 class FMaxStatistic(TestStatistic):
-    """bla"""
+    """Test statistic that takes the maximum of functions of chi2 distributed data.
+
+    Parameters
+    ----------
+    k : Iterable of int
+        Number of degrees of freedom for the assumed chi2 distributions of the
+        data points.
+    funcs : Iterable of Callable or None, optional
+        Functions to apply to each data point. Maximum will be taken from the
+        function outputs. If not specified, the identity function``f(x) = x``
+        will be used for all data points.
+    invfuncs : Iterable of Callable or None, optional
+        Inverse of the functions that are applied to each data point. These are
+        used to calculate the CDF. If not specified, the inverse will be
+        calculated numerically using the  `funcs`.
+
+    Notes
+    -----
+
+    TODO: Cite paper.
+
+    """
 
     def __init__(
         self,
@@ -132,7 +152,20 @@ class FMaxStatistic(TestStatistic):
 
 
 class OptimalFMaxStatistic(FMaxStatistic):
-    """blub"""
+    """FMaxStatistic that minimizes the maximum M-distance for any given p-value.
+
+    Parameters
+    ----------
+    k : Iterable of int
+        Number of degrees of freedom for the assumed chi2 distributions of the
+        data points.
+
+    Notes
+    -----
+
+    TODO: Cite paper.
+
+    """
 
     def __init__(
         self,
