@@ -60,12 +60,12 @@ class TestStatistic:
     def __call__(self, data: ArrayLike) -> NDArray[Any]:
         return self._calculate(data)
 
-    def _calculate(self, data: ArrayLike) -> NDArray[Any]:
+    def _calculate(self, data: ArrayLike) -> NDArray[Any]:  # pragma: no cover
         _ = data
         msg = "The `_calculate` method must be implemented in a subclass."
         raise NotImplementedError(msg)
 
-    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:
+    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:  # pragma: no cover
         _ = statistic
         msg = "The `_cdf` method must be implemented in a subclass."
         raise NotImplementedError(msg)
