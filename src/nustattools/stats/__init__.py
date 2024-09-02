@@ -28,3 +28,5 @@ bee2 = bee2  # noqa: PLW0127, F405
 cee = cee  # noqa: PLW0127, F405
 #: Use this instance of :class:`Cee2`.
 cee2 = cee2  # noqa: PLW0127, F405
+#: Use this instance of :class:`RVTestStatistic`.
+rvteststatistic = rvteststatistic  # noqa: PLW0127, F405

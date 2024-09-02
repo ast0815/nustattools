@@ -70,6 +70,10 @@ class TestStatistic:
         msg = "The `_cdf` method must be implemented in a subclass."
         raise NotImplementedError(msg)
 
+    def __gt__(self, other: Any) -> Any:
+        # Needed for use in RVTestStatistic
+        return True
+
 
 class FMaxStatistic(TestStatistic):
     """Test statistic that takes the maximum of functions of chi2 distributed data.
