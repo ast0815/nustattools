@@ -39,3 +39,10 @@ def test_cee2_shapes():
     cee2 = s.cee2(k=[[s.DF(1), s.DF(2, 3), s.DF(4, 5, 6)]] * 4)
     ret = cee2.pdf([[1, 2, 3]] * 4)
     assert ret.shape == (4, 3)
+
+
+def test_rvteststatistic():
+    stat = s.FMaxStatistic(k=[1])
+    rv = s.rvteststatistic(statistic=stat)
+    assert abs(rv.pdf(1) - chi2(df=1).pdf(1)) < 1e-9
+    assert abs(rv.cdf(1) - chi2(df=1).cdf(1)) < 1e-9

@@ -45,6 +45,7 @@ intersphinx_mapping = get_intersphinx_mapping(packages={"python", "numpy", "scip
 nitpick_ignore = [
     ("py:class", "_io.StringIO"),
     ("py:class", "_io.BytesIO"),
+    ("py:class", "optional"),
 ]
 
 nitpick_ignore_regex = [

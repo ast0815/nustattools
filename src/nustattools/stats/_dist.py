@@ -14,6 +14,8 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.stats import chi, chi2, rv_continuous
 
+from ._fmax import TestStatistic
+
 # We need to define methods with the new distributions' parameters
 # pylint: disable=arguments-differ
 
@@ -184,6 +186,37 @@ class Cee2(rv_continuous):
 cee2 = Cee2(
     name="cee2",
     a=0,
+)
+
+
+class RVTestStatistic(rv_continuous):
+    """A random variable distributed as the expectation of a :class:`TestStatistic`.
+
+    .. note::
+        You probably do not need to use this class directly. Instead work with
+        the instance :data:`rvteststatistic`.
+
+    Parameters
+    ----------
+    statistic : TestStatistic or Iterable of TestStatistic
+
+    Examples
+    --------
+
+    >>> ts = OptimalFMaxStatistic(k=[1,2,3])
+    >>> rvteststatistic(statistic=ts).pdf(1)
+    0.24601379637056994
+
+    """
+
+    def _cdf(self, x: NDArray[Any], statistic: Iterable[TestStatistic]) -> NDArray[Any]:
+        # Calculate and return cdf for each statistic
+        return np.array([s.cdf(x) for s in statistic])
+
+
+#: Use this instance of :class:`RVTestStatistic`
+rvteststatistic = RVTestStatistic(
+    name="rvteststatistic",
 )
 
 __all__ = ["DF"]
