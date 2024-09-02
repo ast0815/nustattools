@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Iterable, cast
 
 import numpy as np
@@ -10,7 +11,7 @@ from scipy.optimize import root
 from scipy.stats import chi2
 
 
-class TestStatistic:
+class TestStatistic(ABC):
     """General class for test statistcs.
 
     A TestStatistic must implement a way to calculate the test statistic from
@@ -60,15 +61,11 @@ class TestStatistic:
     def __call__(self, data: ArrayLike) -> NDArray[Any]:
         return self._calculate(data)
 
-    def _calculate(self, data: ArrayLike) -> NDArray[Any]:  # pragma: no cover
-        _ = data
-        msg = "The `_calculate` method must be implemented in a subclass."
-        raise NotImplementedError(msg)
+    @abstractmethod
+    def _calculate(self, data: ArrayLike) -> NDArray[Any]: ...
 
-    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:  # pragma: no cover
-        _ = statistic
-        msg = "The `_cdf` method must be implemented in a subclass."
-        raise NotImplementedError(msg)
+    @abstractmethod
+    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]: ...
 
     def __gt__(self, other: Any) -> Any:
         # Needed for use in RVTestStatistic
