@@ -110,11 +110,15 @@ def test_fitted_fmax():
 
 
 def test_pmin_fmax():
-    fitted = r.FMaxStatistic(
+    fmax = r.FMaxStatistic(
         k=[7, 13], funcs=[lambda x: chi2(df=7).cdf(x), lambda x: chi2(df=13).cdf(x)]
     )
-    assert np.abs(1.0 - fitted([17.03, 19.10]) - 0.02) < 0.01
-    assert np.abs(1 - fitted.cdf(1 - 0.02) - 0.034) < 0.01
+    assert np.abs(1.0 - fmax([17.03, 19.10]) - 0.02) < 0.01
+    assert np.abs(1 - fmax.cdf(1 - 0.02) - 0.034) < 0.01
+
+    qmax = r.QMaxStatistic(k=[7, 13])
+    assert np.abs(1.0 - qmax([17.03, 19.10]) - 0.02) < 0.01
+    assert np.abs(1 - qmax.cdf(1 - 0.02) - 0.034) < 0.01
 
 
 def test_optimal_fmax():

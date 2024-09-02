@@ -151,6 +151,45 @@ class FMaxStatistic(TestStatistic):
         return np.asarray(np.prod(cdf, axis=-1))
 
 
+class QMaxStatistic(FMaxStatistic):
+    """FMaxStatistic where the functions are the assumed CDFs of the data.
+
+    This is equivalent to taking the minimum of the individual p-values as the
+    test statistic.
+
+    Parameters
+    ----------
+    k : Iterable of int
+        Number of degrees of freedom for the assumed chi2 distributions of the
+        data points.
+
+    Notes
+    -----
+
+    TODO: Cite paper.
+
+    """
+
+    def __init__(
+        self,
+        *,
+        k: Iterable[int],
+    ) -> None:
+        funcs = []
+        inv_funcs = []
+        for n in k:
+
+            def fun(x: ArrayLike, df: int = n) -> NDArray[Any]:
+                return np.asarray(chi2(df=df).cdf(x))
+
+            def ifun(x: ArrayLike, df: int = n) -> NDArray[Any]:
+                return np.asarray(chi2(df=df).ppf(x))
+
+            funcs.append(fun)
+            inv_funcs.append(ifun)
+        super().__init__(k=k, funcs=funcs, inv_funcs=inv_funcs)
+
+
 class OptimalFMaxStatistic(FMaxStatistic):
     """FMaxStatistic that minimizes the maximum M-distance for any given p-value.
 
@@ -182,4 +221,4 @@ class OptimalFMaxStatistic(FMaxStatistic):
         super().__init__(k=k, funcs=funcs)
 
 
-__all__ = ["TestStatistic", "FMaxStatistic", "OptimalFMaxStatistic"]
+__all__ = ["TestStatistic", "FMaxStatistic", "QMaxStatistic", "OptimalFMaxStatistic"]
