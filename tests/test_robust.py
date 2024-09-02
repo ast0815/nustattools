@@ -99,7 +99,7 @@ def test_derate_multi_covariance_fit():
 
 def test_fitted_fmax():
     fitted = r.FMaxStatistic(k=[7, 13])
-    assert fitted([17, 19]) == 19
+    assert fitted.calculate([17, 19]) == 19
     s = fitted([[[17, 19]] * 2] * 3)
     assert np.all(s == 19)
     assert np.all(s.shape == (3, 2))
@@ -130,3 +130,6 @@ def test_optimal_fmax():
     optimal = r.OptimalFMaxStatistic(k=k)
     assert np.abs(optimal([17.03, 19.10]) - 5.04) < 0.01
     assert np.abs(1 - optimal.cdf(5.04) - 0.038) < 0.001
+    s = np.abs(optimal([[17.03, 19.10]] * 5) - 5.04)
+    assert np.all(s < 0.01)
+    assert np.all(s.shape == (5,))
