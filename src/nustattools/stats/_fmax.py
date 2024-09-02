@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -10,7 +10,69 @@ from scipy.optimize import root
 from scipy.stats import chi2
 
 
-class FMaxStatistic:
+class TestStatistic:
+    """General class for test statistcs.
+
+    A TestStatistic must implement a way to calculate the test statistic from
+    some data, as well as a way to calculate the CDF of the expected
+    distribution of the test statistic if an assumed model is correct.
+
+    """
+
+    def calculate(self, data: ArrayLike) -> NDArray[Any]:
+        """Calculate the test statistic from some given data.
+
+        You can also call the object directly, e.g. ``statistic(data)`` instead
+        of ``statistic.calculate(data)``.
+
+        Parameters
+        ----------
+        data : numpy.ndarray
+            The data to calculate the test statistic for. The test statstic is
+            calculated over the last dimension of the array, so the return
+            shape will be ``input_shape[:-1]``.
+
+
+        Returns
+        -------
+        statistic_value : numpy.ndarray
+
+        """
+        return self._calculate(data)
+
+    def cdf(self, statistic: ArrayLike) -> NDArray[Any]:
+        """Calculate the CDF of the expected distribution of the test statistic.
+
+        Assumes that certain model assumptions are true.
+
+        Parameters
+        ----------
+        statistic : numpy.ndarray
+            The test statistic to calculate the CDF for.
+
+        Returns
+        -------
+        cdf : numpy.ndarray
+
+        """
+
+        return self._cdf(statistic)
+
+    def __call__(self, data: ArrayLike) -> NDArray[Any]:
+        return self._calculate(data)
+
+    def _calculate(self, data: ArrayLike) -> NDArray[Any]:
+        _ = data
+        msg = "The `_calculate` method must be implemented in a subclass."
+        raise NotImplementedError(msg)
+
+    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:
+        _ = statistic
+        msg = "The `_cdf` method must be implemented in a subclass."
+        raise NotImplementedError(msg)
+
+
+class FMaxStatistic(TestStatistic):
     """bla"""
 
     def __init__(
@@ -38,26 +100,35 @@ class FMaxStatistic:
             inv_funcs = [None for f in funcs]
         self.inv_funcs = inv_funcs
 
-    def __call__(self, x: Iterable[ArrayLike]) -> NDArray[Any]:
-        y = [f(z) for f, z in zip(self.funcs, x)]
-        return np.asarray(np.max(y))
+    def _calculate(self, data: ArrayLike) -> NDArray[Any]:
+        x = np.asarray(data)
+        y = np.ndarray(x.shape)  # type: NDArray[Any]
+        for i, f in enumerate(self.funcs):
+            y[..., i] = f(x[..., i])
+        return np.asarray(np.max(y, axis=-1))
 
-    def cdf(self, z: float) -> NDArray[Any]:
-        M2 = []
-        for f, invf in zip(self.funcs, self.inv_funcs):
+    def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:
+        z = np.asarray(statistic)
+        M2 = np.ndarray((*z.shape, len(self.funcs)))  # type: NDArray[Any]
+        for i, (f, invf) in enumerate(zip(self.funcs, self.inv_funcs)):
             if invf is None:
+                m2 = np.ndarray(z.shape)  # type: NDArray[Any]
+                for j, zz in enumerate(z.flat):
 
-                def rf(
-                    x: NDArray[Any], fun: Callable[[NDArray[Any]], NDArray[Any]] = f
-                ) -> NDArray[Any]:
-                    return fun(x) - z
+                    def rf(
+                        x: NDArray[Any],
+                        fun: Callable[[NDArray[Any]], NDArray[Any]] = f,
+                        zz: NDArray[Any] = zz,
+                    ) -> NDArray[Any]:
+                        return cast(NDArray[Any], fun(x) - zz)
 
-                ret = root(rf, 0.5)
-                M2.append(ret.x[0])
+                    ret = root(rf, 0.5)
+                    m2.flat[j] = ret.x[0]
+                M2[..., i] = m2
             else:
-                M2.append(invf(z))
+                M2[..., i] = invf(z)
         cdf = chi2(df=self.k).cdf(M2)
-        return np.asarray(np.prod(cdf))
+        return np.asarray(np.prod(cdf, axis=-1))
 
 
 class OptimalFMaxStatistic(FMaxStatistic):
