@@ -14,7 +14,7 @@ and this project adheres to
 
 ### Added
 
-- FMaxStatistic, OptimalFMaxStatistic
+- Multiple TestStatistics and RVTestStatistic
 
 ## [0.2.1]
 
