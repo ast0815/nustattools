@@ -42,7 +42,7 @@ class FMaxStatistic:
         y = [f(z) for f, z in zip(self.funcs, x)]
         return np.asarray(np.max(y))
 
-    def cdf(self, z: float) -> ArrayLike:
+    def cdf(self, z: float) -> NDArray[Any]:
         M2 = []
         for f, invf in zip(self.funcs, self.inv_funcs):
             if invf is None:
@@ -67,8 +67,6 @@ class OptimalFMaxStatistic(FMaxStatistic):
         self,
         *,
         k: Iterable[int],
-        # funcs: Iterable[Callable[..., NDArray[Any]] | None] | None = None,
-        # inv_funcs: Iterable[Callable[..., NDArray[Any]] | None] | None = None,
     ) -> None:
         funcs = []
         for n in k:
