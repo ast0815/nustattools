@@ -1,3 +1,5 @@
+"""Derate a covariance to accommodate unknown correlations."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -107,7 +109,7 @@ def derate_covariance(
     sigma: float = 3.0,
     accuracy: float = 0.01,
 ) -> float:
-    """Derate the covariance of some data to account for unknown correaltions.
+    """Derate the covariance of some data to account for unknown correlations.
 
     See TODO: Ref to paper.
 
@@ -117,10 +119,10 @@ def derate_covariance(
         The covariance matrix of the data or a list of covariances that add up
         to the total. Unknown covariances must be ``np.nan``.
     jacobian : numpy.ndarray, default=None
-        Jacobian matrix of the model prediction wrt to the best-fit parameters.
+        Jacobian matrix of the model prediction wrt the best-fit parameters.
     sigma : float, default=3.
         The desired confidence level up to which the derated covariance should
-        be conservative, expressed in standard-normal stadard deviations. E.g.
+        be conservative, expressed in standard-normal standard deviations. E.g.
         ``sigma=3.`` corresponds to ``CL=0.997``.
     accuracy : float, default=0.01
         The derating factor is calculated using numerical sampling. This parameter
@@ -140,7 +142,7 @@ def derate_covariance(
         covl = [np.asarray(cov)]
 
     # Assumed covariance
-    # All unkonown elements aet to 0.
+    # All unknown elements set to 0.
     cov_0_l = [np.nan_to_num(c) for c in covl]
     cov_0 = np.sum(cov_0_l, axis=0)
     cov_0_inv = np.linalg.inv(cov_0)
@@ -185,7 +187,7 @@ def derate_covariance(
 
     # Nightmare critical value from random throws
     rng = np.random.default_rng()
-    # Matrix that solves the least suqares problem
+    # Matrix that solves the least squares problem
     # Uses assumed covariance
     parameter_estimator = (
         np.linalg.inv(jacobian.T @ cov_0_inv @ jacobian) @ jacobian.T @ cov_0_inv

@@ -1,8 +1,7 @@
 """
 Copyright (c) 2024 Lukas Koch. All rights reserved.
 
-Statistical distributions that are useful, but not available in
-``scipy.stats``.
+Potentially useful statistical tools that are not available in ``scipy.stats``.
 
 """
 
