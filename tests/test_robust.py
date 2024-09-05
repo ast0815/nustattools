@@ -23,6 +23,18 @@ def test_derate_single_covariance():
     assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
 
 
+def test_derate_known_off_diag():
+    cov = np.array(
+        [
+            [2.0, 0.0, np.nan, 0.0],
+            [0.0, 2.0, np.nan, np.nan],
+            [np.nan, np.nan, 3.0, 0.0],
+            [0.0, np.nan, 0.0, 3.0],
+        ]
+    )
+    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
+
+
 def test_derate_multi_covariance():
     cov1 = np.array(
         [

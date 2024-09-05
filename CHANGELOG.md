@@ -15,6 +15,7 @@ and this project adheres to
 ### Added
 
 - Multiple TestStatistics and RVTestStatistic
+- Covariance derating now works with known 0 off-diagonal blocks.
 
 ## [0.2.1]
 
