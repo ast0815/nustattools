@@ -8,7 +8,10 @@ import nustattools.stats as r
 
 def test_derate_unity_covariance():
     cov = np.eye(7)
-    assert np.abs(r.derate_covariance(cov, sigma=1, accuracy=0.001) - 1.0) < 0.01
+    assert (
+        np.abs(r.derate_covariance(cov, sigma=1, accuracy=0.001) - 1.0, return_dict={})
+        < 0.01
+    )
 
 
 def test_derate_single_covariance():
