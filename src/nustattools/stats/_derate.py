@@ -125,6 +125,7 @@ def derate_covariance(
     jacobian: ArrayLike | None = None,
     sigma: float = 3.0,
     accuracy: float = 0.01,
+    return_dict: dict[str, Any] | None = None,
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
 
@@ -146,6 +147,9 @@ def derate_covariance(
     accuracy : float, default=0.01
         The derating factor is calculated using numerical sampling. This parameter
         determines how many samples to throw. Lower values mean more samples.
+    return_dict : dict, optional
+        If specified, the nightmare covariance and thrown data samples are
+        added to this dictionary for detailed studies outside the function.
 
     Returns
     -------
@@ -187,13 +191,13 @@ def derate_covariance(
         cor[np.abs(cor) < 1e-15] = 0.0
         # Assumed total covariance in whitened coordinates
         S = W @ cov_0 @ W.T
-        Si = np.linalg.inv(S)
+        Si = np.linalg.pinv(S)
         A = W @ jacobian
-        Q = np.linalg.inv(A.T @ Si @ A) @ A.T @ Si
+        Q = np.linalg.pinv(A.T @ Si @ A) @ A.T @ Si
         P = A @ Q
         T = Si @ P
         cor_nightmare = fill_max_correlation(cor, T)
-        Wi = np.linalg.inv(W)
+        Wi = np.linalg.pinv(W)
         cov_nightmare = Wi @ cor_nightmare @ Wi.T
         nightmare_cov = nightmare_cov + cov_nightmare
 
@@ -237,6 +241,10 @@ def derate_covariance(
     derate = crit_nightmare / crit_0
 
     derate = max(1.0, derate)
+
+    if return_dict is not None:
+        return_dict["nightmare_cov"] = nightmare_cov
+        return_dict["throws"] = throws
 
     return float(derate)
 

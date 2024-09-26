@@ -53,7 +53,8 @@ def test_derate_multi_covariance():
             [np.nan, np.nan, np.nan, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance([cov1, cov2, cov3], sigma=2) - 1.16) < 0.1
+    cov4 = np.zeros((4, 4))
+    assert np.abs(r.derate_covariance([cov1, cov2, cov3, cov4], sigma=2) - 1.16) < 0.1
 
 
 def test_derate_single_covariance_fit():
