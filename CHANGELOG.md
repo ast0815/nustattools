@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Changed
 
 - Moved `robust` module into `stats`.
