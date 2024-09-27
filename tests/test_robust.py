@@ -8,7 +8,10 @@ import nustattools.stats as r
 
 def test_derate_unity_covariance():
     cov = np.eye(7)
-    assert np.abs(r.derate_covariance(cov, sigma=1, accuracy=0.001) - 1.0) < 0.01
+    assert (
+        np.abs(r.derate_covariance(cov, sigma=1, accuracy=0.001, return_dict={}) - 1.0)
+        < 0.01
+    )
 
 
 def test_derate_single_covariance():
@@ -18,6 +21,18 @@ def test_derate_single_covariance():
             [1.0, 2.0, np.nan, np.nan],
             [np.nan, np.nan, 3.0, 2.0],
             [np.nan, np.nan, 2.0, 3.0],
+        ]
+    )
+    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
+
+
+def test_derate_known_off_diag():
+    cov = np.array(
+        [
+            [2.0, 0.0, np.nan, 0.0],
+            [0.0, 2.0, np.nan, np.nan],
+            [np.nan, np.nan, 3.0, 0.0],
+            [0.0, np.nan, 0.0, 3.0],
         ]
     )
     assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
@@ -41,7 +56,8 @@ def test_derate_multi_covariance():
             [np.nan, np.nan, np.nan, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance([cov1, cov2, cov3], sigma=2) - 1.16) < 0.1
+    cov4 = np.zeros((4, 4))
+    assert np.abs(r.derate_covariance([cov1, cov2, cov3, cov4], sigma=2) - 1.16) < 0.1
 
 
 def test_derate_single_covariance_fit():
