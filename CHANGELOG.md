@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Fixed
+
+- Fixed numerical precision issues in covariance derating.
+
 ## [0.3.0]
 
 ### Changed
