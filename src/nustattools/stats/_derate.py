@@ -102,21 +102,25 @@ def get_blocks(cov: NDArray[Any]) -> list[int]:
     return blocks
 
 
-def get_whitening_transform(cov: NDArray[Any]) -> NDArray[Any]:
-    """Get the blockwise whitening matrix."""
+def get_whitening_transform(cov: NDArray[Any]) -> tuple[NDArray[Any], NDArray[Any]]:
+    """Get the blockwise whitening matrix and inverse."""
 
     blocks = get_blocks(cov)
     W_l = []
+    Wi_l = []
     i = 0
     for n in blocks:
         c = cov[i : i + n, :][:, i : i + n]
         if np.all(c == 0):
             W_l.append(np.zeros_like(c))
+            Wi_l.append(np.zeros_like(c))
         else:
-            W_l.append(np.linalg.inv(sqrtm(c)))
+            sc = sqrtm(c)
+            W_l.append(np.linalg.pinv(sc))
+            Wi_l.append(sc)
         i += n
 
-    return np.asarray(block_diag(*W_l))
+    return np.asarray(block_diag(*W_l)), np.asarray(block_diag(*Wi_l))
 
 
 def derate_covariance(
@@ -182,13 +186,12 @@ def derate_covariance(
     nightmare_cov = np.zeros_like(cov_0)
     for c, c0 in zip(covl, cov_0_l):
         # Determine the whitening transform for each covariance
-        W = get_whitening_transform(c)
-        # NaNs turn everything into NaN, use zeroed covs
-        cor = W @ c0 @ W.T
+        W, Wi = get_whitening_transform(c)
+        # Whitened correlation is identity matrix
+        cor = np.eye(len(c0))
         # Set unknowns back to NaN
         cor[np.isnan(c)] = np.nan
-        # Set almost 0 to 0
-        cor[np.abs(cor) < 1e-15] = 0.0
+
         # Assumed total covariance in whitened coordinates
         S = W @ cov_0 @ W.T
         Si = np.linalg.pinv(S)
@@ -197,7 +200,8 @@ def derate_covariance(
         P = A @ Q
         T = Si @ P
         cor_nightmare = fill_max_correlation(cor, T)
-        Wi = np.linalg.pinv(W)
+
+        # Transform back to non-whitened coordinates
         cov_nightmare = Wi @ cor_nightmare @ Wi.T
         nightmare_cov = nightmare_cov + cov_nightmare
 
