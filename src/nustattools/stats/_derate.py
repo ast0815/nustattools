@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from warnings import warn
 
 import numpy as np
 from numba import njit
@@ -102,7 +103,46 @@ def get_blocks(cov: NDArray[Any]) -> list[int]:
     return blocks
 
 
-def get_whitening_transform(cov: NDArray[Any]) -> tuple[NDArray[Any], NDArray[Any]]:
+def make_positive_definite(cov: NDArray[Any]) -> NDArray[Any]:
+    """Make a covariance matrix positive definite.
+
+    Ensures that it is symmetric and adds small numbers to the diagonal until
+    it is positive definite.
+    """
+
+    if np.all(cov == 0):
+        msg = "Matrix block is all zeros! At least specify the diagonal elements!"
+        raise ValueError(msg)
+
+    # Make sure matrix is symmetric
+    c = (cov + cov.T) / 2
+
+    # Make sure it is positive definite
+    power = -18
+    epsilon = 0.0
+    while True:
+        try:
+            t = c + np.eye(len(c)) * epsilon
+            # Check that it can be Cholesky decomposed and inverted
+            np.linalg.cholesky(t)
+            np.linalg.inv(t)
+        except np.linalg.LinAlgError:
+            power += 1
+            epsilon = np.min(np.diag(c)[np.diag(c) > 0]) * 10**power
+        else:
+            c = c + np.eye(len(c)) * epsilon
+            break
+
+    if power > -18:
+        msg = f"Had to increase covariance diagonal by {epsilon * 100} to make it positive definite."
+        warn(msg, stacklevel=3)
+
+    return np.asarray(c)
+
+
+def get_whitening_transform(
+    cov: NDArray[Any], transform: str = "mahalanobis"
+) -> tuple[NDArray[Any], NDArray[Any]]:
     """Get the blockwise whitening matrix and inverse."""
 
     blocks = get_blocks(cov)
@@ -111,13 +151,25 @@ def get_whitening_transform(cov: NDArray[Any]) -> tuple[NDArray[Any], NDArray[An
     i = 0
     for n in blocks:
         c = cov[i : i + n, :][:, i : i + n]
+
         if np.all(c == 0):
-            W_l.append(np.zeros_like(c))
-            Wi_l.append(np.zeros_like(c))
-        else:
+            msg = "Matrix block is all zeros! At least specify the diagonal elements!"
+            raise ValueError(msg)
+
+        c = make_positive_definite(c)
+        # Determine transformation
+        if transform == "mahalanobis":
             sc = sqrtm(c)
-            W_l.append(np.linalg.pinv(sc))
+            W_l.append(np.linalg.inv(sc))
             Wi_l.append(sc)
+        elif transform == "cholesky":
+            W = np.linalg.cholesky(np.linalg.inv(c)).T
+            W_l.append(W)
+            Wi_l.append(np.linalg.inv(W))
+        else:
+            m = f"Unknown whitening transform '{transform}'."
+            raise ValueError(m)
+
         i += n
 
     return np.asarray(block_diag(*W_l)), np.asarray(block_diag(*Wi_l))
@@ -130,6 +182,7 @@ def derate_covariance(
     sigma: float = 3.0,
     precision: float = 0.01,
     return_dict: dict[str, Any] | None = None,
+    whitening: str = "mahalanobis",
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
 
@@ -154,6 +207,8 @@ def derate_covariance(
     return_dict : dict, optional
         If specified, the nightmare covariance and thrown data samples are
         added to this dictionary for detailed studies outside the function.
+    whitening : ``"cholesky"`` or ``"mahalnobis"``, default="mahalanobis"
+        Specify which method to use for the whitening transform.
 
     Returns
     -------
@@ -170,7 +225,8 @@ def derate_covariance(
 
     # Assumed covariance
     # All unknown elements set to 0.
-    cov_0_l = [np.nan_to_num(c) for c in covl]
+    # Make sure they are positive definite
+    cov_0_l = [make_positive_definite(np.nan_to_num(c)) for c in covl]
     cov_0 = np.sum(cov_0_l, axis=0)
     cov_0_inv = np.linalg.inv(cov_0)
 
@@ -186,17 +242,17 @@ def derate_covariance(
     nightmare_cov = np.zeros_like(cov_0)
     for c, c0 in zip(covl, cov_0_l):
         # Determine the whitening transform for each covariance
-        W, Wi = get_whitening_transform(c)
+        W, Wi = get_whitening_transform(c, transform=whitening)
         # Whitened correlation is identity matrix
         cor = np.eye(len(c0))
         # Set unknowns back to NaN
         cor[np.isnan(c)] = np.nan
 
         # Assumed total covariance in whitened coordinates
-        S = W @ cov_0 @ W.T
-        Si = np.linalg.pinv(S)
+        S = make_positive_definite(W @ cov_0 @ W.T)
+        Si = np.linalg.inv(S)
         A = W @ jacobian
-        Q = np.linalg.pinv(A.T @ Si @ A) @ A.T @ Si
+        Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
         P = A @ Q
         T = Si @ P
         cor_nightmare = fill_max_correlation(cor, T)
@@ -221,7 +277,9 @@ def derate_covariance(
     )
     # Assumed covariance in parameter space
     assumed_parameter_cov = parameter_estimator @ cov_0 @ parameter_estimator.T
-    assumed_parameter_cov_inv = np.linalg.inv(assumed_parameter_cov)
+    assumed_parameter_cov_inv = np.linalg.inv(
+        make_positive_definite(assumed_parameter_cov)
+    )
     # Actual nightmare_cov covariance
     nightmare_parameter_cov = (
         parameter_estimator @ nightmare_cov @ parameter_estimator.T

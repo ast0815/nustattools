@@ -12,6 +12,10 @@ and this project adheres to
 
 - Renamed `derate_covariance` parameter `accuracy` to `precision`.
 
+### Added
+
+- Argument to change whitening transform in `derate_covariance`.
+
 ## [0.3.1]
 
 ### Fixed
