@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed `derate_covariance` parameter `accuracy` to `precision`.
+
 ## [0.3.1]
 
 ### Fixed

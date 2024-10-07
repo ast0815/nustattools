@@ -128,7 +128,7 @@ def derate_covariance(
     *,
     jacobian: ArrayLike | None = None,
     sigma: float = 3.0,
-    accuracy: float = 0.01,
+    precision: float = 0.01,
     return_dict: dict[str, Any] | None = None,
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
@@ -148,7 +148,7 @@ def derate_covariance(
         The desired confidence level up to which the derated covariance should
         be conservative, expressed in standard-normal standard deviations. E.g.
         ``sigma=3.`` corresponds to ``CL=0.997``.
-    accuracy : float, default=0.01
+    precision : float, default=0.01
         The derating factor is calculated using numerical sampling. This parameter
         determines how many samples to throw. Lower values mean more samples.
     return_dict : dict, optional
@@ -231,7 +231,7 @@ def derate_covariance(
     n_throws = (
         int(
             (alpha * (1.0 - alpha))
-            / (chi2.pdf(crit_0, df=n_param) ** 2 * (crit_0 * accuracy) ** 2)
+            / (chi2.pdf(crit_0, df=n_param) ** 2 * (crit_0 * precision) ** 2)
         )
         + 1
     )

@@ -9,7 +9,7 @@ import nustattools.stats as r
 def test_derate_unity_covariance():
     cov = np.eye(7)
     assert (
-        np.abs(r.derate_covariance(cov, sigma=1, accuracy=0.001, return_dict={}) - 1.0)
+        np.abs(r.derate_covariance(cov, sigma=1, precision=0.001, return_dict={}) - 1.0)
         < 0.01
     )
 
@@ -76,7 +76,7 @@ def test_derate_single_covariance_fit():
     ).T
     A = A / np.sqrt(np.sum(A**2, axis=0, keepdims=True))
     assert (
-        np.abs(r.derate_covariance(cov, jacobian=A, sigma=3, accuracy=0.001) - 1.827)
+        np.abs(r.derate_covariance(cov, jacobian=A, sigma=3, precision=0.001) - 1.827)
         < 0.02
     )
 
