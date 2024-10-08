@@ -28,6 +28,7 @@ def test_derate_single_covariance():
         np.abs(r.derate_covariance(cov, sigma=2, whitening="mahalanobis") - 1.29) < 0.1
     )
     assert np.abs(r.derate_covariance(cov, sigma=2, whitening="cholesky") - 1.29) < 0.1
+    assert np.abs(r.derate_covariance(cov, sigma=2, whitening="zca-cor") - 1.29) < 0.1
 
     with pytest.raises(ValueError, match="Unknown whitening"):
         r.derate_covariance(cov, whitening="unknown")

@@ -158,10 +158,19 @@ def get_whitening_transform(
 
         c = make_positive_definite(c)
         # Determine transformation
-        if transform == "mahalanobis":
+        if transform in ("mahalanobis", "zca"):
             sc = sqrtm(c)
             W_l.append(np.linalg.inv(sc))
             Wi_l.append(sc)
+        elif transform in ("zca-cor"):
+            V = np.sqrt(np.diag(c))
+            Vi = 1 / V
+            V = np.diag(V)
+            Vi = np.diag(Vi)
+            cor = Vi @ c @ Vi
+            sc = sqrtm(cor)
+            W_l.append(np.linalg.inv(sc) @ Vi)
+            Wi_l.append(V @ sc)
         elif transform == "cholesky":
             W = np.linalg.cholesky(np.linalg.inv(c)).T
             W_l.append(W)
@@ -193,7 +202,7 @@ def derate_covariance(
     cov : numpy.ndarray or list of numpy.ndarray
         The covariance matrix of the data or a list of covariances that add up
         to the total. Unknown covariance blocks must be ``np.nan``. Off
-        diagonal blocks may only be ``0'' or ``np.nan''. Diagonal blocks must
+        diagonal blocks may only be ``0`` or ``np.nan``. Diagonal blocks must
         not be ``np.nan''.
     jacobian : numpy.ndarray, default=None
         Jacobian matrix of the model prediction wrt the best-fit parameters.
@@ -207,13 +216,34 @@ def derate_covariance(
     return_dict : dict, optional
         If specified, the nightmare covariance and thrown data samples are
         added to this dictionary for detailed studies outside the function.
-    whitening : ``"cholesky"`` or ``"mahalnobis"``, default="mahalanobis"
+    whitening : str, default="mahalanobis"
         Specify which method to use for the whitening transform.
 
     Returns
     -------
     a : float
         The derating factor for the total covariance.
+
+    Notes
+    -----
+
+    The available whitening transforms are:
+
+    ``mahalanobis`` or ``zca``
+        ``W = sqrtm(inv(cov))``
+
+    ``cholesky``
+        ``W = cholesky(inv(cov)).T``
+
+    See [Kessy2015]_.
+
+    References
+    ----------
+
+    .. [Kessy2015] Kessy, Agnan / Lewin, Alex / Strimmer, Korbinian
+       "Optimal whitening and decorrelation",
+       The American Statistician 2018, Vol. 72, No. 4, pp. 309-314 , Vol. 72, No. 4,
+       Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
 
     """
 
