@@ -103,6 +103,15 @@ def test_derate_single_covariance_fit():
         np.abs(r.derate_covariance(cov, jacobian=A, sigma=3, precision=0.001) - 1.827)
         < 0.02
     )
+    assert (
+        np.abs(
+            r.derate_covariance(
+                cov, jacobian=A, sigma=3, precision=0.001, whitening="zca_aligned"
+            )
+            - 1.948
+        )
+        < 0.02
+    )
 
 
 def test_derate_multi_covariance_fit():

@@ -141,9 +141,16 @@ def make_positive_definite(cov: NDArray[Any]) -> NDArray[Any]:
 
 
 def get_whitening_transform(
-    cov: NDArray[Any], transform: str = "mahalanobis"
+    cov: NDArray[Any],
+    transform: str = "zca_aligned",
+    projection: NDArray[Any] | None = None,
 ) -> tuple[NDArray[Any], NDArray[Any]]:
     """Get the blockwise whitening matrix and inverse."""
+
+    tokens = transform.split("_")
+    if len(tokens) > 2:
+        msg = f"Unknown whitening transform '{transform}'."
+        raise ValueError(msg)
 
     blocks = get_blocks(cov)
     W_l = []
@@ -158,11 +165,13 @@ def get_whitening_transform(
 
         c = make_positive_definite(c)
         # Determine transformation
-        if transform in ("mahalanobis", "zca"):
+        if tokens[0] in ("mahalanobis", "zca"):
             sc = sqrtm(c)
-            W_l.append(np.linalg.inv(sc))
-            Wi_l.append(sc)
-        elif transform in ("zca-cor"):
+            W = np.linalg.inv(sc)
+            Wi = sc
+            W_l.append(W)
+            Wi_l.append(Wi)
+        elif tokens[0] in ("zca-cor",):
             V = np.sqrt(np.diag(c))
             Vi = 1 / V
             V = np.diag(V)
@@ -171,17 +180,41 @@ def get_whitening_transform(
             sc = sqrtm(cor)
             W_l.append(np.linalg.inv(sc) @ Vi)
             Wi_l.append(V @ sc)
-        elif transform == "cholesky":
+        elif tokens[0] in ("cholesky",):
             W = np.linalg.cholesky(np.linalg.inv(c)).T
             W_l.append(W)
             Wi_l.append(np.linalg.inv(W))
         else:
-            m = f"Unknown whitening transform '{transform}'."
-            raise ValueError(m)
+            msg = f"Unknown whitening transform '{transform}'."
+            raise ValueError(msg)
 
         i += n
 
-    return np.asarray(block_diag(*W_l)), np.asarray(block_diag(*Wi_l))
+    W = block_diag(*W_l)
+    Wi = block_diag(*Wi_l)
+
+    Rt_l = []
+    if len(tokens) == 2:
+        if tokens[1] == "aligned":
+            # Align whitened coordinates with image space
+            P = W @ projection @ Wi
+            i = 0
+            for n in blocks:
+                E = np.diag([0] * i + [1] * n + [0] * (len(P) - i - n))[:, i : i + n]
+                A = P[i : i + n, :] @ E
+                U, S, Vh = np.linalg.svd(A)
+                Rt_l.append(U)
+
+                i += n
+
+            Rt = block_diag(*Rt_l)
+            Wi = Wi @ Rt
+            W = Rt.T @ W
+        else:
+            msg = f"Unknown whitening transform '{transform}'."
+            raise ValueError(msg)
+
+    return np.asarray(W), np.asarray(Wi)
 
 
 def derate_covariance(
@@ -191,7 +224,8 @@ def derate_covariance(
     sigma: float = 3.0,
     precision: float = 0.01,
     return_dict: dict[str, Any] | None = None,
-    whitening: str = "mahalanobis",
+    whitening: str = "zca_aligned",
+    max_batch_size: int = 10_000,
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
 
@@ -216,7 +250,7 @@ def derate_covariance(
     return_dict : dict, optional
         If specified, the nightmare covariance and thrown data samples are
         added to this dictionary for detailed studies outside the function.
-    whitening : str, default="mahalanobis"
+    whitening : str, default="zca_aligned"
         Specify which method to use for the whitening transform.
 
     Returns
@@ -227,15 +261,22 @@ def derate_covariance(
     Notes
     -----
 
-    The available whitening transforms are:
+    The basic available whitening transforms are:
 
     ``mahalanobis`` or ``zca``
         ``W = sqrtm(inv(cov))``
+
+    ``zca-cor``
+        ``W = sqrtm(inv(cor)) @ diag(1/sqrt(diag(cov)))``
 
     ``cholesky``
         ``W = cholesky(inv(cov)).T``
 
     See [Kessy2015]_.
+
+    If ``_aligned`` is appended to a basic transform, an additional rotation
+    matrix is prepended, which aligns the whitened coordinate axes with the
+    model parameter space given by `jacobian`. See [Koch2024]_.
 
     References
     ----------
@@ -244,6 +285,9 @@ def derate_covariance(
        "Optimal whitening and decorrelation",
        The American Statistician 2018, Vol. 72, No. 4, pp. 309-314 , Vol. 72, No. 4,
        Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
+
+    .. [Koch2024] L. Koch "Hypothesis tests and model parameter estimation on
+       data sets1 with missing correlation information", TBD
 
     """
 
@@ -271,21 +315,34 @@ def derate_covariance(
     # covariance, then transform back
     nightmare_cov = np.zeros_like(cov_0)
     for c, c0 in zip(covl, cov_0_l):
-        # Determine the whitening transform for each covariance
-        W, Wi = get_whitening_transform(c, transform=whitening)
         # Whitened correlation is identity matrix
         cor = np.eye(len(c0))
         # Set unknowns back to NaN
         cor[np.isnan(c)] = np.nan
 
-        # Assumed total covariance in whitened coordinates
-        S = make_positive_definite(W @ cov_0 @ W.T)
+        # Projection matrix in original coordinates
+        S = make_positive_definite(cov_0)
         Si = np.linalg.inv(S)
-        A = W @ jacobian
+        A = jacobian
         Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
         P = A @ Q
+
+        # Target matrix
         T = Si @ P
-        cor_nightmare = fill_max_correlation(cor, T)
+
+        # Determine the whitening transform for each covariance
+        W, Wi = get_whitening_transform(c, transform=whitening, projection=P)
+
+        # Target matrix in whitened coordinates
+        Txi = Wi.T @ T @ Wi
+
+        # Assumed total covariance in whitened coordinates
+        # S = make_positive_definite(W @ cov_0 @ W.T)
+        # Si = np.linalg.inv(S)
+        # A = W @ jacobian
+        # Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
+        # P = A @ Q
+        cor_nightmare = fill_max_correlation(cor, Txi)
 
         # Transform back to non-whitened coordinates
         cov_nightmare = Wi @ cor_nightmare @ Wi.T
@@ -323,12 +380,25 @@ def derate_covariance(
         )
         + 1
     )
-    throws = rng.multivariate_normal(
-        mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=n_throws
-    )
+    # Throw in batches and average to avoid huge memory footprint
+    n_batches = (n_throws // max_batch_size) + 1
+    batch_size = (n_throws // n_batches) + 1
+    if batch_size * alpha < 2:
+        msg = f"Batch size of {batch_size} is too small for significance level {alpha}."
+        raise RuntimeError(msg)
+    crit_nightmare = 0.0
+    throws = dist = None
+    for _ in range(n_batches):
+        del throws, dist
+        throws = rng.multivariate_normal(
+            mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=batch_size
+        )
 
-    dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
-    crit_nightmare = -np.quantile(-dist, alpha)
+        dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
+
+        crit_nightmare += -np.quantile(-dist, alpha)
+
+    crit_nightmare /= n_batches
 
     derate = crit_nightmare / crit_0
 
@@ -337,6 +407,8 @@ def derate_covariance(
     if return_dict is not None:
         return_dict["nightmare_cov"] = nightmare_cov
         return_dict["throws"] = throws
+        return_dict["W"] = W
+        return_dict["Wi"] = Wi
 
     return float(derate)
 
