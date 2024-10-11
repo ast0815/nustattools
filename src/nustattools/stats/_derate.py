@@ -381,7 +381,7 @@ def derate_covariance(
     if batch_size * alpha < 2:
         msg = f"Batch size of {batch_size} is too small for significance level {alpha}."
         raise RuntimeError(msg)
-    crit_nightmare = 0.0
+    crit_nightmare: np.floating[Any] | float = 0.0
     throws = dist = None
     for _ in range(n_batches):
         del throws, dist
