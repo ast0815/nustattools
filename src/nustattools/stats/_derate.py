@@ -202,7 +202,7 @@ def get_whitening_transform(
             for n in blocks:
                 E = np.diag([0] * i + [1] * n + [0] * (len(P) - i - n))[:, i : i + n]
                 A = P[i : i + n, :] @ E
-                U, S, Vh = np.linalg.svd(A)
+                U, _, _ = np.linalg.svd(A)
                 Rt_l.append(U)
 
                 i += n
@@ -237,7 +237,7 @@ def derate_covariance(
         The covariance matrix of the data or a list of covariances that add up
         to the total. Unknown covariance blocks must be ``np.nan``. Off
         diagonal blocks may only be ``0`` or ``np.nan``. Diagonal blocks must
-        not be ``np.nan''.
+        not be ``np.nan``.
     jacobian : numpy.ndarray, default=None
         Jacobian matrix of the model prediction wrt the best-fit parameters.
     sigma : float, default=3.
@@ -311,6 +311,16 @@ def derate_covariance(
     else:
         jacobian = np.asarray(jacobian)
 
+    # Projection matrix in original coordinates
+    S = make_positive_definite(cov_0)
+    Si = np.linalg.inv(S)
+    A = jacobian
+    Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
+    P = A @ Q
+
+    # Target matrix
+    T = Si @ P
+
     # Transform to whitened coordinate systems and calculate "nightmare_cov"
     # covariance, then transform back
     nightmare_cov = np.zeros_like(cov_0)
@@ -320,16 +330,6 @@ def derate_covariance(
         # Set unknowns back to NaN
         cor[np.isnan(c)] = np.nan
 
-        # Projection matrix in original coordinates
-        S = make_positive_definite(cov_0)
-        Si = np.linalg.inv(S)
-        A = jacobian
-        Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
-        P = A @ Q
-
-        # Target matrix
-        T = Si @ P
-
         # Determine the whitening transform for each covariance
         W, Wi = get_whitening_transform(c, transform=whitening, projection=P)
 
@@ -337,11 +337,6 @@ def derate_covariance(
         Txi = Wi.T @ T @ Wi
 
         # Assumed total covariance in whitened coordinates
-        # S = make_positive_definite(W @ cov_0 @ W.T)
-        # Si = np.linalg.inv(S)
-        # A = W @ jacobian
-        # Q = np.linalg.inv(make_positive_definite(A.T @ Si @ A)) @ A.T @ Si
-        # P = A @ Q
         cor_nightmare = fill_max_correlation(cor, Txi)
 
         # Transform back to non-whitened coordinates
