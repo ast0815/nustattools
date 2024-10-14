@@ -1,0 +1,6 @@
+[submodule "src/nustattools/stats/gx2-py"]
+	path = src/nustattools/stats/gx2
+	url = git@github.com:ast0815/gx2-py.git
+[submodule "src/nustattools/stats/gx2"]
+	path = src/nustattools/stats/gx2
+	url = https://github.com/ast0815/gx2-py
