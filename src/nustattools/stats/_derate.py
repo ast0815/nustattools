@@ -202,8 +202,7 @@ def get_whitening_transform(
             P = W @ projection @ Wi
             i = 0
             for n in blocks:
-                E = np.diag([0] * i + [1] * n + [0] * (len(P) - i - n))[:, i : i + n]
-                A = P[i : i + n, :] @ E
+                A = P[i : i + n, :][:, i : i + n]
                 U, _, _ = np.linalg.svd(A)
                 Rt_l.append(U)
 
