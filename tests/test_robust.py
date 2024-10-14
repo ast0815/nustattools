@@ -42,6 +42,10 @@ def test_derate_single_covariance():
 
     with pytest.raises(ValueError, match="Unknown whitening"):
         r.derate_covariance(cov, whitening="unknown")
+    with pytest.raises(ValueError, match="Unknown whitening"):
+        r.derate_covariance(cov, whitening="zca_unknown")
+    with pytest.raises(ValueError, match="Unknown whitening"):
+        r.derate_covariance(cov, whitening="zca_aligned_unknown")
 
     cov = np.array(
         [
