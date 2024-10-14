@@ -447,6 +447,9 @@ def derate_covariance(
 
     derate = crit_nightmare / crit_0
 
+    if derate.ndim > 0:
+        derate = derate[0]
+
     derate = max(1.0, derate)
 
     if return_dict is not None:
