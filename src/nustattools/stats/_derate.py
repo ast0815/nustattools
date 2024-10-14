@@ -11,6 +11,8 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.linalg import block_diag, sqrtm
 from scipy.stats import chi2
 
+from .gx2.functions import gx2inv
+
 
 @njit()  # type: ignore[misc]
 def _fix(cov: NDArray[Any]) -> NDArray[Any]:
@@ -222,9 +224,10 @@ def derate_covariance(
     *,
     jacobian: ArrayLike | None = None,
     sigma: float = 3.0,
-    precision: float = 0.01,
     return_dict: dict[str, Any] | None = None,
     whitening: str = "zca_aligned",
+    method: str = "gx2",
+    precision: float = 0.01,
     max_batch_size: int = 10_000,
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
@@ -244,14 +247,22 @@ def derate_covariance(
         The desired confidence level up to which the derated covariance should
         be conservative, expressed in standard-normal standard deviations. E.g.
         ``sigma=3.`` corresponds to ``CL=0.997``.
-    precision : float, default=0.01
-        The derating factor is calculated using numerical sampling. This parameter
-        determines how many samples to throw. Lower values mean more samples.
     return_dict : dict, optional
         If specified, the nightmare covariance and thrown data samples are
         added to this dictionary for detailed studies outside the function.
     whitening : str, default="zca_aligned"
         Specify which method to use for the whitening transform.
+    method : str, default="gx2"
+        Either ``gx2`` or ``mc``. The former calculates the p-value directly,
+        the latter uses Monte Carlo methods.
+    precision : float, default=0.01
+        If the derating factor is calculated using numerical sampling (MC), this
+        parameter determines how many samples to throw. Lower values mean more
+        samples.
+    max_batch_size : int, default=10_000
+        If the derating factor is calculated using numerical sampling (MC), this
+        parameter determines how many samples to are thrown at once. This is
+        repeated until the total number for the required precision is reached.
 
     Returns
     -------
@@ -350,50 +361,89 @@ def derate_covariance(
     n_param = jacobian.shape[1]
     crit_0 = chi2.isf(alpha, df=n_param)
 
-    # Nightmare critical value from random throws
-    rng = np.random.default_rng()
-    # Matrix that solves the least squares problem
-    # Uses assumed covariance
-    parameter_estimator = (
-        np.linalg.inv(jacobian.T @ cov_0_inv @ jacobian) @ jacobian.T @ cov_0_inv
-    )
-    # Assumed covariance in parameter space
-    assumed_parameter_cov = parameter_estimator @ cov_0 @ parameter_estimator.T
-    assumed_parameter_cov_inv = np.linalg.inv(
-        make_positive_definite(assumed_parameter_cov)
-    )
-    # Actual nightmare_cov covariance
-    nightmare_parameter_cov = (
-        parameter_estimator @ nightmare_cov @ parameter_estimator.T
-    )
-    # Estimate necessary precision
-    # var = alpha(1-alpha) / (n f(crit_0)**2) =!= (crit_0 * rel_error)**2
-    n_throws = (
-        int(
-            (alpha * (1.0 - alpha))
-            / (chi2.pdf(crit_0, df=n_param) ** 2 * (crit_0 * precision) ** 2)
-        )
-        + 1
-    )
-    # Throw in batches and average to avoid huge memory footprint
-    n_batches = (n_throws // max_batch_size) + 1
-    batch_size = (n_throws // n_batches) + 1
-    if batch_size * alpha < 2:
-        msg = f"Batch size of {batch_size} is too small for significance level {alpha}."
-        raise RuntimeError(msg)
+    # Actual critical value in parameter space
     crit_nightmare: np.floating[Any] | float = 0.0
-    throws = dist = None
-    for _ in range(n_batches):
-        del throws, dist
-        throws = rng.multivariate_normal(
-            mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=batch_size
+    if method == "gx2":
+        # Generalised chi-squared
+        Si_theta = A.T @ Si @ A
+        V_theta = Q @ nightmare_cov @ Q.T
+        H = Si_theta @ V_theta
+        weights = np.real(np.linalg.eigvals(H))
+        # Get rid of zeros and numerical artefacts
+        weights_l = sorted(weights[weights > 1e-2])
+        del weights
+        ndofs = list(np.ones_like(weights_l, dtype=int))
+        # Combine identical weights
+        i = 0
+        while i + 1 < len(weights_l):
+            if abs(weights_l[i] - weights_l[i + 1]) < 1e-3:
+                weights_l[i] = (
+                    weights_l[i] * ndofs[i] + weights_l[i + 1] * ndofs[i + 1]
+                ) / (ndofs[i] + ndofs[i + 1])
+                ndofs[i] += ndofs[i + 1]
+                del weights_l[i + 1]
+                del ndofs[i + 1]
+            else:
+                i += 1
+        tol = alpha / 1000.0
+        crit_nightmare = gx2inv(
+            alpha,
+            np.array(weights_l, dtype=float),
+            np.array(ndofs, dtype=int),
+            np.zeros_like(weights_l),
+            0,
+            0,
+            AbsTol=tol,
+            RelTol=tol,
+            side="upper",
         )
+    elif method == "mc":
+        # Nightmare critical value from random throws
+        rng = np.random.default_rng()
+        # Matrix that solves the least squares problem
+        # Uses assumed covariance
+        parameter_estimator = (
+            np.linalg.inv(jacobian.T @ cov_0_inv @ jacobian) @ jacobian.T @ cov_0_inv
+        )
+        # Assumed covariance in parameter space
+        assumed_parameter_cov = parameter_estimator @ cov_0 @ parameter_estimator.T
+        assumed_parameter_cov_inv = np.linalg.inv(
+            make_positive_definite(assumed_parameter_cov)
+        )
+        # Actual nightmare_cov covariance
+        nightmare_parameter_cov = (
+            parameter_estimator @ nightmare_cov @ parameter_estimator.T
+        )
+        # Estimate necessary precision
+        # var = alpha(1-alpha) / (n f(crit_0)**2) =!= (crit_0 * rel_error)**2
+        n_throws = (
+            int(
+                (alpha * (1.0 - alpha))
+                / (chi2.pdf(crit_0, df=n_param) ** 2 * (crit_0 * precision) ** 2)
+            )
+            + 1
+        )
+        # Throw in batches and average to avoid huge memory footprint
+        n_batches = (n_throws // max_batch_size) + 1
+        batch_size = (n_throws // n_batches) + 1
+        if batch_size * alpha < 2:
+            msg = f"Batch size of {batch_size} is too small for significance level {alpha}."
+            raise RuntimeError(msg)
+        throws = dist = None
+        for _ in range(n_batches):
+            del throws, dist
+            throws = rng.multivariate_normal(
+                mean=[0.0] * n_param, cov=nightmare_parameter_cov, size=batch_size
+            )
 
-        dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
+            dist = np.einsum("ai,ij,aj->a", throws, assumed_parameter_cov_inv, throws)
 
-        crit_nightmare += -np.quantile(-dist, alpha)
+            crit_nightmare += -np.quantile(-dist, alpha)
 
-    crit_nightmare /= n_batches
+        crit_nightmare /= n_batches
+    else:
+        msg = f"Unknown method {method}!"
+        raise ValueError(msg)
 
     derate = crit_nightmare / crit_0
 
@@ -401,9 +451,11 @@ def derate_covariance(
 
     if return_dict is not None:
         return_dict["nightmare_cov"] = nightmare_cov
-        return_dict["throws"] = throws
+        if method == "mc":
+            return_dict["throws"] = throws
         return_dict["W"] = W
         return_dict["Wi"] = Wi
+        return_dict["Q"] = Q
 
     return float(derate)
 
