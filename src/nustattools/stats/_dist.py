@@ -64,14 +64,14 @@ class Bee2(rv_continuous):
     Notes
     -----
 
-    This distribution is discussed in [1]_ in the context of robust test
+    This distribution is discussed in [Koch2021]_ in the context of robust test
     statistics.
 
 
     References
     ----------
 
-    .. [1] L. Koch, "Robust test statistics for data sets with missing
+    .. [Koch2021] L. Koch, "Robust test statistics for data sets with missing
         correlation information," Phys. Rev. D 103, 113008 (2021) , Vol. 103, No.
         11 p. 113008, https://arxiv.org/abs/2102.06172
 

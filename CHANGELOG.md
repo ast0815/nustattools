@@ -11,6 +11,7 @@ and this project adheres to
 ### Changed
 
 - Renamed `derate_covariance` parameter `accuracy` to `precision`.
+- Use Generalised Chi Squared distribution to calculate critical values.
 
 ### Added
 

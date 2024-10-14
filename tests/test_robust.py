@@ -11,7 +11,7 @@ def test_derate_unity_covariance():
     cov = np.eye(7)
     assert (
         np.abs(r.derate_covariance(cov, sigma=1, precision=0.001, return_dict={}) - 1.0)
-        < 0.01
+        < 0.0001
     )
 
 
@@ -25,12 +25,29 @@ def test_derate_single_covariance():
         ]
     )
     assert (
-        np.abs(r.derate_covariance(cov, sigma=2, whitening="mahalanobis") - 1.29) < 0.1
+        np.abs(r.derate_covariance(cov, sigma=2, whitening="mahalanobis") - 1.2722)
+        < 0.0001
     )
-    assert np.abs(r.derate_covariance(cov, sigma=2, whitening="cholesky") - 1.29) < 0.1
+    assert (
+        np.abs(r.derate_covariance(cov, sigma=2, whitening="cholesky") - 1.2722)
+        < 0.0001
+    )
+    assert (
+        np.abs(r.derate_covariance(cov, sigma=2, whitening="zca-cor") - 1.2722) < 0.0001
+    )
+    assert (
+        np.abs(r.derate_covariance(cov, sigma=2, whitening="zca_aligned") - 1.2722)
+        < 0.0001
+    )
 
     with pytest.raises(ValueError, match="Unknown whitening"):
         r.derate_covariance(cov, whitening="unknown")
+    with pytest.raises(ValueError, match="Unknown whitening"):
+        r.derate_covariance(cov, whitening="zca_unknown")
+    with pytest.raises(ValueError, match="Unknown whitening"):
+        r.derate_covariance(cov, whitening="zca_aligned_unknown")
+    with pytest.raises(ValueError, match="Unknown method"):
+        r.derate_covariance(cov, method="unknown")
 
     cov = np.array(
         [
@@ -41,7 +58,7 @@ def test_derate_single_covariance():
         ]
     )
     with pytest.warns(UserWarning):
-        assert np.abs(r.derate_covariance(cov, sigma=2) - 1.41) < 0.1
+        assert np.abs(r.derate_covariance(cov, sigma=2) - 1.3117) < 0.05
 
 
 def test_derate_known_off_diag():
@@ -53,7 +70,7 @@ def test_derate_known_off_diag():
             [0.0, np.nan, 0.0, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.29) < 0.1
+    assert np.abs(r.derate_covariance(cov, sigma=2) - 1.2722) < 0.0001
 
 
 def test_derate_multi_covariance():
@@ -74,7 +91,7 @@ def test_derate_multi_covariance():
             [np.nan, np.nan, np.nan, 3.0],
         ]
     )
-    assert np.abs(r.derate_covariance([cov1, cov2, cov3], sigma=2) - 1.16) < 0.1
+    assert np.abs(r.derate_covariance([cov1, cov2, cov3], sigma=2) - 1.1444) < 0.0001
     cov4 = np.zeros((4, 4))
     with pytest.raises(ValueError, match="is all zeros"):
         r.derate_covariance([cov1, cov2, cov3, cov4], sigma=2)
@@ -98,10 +115,19 @@ def test_derate_single_covariance_fit():
         dtype=float,
     ).T
     A = A / np.sqrt(np.sum(A**2, axis=0, keepdims=True))
+    ret = {}
     assert (
-        np.abs(r.derate_covariance(cov, jacobian=A, sigma=3, precision=0.001) - 1.827)
+        np.abs(
+            r.derate_covariance(
+                cov, jacobian=A, sigma=3, method="mc", precision=0.001, return_dict=ret
+            )
+            - 1.95
+        )
         < 0.02
     )
+    with pytest.raises(RuntimeError, match="is too small"):
+        r.derate_covariance(cov, jacobian=A, sigma=3, method="mc", max_batch_size=100)
+    assert np.abs(r.derate_covariance(cov, jacobian=A, sigma=3) - 1.9555) < 0.0001
 
 
 def test_derate_multi_covariance_fit():
@@ -131,8 +157,8 @@ def test_derate_multi_covariance_fit():
     ).T
     A = A / np.sqrt(np.sum(A**2, axis=0, keepdims=True))
     assert (
-        np.abs(r.derate_covariance([cov1, cov2, cov3], jacobian=A, sigma=2) - 1.54)
-        < 0.1
+        np.abs(r.derate_covariance([cov1, cov2, cov3], jacobian=A, sigma=2) - 1.5502)
+        < 0.0001
     )
 
 
