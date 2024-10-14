@@ -115,9 +115,12 @@ def test_derate_single_covariance_fit():
         dtype=float,
     ).T
     A = A / np.sqrt(np.sum(A**2, axis=0, keepdims=True))
+    ret = {}
     assert (
         np.abs(
-            r.derate_covariance(cov, jacobian=A, sigma=3, method="mc", precision=0.001)
+            r.derate_covariance(
+                cov, jacobian=A, sigma=3, method="mc", precision=0.001, return_dict=ret
+            )
             - 1.95
         )
         < 0.02
