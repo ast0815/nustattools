@@ -122,6 +122,8 @@ def test_derate_single_covariance_fit():
         )
         < 0.02
     )
+    with pytest.raises(RuntimeError, match="is too small"):
+        r.derate_covariance(cov, jacobian=A, sigma=3, method="mc", max_batch_size=100)
     assert np.abs(r.derate_covariance(cov, jacobian=A, sigma=3) - 1.9555) < 0.0001
 
 
