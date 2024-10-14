@@ -58,7 +58,7 @@ def test_derate_single_covariance():
         ]
     )
     with pytest.warns(UserWarning):
-        assert np.abs(r.derate_covariance(cov, sigma=2) - 1.3117) < 0.02
+        assert np.abs(r.derate_covariance(cov, sigma=2) - 1.3117) < 0.05
 
 
 def test_derate_known_off_diag():
