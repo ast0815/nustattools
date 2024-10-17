@@ -8,9 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Changed
+## [0.4.1]
+
+### Fixed
+
+- Readthedocs.io checkout process.
 
 ## [0.4.0]
+
+### Changed
 
 - Renamed `derate_covariance` parameter `accuracy` to `precision`.
 - Use Generalised Chi Squared distribution to calculate critical values.
