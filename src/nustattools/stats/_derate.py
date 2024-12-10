@@ -8,7 +8,7 @@ from warnings import warn
 import numpy as np
 from numba import njit
 from numpy.typing import ArrayLike, NDArray
-from scipy.linalg import block_diag, sqrtm
+from scipy.linalg import block_diag, sqrtm, svd
 from scipy.stats import chi2
 
 from .gx2.functions import gx2inv
@@ -228,10 +228,11 @@ def derate_covariance(
     method: str = "gx2",
     precision: float = 0.01,
     max_batch_size: int = 10_000,
+    goodness_of_fit: bool = False,
 ) -> float:
     """Derate the covariance of some data to account for unknown correlations.
 
-    See TODO: Ref to paper.
+    See [Koch2024]_.
 
     Parameters
     ----------
@@ -242,6 +243,7 @@ def derate_covariance(
         not be ``np.nan``.
     jacobian : numpy.ndarray, default=None
         Jacobian matrix of the model prediction wrt the best-fit parameters.
+        If no jacobian is provided, the identity matrix will be used.
     sigma : float, default=3.
         The desired confidence level up to which the derated covariance should
         be conservative, expressed in standard-normal standard deviations. E.g.
@@ -262,6 +264,13 @@ def derate_covariance(
         If the derating factor is calculated using numerical sampling (MC), this
         parameter determines how many samples to are thrown at once. This is
         repeated until the total number for the required precision is reached.
+    goodness_of_fit : bool, default=False
+        The derating factor for the Goodness of Fit test is different from the
+        derating factor for model parameter estimation. If this parameter is
+        set to `True`, The provided model `jacobian` will be used to construct
+        the null space of the model in the data space. This is then used to
+        calculate the necessary derating factor for the Goodness of Fit or
+        Composite Hypothesis test.
 
     Returns
     -------
@@ -297,7 +306,8 @@ def derate_covariance(
        Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
 
     .. [Koch2024] L. Koch "Hypothesis tests and model parameter estimation on
-       data sets1 with missing correlation information", TBD
+       data sets1 with missing correlation information",
+       https://arxiv.org/abs/2410.22333
 
     """
 
@@ -320,6 +330,13 @@ def derate_covariance(
         jacobian = np.eye(n_data)
     else:
         jacobian = np.asarray(jacobian)
+
+    if goodness_of_fit:
+        # Calculate base of null space using SVD
+        U, _, _ = svd(jacobian)
+        # First k columns are image space, rest are null space
+        k = jacobian.shape[1]
+        jacobian = np.asarray(U[:, k:])
 
     # Projection matrix in original coordinates
     S = make_positive_definite(cov_0)

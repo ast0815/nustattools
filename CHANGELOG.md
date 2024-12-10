@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Argument to calculate null space of model projection for Goodness of Fit tests
+  with the covariance derating method.
+
 ## [0.4.1]
 
 ### Fixed
