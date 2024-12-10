@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Added
 
 - Argument to calculate null space of model projection for Goodness of Fit tests
