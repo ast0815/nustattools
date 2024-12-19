@@ -21,7 +21,7 @@ def _fix(cov: NDArray[Any]) -> NDArray[Any]:
         changed = False
         for k in range(len(cov)):
             for j in range(k + 1, len(cov)):
-                # pivot point k, m
+                # pivot point k, j
                 pivot = np.sign(cov[k, j])
                 if not np.isfinite(pivot):
                     continue
