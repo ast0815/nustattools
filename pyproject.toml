@@ -26,6 +26,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
@@ -37,6 +39,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+plotting = [
+  "matplotlib >= 3",
+]
 test = [
   "pytest >=6",
   "pytest-cov >=3",
@@ -52,6 +57,7 @@ docs = [
   "sphinx_autodoc_typehints",
   "furo>=2023.08.17",
   "intersphinx_registry",
+  "matplotlib >= 3",
 ]
 
 [project.urls]

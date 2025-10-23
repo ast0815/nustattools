@@ -31,7 +31,7 @@ def pylint(session: nox.Session) -> None:
     """
     # This needs to be installed into the package environment, and is slower
     # than a pre-commit check
-    session.install(".", "pylint")
+    session.install(".[plotting]", "pylint")
     session.run("pylint", "nustattools", *session.posargs)
 
 
@@ -40,7 +40,7 @@ def tests(session: nox.Session) -> None:
     """
     Run the unit and regular tests.
     """
-    session.install(".[test]")
+    session.install(".[test,plotting]")
     session.run("pytest", *session.posargs)
 
 

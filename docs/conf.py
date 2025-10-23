@@ -36,7 +36,9 @@ myst_enable_extensions = [
     "colon_fence",
 ]
 
-intersphinx_mapping = get_intersphinx_mapping(packages={"python", "numpy", "scipy"})
+intersphinx_mapping = get_intersphinx_mapping(
+    packages={"python", "numpy", "scipy", "matplotlib"}
+)
 # intersphinx_mapping.update({
 #    'my-package' : ('<url>', None),
 # })
