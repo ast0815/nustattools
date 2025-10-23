@@ -27,7 +27,6 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
@@ -45,6 +44,7 @@ plotting = [
 test = [
   "pytest >=6",
   "pytest-cov >=3",
+  "matplotlib >= 3",
 ]
 dev = [
   "pytest >=6",
@@ -82,6 +82,7 @@ addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
 xfail_strict = true
 filterwarnings = [
   "error",
+  "default::DeprecationWarning",
 ]
 log_cli_level = "INFO"
 testpaths = [
