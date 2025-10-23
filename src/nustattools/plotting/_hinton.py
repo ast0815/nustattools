@@ -143,7 +143,7 @@ def hinton(
     edge = 0.1
     ax.set_xlim(-0.5 - edge, matrix.shape[1] - 0.5 + edge)
     ax.set_ylim(-0.5 - edge, matrix.shape[0] - 0.5 + edge)
-    m = np.max(matrix.shape)
+    m: int = np.max(matrix.shape)
     ax.xaxis.set_major_locator(
         ticker.MaxNLocator(
             integer=True, min_n_ticks=1, nbins=1 + int(10 * matrix.shape[1] / m)
