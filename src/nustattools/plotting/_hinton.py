@@ -50,6 +50,47 @@ def hinton(
         The collections of patches for the negative and positive colors
         respectively
 
+    Examples
+    --------
+
+    .. plot::
+        :include-source: True
+
+        Basic usage:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> M = rng.uniform(size=(10,10)) - 0.5
+        >>> nuplt.hinton(M)
+
+    .. plot::
+        :include-source: True
+
+        Plot with a legend:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> M = rng.uniform(size=(10,10)) - 0.5
+        >>> nuplt.hinton(M, legend=True)
+        >>> plt.tight_layout(pad=2)
+
+    .. plot::
+        :include-source: True
+
+        Variants:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> M = rng.uniform(size=(10,10)) - 0.5
+        >>> nuplt.hinton(M, legend=True, shape="square", cmap="gray", origin="lower")
+        >>> plt.tight_layout(pad=2)
+
     Notes
     -----
 

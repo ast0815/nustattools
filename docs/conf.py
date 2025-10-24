@@ -18,6 +18,7 @@ extensions = [
     "sphinx_autodoc_typehints",
     "sphinx_copybutton",
     "sphinx.ext.viewcode",
+    "matplotlib.sphinxext.plot_directive",
 ]
 
 source_suffix = [".rst", ".md"]
