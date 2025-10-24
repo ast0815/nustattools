@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 
 - `plotting` module with `hinton` plot function.
