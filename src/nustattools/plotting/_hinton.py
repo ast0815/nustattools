@@ -101,7 +101,7 @@ def hinton(
         ly = ((matrix.shape[0] - 1) / 2) - ((lh - 1) / 2)
         for i, w in enumerate(np.linspace(-vmax, vmax, lh)):
             y = ly + (lh - 1) * (w / vmax + 1) / 2
-            ww = w if origin != "lower" else -w
+            ww = w if origin == "lower" else -w
             for x in range(lx, lx + lw):
                 add_patch(x, y, ww)
             if i in (0, (lh - 1) / 2, lh - 1):
