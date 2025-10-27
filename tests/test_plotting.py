@@ -24,3 +24,11 @@ def test_hinton():
         p.hinton(M, origin="")
     fig, ax = plt.subplots()
     p.hinton(M, ax=ax)
+
+
+def test_corplots():
+    x = np.linspace(0, 10, 5)
+    y = x
+    u = x[:, np.newaxis]
+    cov = np.eye(5) + u @ u.T
+    p.corlines(x, y, cov)
