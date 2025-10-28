@@ -212,7 +212,7 @@ def pcplot(
     yerr_safe = np.where(yerr > 0, yerr, 1e-12)
     ycor = ycov / yerr_safe[:, np.newaxis] / yerr_safe[np.newaxis, :]
 
-    # Get principle components
+    # Get principal components
     u, d, _ = np.linalg.svd(ycor)
     # Don't remove all of 1st principle component.
     # Otherwise the remaining K will be degenerate.
