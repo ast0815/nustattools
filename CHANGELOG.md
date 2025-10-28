@@ -10,7 +10,7 @@ and this project adheres to
 
 ### Added
 
-- `corlines` plots.
+- `corlines` and `pcplot` plots.
 
 ## [0.6.0]
 

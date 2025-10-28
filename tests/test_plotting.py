@@ -32,3 +32,18 @@ def test_corplots():
     u = x[:, np.newaxis]
     cov = np.eye(5) + u @ u.T
     p.corlines(x, y, cov)
+    p.pcplot(x, y, cov)
+    p.pcplot(x, y, cov, componentwidth=0.2)
+    p.pcplot(x, y, cov, componentwidth=[0.2] * 5)
+    p.pcplot(x, y, cov, componentwidth=[[0.2, 0.5]] * 5)
+    p.pcplot(x, y, cov, drawcorlines=False)
+    with pytest.raises(ValueError, match="Unknown scaling"):
+        p.pcplot(x, y, cov, scaling="x")
+    p.pcplot(x, y, cov, scaling=0.0)
+    p.pcplot(x, y, cov, scaling=1.0)
+    p.pcplot(x, y, cov, scaling="second")
+    p.pcplot(x, y, cov, scaling="last")
+    p.pcplot(x, y, cov, scaling="mincor")
+    M = np.eye(5)
+    M[0, 0] = 0
+    p.pcplot(x, y, M, scaling="mincor")
