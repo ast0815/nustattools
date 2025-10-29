@@ -180,11 +180,11 @@ def pcplot(
         triangles indicates the direction of the last (smallest) principal
         component.
     normalize: default=True
-        If ``True``, the PCA is run on the covariance is scaled such that all
-        diagonals are 1, and the PCA is run on the correlation matrix. If
-        ``False``, the PCA is run on the covariance matrix directly. In the
-        latter case, different error scales for different data points will have
-        a strong influence on the selection of the components.
+        If ``True``, the covariance is scaled such that all diagonals are 1,
+        and the PCA is run on the correlation matrix. If ``False``, the PCA is
+        run on the covariance matrix directly. In the latter case, different
+        error scales for different data points will have a strong influence on
+        the selection of the components.
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
     **kwargs : dict, optional
