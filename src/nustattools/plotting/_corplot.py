@@ -130,6 +130,7 @@ def pcplot(
     neghatch: str = "\\" * 2,
     drawcorlines: bool = True,
     drawconditional: bool = True,
+    normalize: bool = True,
     ax: Any = None,
     **kwargs: Any,
 ) -> Any:
@@ -178,6 +179,12 @@ def pcplot(
         the allowed variance if all other points are fixed. The filling of the
         triangles indicates the direction of the last (smallest) principal
         component.
+    normalize: default=True
+        If ``True``, the PCA is run on the covariance is scaled such that all
+        diagonals are 1, and the PCA is run on the correlation matrix. If
+        ``False``, the PCA is run on the covariance matrix directly. In the
+        latter case, different error scales for different data points will have
+        a strong influence on the selection of the components.
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
     **kwargs : dict, optional
@@ -223,7 +230,12 @@ def pcplot(
 
     yerr = np.sqrt(np.diag(ycov))
     yerr_safe = np.where(yerr > 0, yerr, 1e-12)
-    ycor = ycov / yerr_safe[:, np.newaxis] / yerr_safe[np.newaxis, :]
+    if normalize:
+        ycor = ycov / yerr_safe[:, np.newaxis] / yerr_safe[np.newaxis, :]
+        yerrscale = yerr
+    else:
+        ycor = ycov
+        yerrscale = 1.0
 
     # Conditional errors, i.e. if all other components are fixed
     # Make sure ycov is invertible by inflating the diagonal elements a tiny bit
@@ -237,22 +249,22 @@ def pcplot(
     q, d, _ = np.linalg.svd(ycor)
     w = q[:, -1]
     u = q[:, 0]
-    # Don't remove all of 1st principle component.
+    # Don't remove all of 1st principal component.
     # Otherwise the remaining K will be degenerate.
     # This also ensures that we do nothing if ycov in uncorrelated.
     if isinstance(scaling, float):
         # Scale from 0 to maximum allowed
-        u *= yerr * scaling * np.sqrt(d[0])
+        u *= yerrscale * scaling * np.sqrt(d[0])
     elif scaling == "second":
         # Scale so remaining contribution is same as second PCA component
-        u *= yerr * (np.sqrt(d[0] - d[1]))
+        u *= yerrscale * (np.sqrt(d[0] - d[1]))
     elif scaling == "last":
         # Scale so remaining contribution is same as last PCA component
-        u *= yerr * (np.sqrt(d[0] - d[-1]))
+        u *= yerrscale * (np.sqrt(d[0] - d[-1]))
     elif scaling == "mincor":
         # Scale to minimize total correlation in remaining covariance
         def fun(s: ArrayLike) -> Any:
-            v = u * yerr * s * np.sqrt(d[0])
+            v = u * yerrscale * s * np.sqrt(d[0])
             V = v[:, np.newaxis] @ v[np.newaxis, :]
             # Ignore degenerate components
             L = (ycov - V)[d > 0, :][:, d > 0]
@@ -262,16 +274,19 @@ def pcplot(
                 det = np.linalg.det(L)
                 return np.prod(np.diag(L)) / det
 
-        # Start close to scaling to lowest, non-zero PCA component
+        # Start close to scaling to second, non-zero PCA component
         # Ensures that we do nothing if everything is already uncorrelated
         dl = d[d > 0]
-        ret = minimize(fun, x0=(dl[0] - dl[-1]), bounds=[(0.0, 1.0)])
-        u *= yerr * ret.x * np.sqrt(d[0])
+        ret = minimize(fun, x0=(1 - np.sqrt(dl[1] / dl[0])), bounds=[(0.0, 1.0)])
+        u *= yerrscale * ret.x * np.sqrt(d[0])
     else:
         e = f"Unknown scaling: {scaling}"
         raise ValueError(e)
     U = u[:, np.newaxis] @ u[np.newaxis, :]
     K = ycov - U
+    if np.any(np.diag(K) < 0):
+        e = "Remaining covariance is has negative diagonal elements! Try a less aggressive scaling?"
+        raise RuntimeError(e)
 
     if ax is None:
         ax = plt.gca()

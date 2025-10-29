@@ -44,6 +44,10 @@ def test_corplots():
     p.pcplot(x, y, cov, scaling="second")
     p.pcplot(x, y, cov, scaling="last")
     p.pcplot(x, y, cov, scaling="mincor")
+    p.pcplot(x, y, cov, normalize=False)
+    p.pcplot(x, y, cov, drawconditional=False)
     M = np.eye(5)
     M[0, 0] = 0
     p.pcplot(x, y, M, scaling="mincor")
+    with pytest.raises(RuntimeError, match="negative diagonal"):
+        p.pcplot(x, y, M, scaling=1.1, normalize=False)
