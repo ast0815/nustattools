@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon
 from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import minimize
 
@@ -127,6 +129,7 @@ def pcplot(
     poshatch: str = "/" * 5,
     neghatch: str = "\\" * 2,
     drawcorlines: bool = True,
+    drawconditional: bool = True,
     ax: Any = None,
     **kwargs: Any,
 ) -> Any:
@@ -162,11 +165,19 @@ def pcplot(
         component is equal to the second principal component. If ``"last"``,
         the component will be scaled such that its contribution is equal to the
         last principle component.
-    poshatch, neghatch: str, optional
-        The Matplotlib hatch styles for the positive and negative directions of
-        the first principal component.
+    poshatch: str, optional
+        The Matplotlib hatch styles for the positive direction of the first
+        principal component.
+    neghatch: str, optional
+        The Matplotlib hatch styles for the negative direction of the first
+        principal component.
     drawcorlines: default=True
         Whether to draw correlation lines of the remaining covariance.
+    drawconditional: default=True
+        Whether to draw the conditional uncertainty of each data point, i.e.
+        the allowed variance if all other points are fixed. The filling of the
+        triangles indicates the direction of the last (smallest) principal
+        component.
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
     **kwargs : dict, optional
@@ -180,8 +191,10 @@ def pcplot(
     Notes
     -----
 
-    This plotting style is most useful for data where the first principle
-    component dominates the covariance of the data.
+    This plotting style is most useful for data where the first principal
+    component dominates the covariance of the data and/or there is a single
+    last/lowest principal component that constrains the variation much more
+    than the error bars suggest.
 
     Examples
     --------
@@ -212,12 +225,21 @@ def pcplot(
     yerr_safe = np.where(yerr > 0, yerr, 1e-12)
     ycor = ycov / yerr_safe[:, np.newaxis] / yerr_safe[np.newaxis, :]
 
-    # Get principal components
-    u, d, _ = np.linalg.svd(ycor)
+    # Conditional errors, i.e. if all other components are fixed
+    # Make sure ycov is invertible by inflating the diagonal elements a tiny bit
+    ycov_diag = np.diag(ycov)
+    ycov_diag = np.where(ycov_diag == 0, np.max(ycov_diag), ycov_diag)
+    ycov_safe = ycov + np.diag(ycov_diag) * 1e-12
+    ycovinv = np.linalg.inv(ycov_safe)
+    yconderr = 1 / np.sqrt(np.diag(ycovinv))
+
+    # Get first and last principal components
+    q, d, _ = np.linalg.svd(ycor)
+    w = q[:, -1]
+    u = q[:, 0]
     # Don't remove all of 1st principle component.
     # Otherwise the remaining K will be degenerate.
     # This also ensures that we do nothing if ycov in uncorrelated.
-    u = u[:, 0]
     if isinstance(scaling, float):
         # Scale from 0 to maximum allowed
         u *= yerr * scaling * np.sqrt(d[0])
@@ -275,6 +297,8 @@ def pcplot(
     e_min: list[float] = []
     e_max: list[float] = []
     fill: list[bool] = []
+    tri_pos: list[Polygon] = []
+    tri_neg: list[Polygon] = []
     for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle)):
         try:
             dxm = cw[0]
@@ -294,12 +318,44 @@ def pcplot(
         e_max.extend((emax,) * 3)
         fill.extend((True, True, False))
 
+        if drawconditional:
+            # Plot conditional errors with last component direction
+            sw = np.sign(w[i])
+            sw = 1 if sw == 0 else sw
+            yc = yconderr[i]
+            da = (
+                np.abs(emin) * sw * 1.01
+            )  # Make sure we overlap the 1st component a tiny bit
+            dy = yc * sw
+            shrink = 0.95
+            tri_pos.append(
+                Polygon(
+                    [
+                        (xs - shrink * dxm, ys + da),
+                        (xs, ys + dy),
+                        (xs + shrink * dxp, ys + da),
+                    ],
+                    closed=False,
+                )
+            )
+            tri_neg.append(
+                Polygon(
+                    [
+                        (xs - shrink * dxm, ys - da),
+                        (xs, ys - dy),
+                        (xs + shrink * dxp, ys - da),
+                    ],
+                    closed=False,
+                )
+            )
+
     xx_arr = np.array(xx)
     yy_arr = np.array(yy)
     e_min_arr = np.array(e_min)
     e_max_arr = np.array(e_max)
     fill_arr = np.array(fill)
 
+    # Draw first component
     ax.fill_between(
         xx_arr,
         yy_arr + e_min_arr,
@@ -318,6 +374,19 @@ def pcplot(
         facecolor="none",
         edgecolor=color,
     )
+
+    if drawconditional:
+        # Draw last component
+        tri_col_pos = PatchCollection(tri_pos)
+        tri_col_pos.set_linewidth(1)
+        tri_col_pos.set_color(color)
+        tri_col_pos.set_facecolor("none")
+        tri_col_neg = PatchCollection(tri_neg)
+        tri_col_neg.set_linewidth(1)
+        tri_col_neg.set_color(color)
+        tri_col_neg.set_alpha(0.8)
+        ax.add_collection(tri_col_pos)
+        ax.add_collection(tri_col_neg)
 
     return bars
 
