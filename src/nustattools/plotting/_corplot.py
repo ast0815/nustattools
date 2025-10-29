@@ -125,7 +125,7 @@ def pcplot(
     ycov: NDArray[Any],
     *,
     componentwidth: Any = None,
-    scaling: float | str = "mincor",
+    scaling: float | str = "second",
     poshatch: str = "/" * 5,
     neghatch: str = "\\" * 2,
     drawcorlines: bool = True,
@@ -154,7 +154,7 @@ def pcplot(
         in axes coordinates. Can be a single number, so it is equal for all
         data points; an iterable of numbers so it is different for each, or an
         iterable of pairs of numbers, so there is an asymmetric width for each.
-    scaling: default="mincor"
+    scaling: default="second"
         Determines how the length of the first principle component is scaled
         before removing its contribution from the covariance. If a
         :py:class:`float`, the contribution is scaled with that value. At 0.0,
