@@ -293,7 +293,7 @@ def pcplot(
 
     if componentwidth is None:
         # Try to guess a reasonable width from the data
-        cw = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)
+        cw = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)  # type: ignore[operator]
         componentwidth = itertools.cycle([cw])
 
     try:
