@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `corlines` and `pcplot` plots.
+
 ## [0.6.0]
 
 ### Added
