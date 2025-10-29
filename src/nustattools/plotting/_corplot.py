@@ -222,6 +222,43 @@ def pcplot(
         >>> y = rng.multivariate_normal(np.zeros(5), cov)
         >>> nuplt.pcplot(x, y, cov, marker="x")
 
+    .. plot::
+        :include-source: True
+
+        Compare scalings:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> x = np.linspace(0, 10, 5)
+        >>> u = x[:,np.newaxis] / 4
+        >>> u[-2] *= -1
+        >>> cov = np.eye(5) + u@u.T
+        >>> y = rng.multivariate_normal(np.zeros(5), cov)
+        >>> nuplt.pcplot(x, y, cov, componentwidth=1, scaling="last", label="last")
+        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0.4,0)], scaling="second", label="second")
+        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0,0.4)], scaling="mincor", label="mincor")
+        >>> plt.legend()
+
+    .. plot::
+        :include-source: True
+
+        Rank deficient covariance:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> x = np.linspace(0, 10, 5)
+        >>> u = x[:,np.newaxis] / 4
+        >>> u[-2] *= -1
+        >>> cov = np.eye(5) + u@u.T
+        >>> # Matrix to project to constant sum of data points
+        >>> A = np.eye(5) - np.ones((5,5)) * 1/5
+        >>> cov = A @ cov @ A.T
+        >>> y = rng.multivariate_normal(np.zeros(5), cov)
+        >>> nuplt.pcplot(x, y, cov)
 
     """
 
