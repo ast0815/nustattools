@@ -33,6 +33,7 @@ def test_corplots():
     cov = np.eye(5) + u @ u.T
     p.corlines(x, y, cov)
     p.pcplot(x, y, cov)
+    p.pcplot(x, y, cov, return_dict={})
     p.pcplot(x, y, cov, componentwidth=0.2)
     p.pcplot(x, y, cov, componentwidth=[0.2] * 5)
     p.pcplot(x, y, cov, componentwidth=[[0.2, 0.5]] * 5)

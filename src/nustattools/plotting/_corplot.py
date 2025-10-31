@@ -132,6 +132,7 @@ def pcplot(
     drawconditional: bool = True,
     normalize: bool = True,
     ax: Any = None,
+    return_dict: None | dict[Any, Any] = None,
     **kwargs: Any,
 ) -> Any:
     """Plot data points with 1st PCA component and correlation lines.
@@ -187,6 +188,9 @@ def pcplot(
         the selection of the components.
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
+    return_dict : dict, optional
+        Dictionary to store some of the intermediary steps of the covariance
+        decompositions.
     **kwargs : dict, optional
         All other keyword arguments are passed to :py:func:`corlines`
 
@@ -439,6 +443,16 @@ def pcplot(
         tri_col_neg.set_alpha(0.8)
         ax.add_collection(tri_col_pos)
         ax.add_collection(tri_col_neg)
+
+    if return_dict is not None:
+        return_dict.update(
+            {
+                "K": K,
+                "u": u,
+                "w": w,
+                "yconderr": yconderr,
+            }
+        )
 
     return bars
 
