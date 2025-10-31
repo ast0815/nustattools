@@ -136,10 +136,10 @@ def pcplot(
 ) -> Any:
     """Plot data points with 1st PCA component and correlation lines.
 
-    The contribution of the first principle component is subtracted from the
+    The contribution of the first principal component is subtracted from the
     covariance and the remainder plotted with :py:func:`corlines`. Then the
     difference to the full covariance matrix is plotted with the type of infill
-    indicating the direction of the first principle component.
+    indicating the direction of the first principal component.
 
     Parameters
     ----------
@@ -155,17 +155,17 @@ def pcplot(
         data points; an iterable of numbers so it is different for each, or an
         iterable of pairs of numbers, so there is an asymmetric width for each.
     scaling: default="second"
-        Determines how the length of the first principle component is scaled
+        Determines how the length of the first principal component is scaled
         before removing its contribution from the covariance. If a
         :py:class:`float`, the contribution is scaled with that value. At 0.0,
         nothing is removed, at 1.0 the component is removed completely and the
         remaining covariance's rank will reduce by 1. If ``"mincor"``, the
         component will be scaled such that the overall correlation in the
         remaining covariance is minimized. If ``"second"``, the component will
-        be scaled such that the remaining contribution of the first principle
+        be scaled such that the remaining contribution of the first principal
         component is equal to the second principal component. If ``"last"``,
         the component will be scaled such that its contribution is equal to the
-        last principle component.
+        last principal component.
     poshatch: str, optional
         The Matplotlib hatch styles for the positive direction of the first
         principal component.
@@ -341,7 +341,7 @@ def pcplot(
     # Plot error bars with correlation lines
     bars = corlines(x, y, K, ax=ax, **kwargs)
 
-    # Plot first principle component
+    # Plot first principal component
     Kerr = np.sqrt(np.diag(K))
     color = bars.lines[0].get_color()
     xx: list[float] = []
