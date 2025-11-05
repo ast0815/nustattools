@@ -122,6 +122,104 @@ def corlines(
     return bars
 
 
+def wedgeplot(
+    x: NDArray[Any],
+    y: NDArray[Any],
+    dy: NDArray[Any],
+    *,
+    wedgewidth: Any = None,
+    ax: Any = None,
+    **kwargs: Any,
+) -> Any:
+    """Plot vertical wedges at the given data points with the given lengths.
+
+    Parameters
+    ----------
+
+    x, y, dy : numpy.ndarray
+        The data x and y coordinates and length of the wedges to be plotted.
+    wedgewidth : optional
+        The width of the wedges in axes coordinates. Can be a single number, so
+        it is equal for all data points; an iterable of numbers so it is
+        different for each, or an iterable of pairs of numbers, so there is an
+        asymmetric width for each.
+    ax : matplotlib.axes.Axes, optional
+        Axes object to plot onto
+    **kwargs : dict, optional
+        All other keyword arguments are passed to :py:class:`matplotlib.patches.Polygon`
+
+    Returns
+    -------
+    matplotlib.collections.PatchCollection
+
+    Examples
+    --------
+
+
+    .. plot::
+        :include-source: True
+
+        Basic usage:
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>> from nustattools import plotting as nuplt
+        >>> rng = np.random.default_rng()
+        >>> x = np.linspace(0, 10, 5)
+        >>> u = x[:,np.newaxis] / 4
+        >>> u[-2] *= -1
+        >>> cov = np.eye(5) + u@u.T
+        >>> err = np.sqrt(np.diag(cov))
+        >>> y = rng.multivariate_normal(np.zeros(5), cov)
+        >>> up = nuplt.wedgeplot(x, y, err, color="C2")
+        >>> down = nuplt.wedgeplot(x, y, -err, color="C3")
+        >>> down.set_facecolor("C1")
+
+    """
+
+    if ax is None:
+        ax = plt.gca()
+
+    if wedgewidth is None:
+        # Try to guess a reasonable width from the data
+        ww = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)  # type: ignore[operator]
+        wedgewidth = itertools.cycle([ww])
+
+    try:
+        ww_cycle = itertools.cycle(wedgewidth)
+    except TypeError:
+        ww_cycle = itertools.cycle([wedgewidth])
+
+    # Plot create wedges
+
+    patches = []
+    for xx, yy, dd, w in zip(x, y, dy, ww_cycle):
+        try:
+            dxm = w[0]
+            dxp = w[1]
+        except (IndexError, TypeError):
+            dxm = w / 2
+            dxp = w / 2
+        points = [
+            (xx - dxm, yy),
+            (xx, yy + dd),
+            (xx + dxp, yy),
+        ]
+        patches.append(
+            Polygon(
+                points,
+                **kwargs,
+            )
+        )
+        # Make sure the axis is scaled to include everything
+        ax.update_datalim(points)
+
+    col = PatchCollection(patches, match_original=True)
+    ax.add_collection(col)
+    ax.autoscale()
+    return col
+
+
 def pcplot(
     x: NDArray[Any],
     y: NDArray[Any],
@@ -357,8 +455,6 @@ def pcplot(
     e_min: list[float] = []
     e_max: list[float] = []
     fill: list[bool] = []
-    tri_pos: list[Polygon] = []
-    tri_neg: list[Polygon] = []
     for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle)):
         try:
             dxm = cw[0]
@@ -377,39 +473,6 @@ def pcplot(
         e_min.extend((emin,) * 3)
         e_max.extend((emax,) * 3)
         fill.extend((True, True, False))
-
-        if drawconditional:
-            # Plot conditional errors with last component direction
-            sw = np.sign(w[i])
-            sw = 1 if sw == 0 else sw
-            yc = yconderr[i]
-            da = (
-                np.abs(emin) * sw * 1.01
-            )  # Make sure we overlap the 1st component a tiny bit
-            dy = yc * sw
-            shrink = 0.95
-            tri_pos.append(
-                Polygon(
-                    [
-                        (xs - shrink * dxm, ys + da),
-                        (xs, ys + dy),
-                        (xs + shrink * dxp, ys + da),
-                    ],
-                    closed=False,
-                    zorder=zorder,
-                )
-            )
-            tri_neg.append(
-                Polygon(
-                    [
-                        (xs - shrink * dxm, ys - da),
-                        (xs, ys - dy),
-                        (xs + shrink * dxp, ys - da),
-                    ],
-                    closed=False,
-                    zorder=zorder,
-                )
-            )
 
     xx_arr = np.array(xx)
     yy_arr = np.array(yy)
@@ -440,17 +503,26 @@ def pcplot(
     )
 
     if drawconditional:
-        # Draw last component
-        tri_col_pos = PatchCollection(tri_pos)
+        # Draw conditional probabilities and last component
+        sw = np.sign(w)
+        sw = np.where(sw == 0, 1, sw)
+        yb = y + Kerr * sw
+        yd = -(Kerr - yconderr) * sw
+        tri_col_pos = wedgeplot(
+            x, yb, yd, wedgewidth=componentwidth, closed=True, zorder=zorder
+        )
+        yb = y - Kerr * sw
+        yd = (Kerr - yconderr) * sw
+        tri_col_neg = wedgeplot(
+            x, yb, yd, wedgewidth=componentwidth, closed=True, zorder=zorder
+        )
+
         tri_col_pos.set_linewidth(1)
         tri_col_pos.set_color(color)
         tri_col_pos.set_facecolor("none")
-        tri_col_neg = PatchCollection(tri_neg)
         tri_col_neg.set_linewidth(1)
         tri_col_neg.set_color(color)
         tri_col_neg.set_alpha(0.8)
-        ax.add_collection(tri_col_pos)
-        ax.add_collection(tri_col_neg)
 
     if return_dict is not None:
         return_dict.update(
@@ -465,4 +537,4 @@ def pcplot(
     return bars
 
 
-__all__ = ["corlines", "pcplot"]
+__all__ = ["corlines", "pcplot", "wedgeplot"]
