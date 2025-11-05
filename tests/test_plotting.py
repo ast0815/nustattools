@@ -32,6 +32,7 @@ def test_corplots():
     u = x[:, np.newaxis]
     cov = np.eye(5) + u @ u.T
     p.corlines(x, y, cov)
+    p.wedgeplot(x, y, np.ones_like(x))
     p.pcplot(x, y, cov)
     p.pcplot(x, y, cov, return_dict={})
     p.pcplot(x, y, cov, componentwidth=0.2)
