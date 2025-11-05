@@ -94,6 +94,7 @@ def corlines(
     fmt = kwargs.pop("fmt", " ")
     bars = ax.errorbar(x, y, yerr=yerr, fmt=fmt, **kwargs)
     color = bars.lines[0].get_color()
+    zorder = bars.lines[0].zorder
 
     # Get correlations between neighbours
     yerr_safe = np.where(yerr > 0, yerr, 1e-12)
@@ -108,6 +109,7 @@ def corlines(
             color=color,
             linestyle=corlinestyle,
             marker=cormarker,
+            zorder=zorder,
         )
         ax.plot(
             [x[i], x[i + 1]],
@@ -115,6 +117,7 @@ def corlines(
             color=color,
             linestyle=corlinestyle,
             marker=cormarker,
+            zorder=zorder,
         )
     return bars
 
@@ -344,10 +347,11 @@ def pcplot(
 
     # Plot error bars with correlation lines
     bars = corlines(x, y, K, ax=ax, **kwargs)
+    color = bars.lines[0].get_color()
+    zorder = bars.lines[0].zorder
 
     # Plot first principal component
     Kerr = np.sqrt(np.diag(K))
-    color = bars.lines[0].get_color()
     xx: list[float] = []
     yy: list[float] = []
     e_min: list[float] = []
@@ -392,6 +396,7 @@ def pcplot(
                         (xs + shrink * dxp, ys + da),
                     ],
                     closed=False,
+                    zorder=zorder,
                 )
             )
             tri_neg.append(
@@ -402,6 +407,7 @@ def pcplot(
                         (xs + shrink * dxp, ys - da),
                     ],
                     closed=False,
+                    zorder=zorder,
                 )
             )
 
@@ -420,6 +426,7 @@ def pcplot(
         hatch=poshatch,
         facecolor="none",
         edgecolor=color,
+        zorder=zorder,
     )
     ax.fill_between(
         xx_arr,
@@ -429,6 +436,7 @@ def pcplot(
         hatch=neghatch,
         facecolor="none",
         edgecolor=color,
+        zorder=zorder,
     )
 
     if drawconditional:
