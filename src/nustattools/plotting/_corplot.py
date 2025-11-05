@@ -7,8 +7,7 @@ from typing import Any
 
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib.collections import PatchCollection
-from matplotlib.patches import Polygon
+from matplotlib.collections import PolyCollection
 from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import minimize
 
@@ -146,11 +145,11 @@ def wedgeplot(
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
     **kwargs : dict, optional
-        All other keyword arguments are passed to :py:class:`matplotlib.patches.Polygon`
+        All other keyword arguments are passed to :py:class:`matplotlib.collections.PolyCollection`
 
     Returns
     -------
-    matplotlib.collections.PatchCollection
+    matplotlib.collections.PolyCollection
 
     Examples
     --------
@@ -192,7 +191,7 @@ def wedgeplot(
 
     # Plot create wedges
 
-    patches = []
+    paths = []
     for xx, yy, dd, w in zip(x, y, dy, ww_cycle):
         try:
             dxm = w[0]
@@ -205,16 +204,11 @@ def wedgeplot(
             (xx, yy + dd),
             (xx + dxp, yy),
         ]
-        patches.append(
-            Polygon(
-                points,
-                **kwargs,
-            )
-        )
+        paths.append(points)
         # Make sure the axis is scaled to include everything
         ax.update_datalim(points)
 
-    col = PatchCollection(patches, match_original=True)
+    col = PolyCollection(paths, **kwargs)
     ax.add_collection(col)
     ax.autoscale()
     return col
