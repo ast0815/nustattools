@@ -397,6 +397,14 @@ def pcplot(
     elif scaling == "last":
         # Scale so remaining contribution is same as last PCA component
         u *= yerrscale * (np.sqrt(d[0] - d[-1]))
+    elif scaling == "conditional":
+        # Scale so remaining covaraince diagonals are >= the conditional uncertainties
+        s = np.sqrt(
+            np.min(
+                np.minimum(1, (yerr**2 - yconderr**2) / (d[0] * (yerrscale * u) ** 2))
+            )
+        )
+        u *= yerrscale * s * np.sqrt(d[0])
     elif scaling == "mincor":
         # Scale to minimize total correlation in remaining covariance
         def fun(s: ArrayLike) -> Any:
