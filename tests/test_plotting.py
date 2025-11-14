@@ -47,6 +47,7 @@ def test_corplots():
     p.pcplot(x, y, cov, scaling="last")
     p.pcplot(x, y, cov, scaling="conditional")
     p.pcplot(x, y, cov, scaling="mincor")
+    p.pcplot(x, y, cov, scaling="conditional-mincor")
     p.pcplot(x, y, cov, normalize=False)
     p.pcplot(x, y, cov, drawconditional=False)
     M = np.eye(5)
