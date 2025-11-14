@@ -250,7 +250,7 @@ def pcplot(
         in axes coordinates. Can be a single number, so it is equal for all
         data points; an iterable of numbers so it is different for each, or an
         iterable of pairs of numbers, so there is an asymmetric width for each.
-    scaling: default="second"
+    scaling: default="conditional-mincor"
         Determines how the length of the first principal component is scaled
         before removing its contribution from the covariance. If a
         :py:class:`float`, the contribution is scaled with that value. At 0.0,
