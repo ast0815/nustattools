@@ -220,7 +220,7 @@ def pcplot(
     ycov: NDArray[Any],
     *,
     componentwidth: Any = None,
-    scaling: float | str = "second",
+    scaling: float | str = "conditional-mincor",
     poshatch: str = "/" * 5,
     neghatch: str = "\\" * 2,
     drawcorlines: bool = True,
@@ -250,18 +250,13 @@ def pcplot(
         in axes coordinates. Can be a single number, so it is equal for all
         data points; an iterable of numbers so it is different for each, or an
         iterable of pairs of numbers, so there is an asymmetric width for each.
-    scaling: default="second"
+    scaling: default="conditional-mincor"
         Determines how the length of the first principal component is scaled
         before removing its contribution from the covariance. If a
         :py:class:`float`, the contribution is scaled with that value. At 0.0,
         nothing is removed, at 1.0 the component is removed completely and the
-        remaining covariance's rank will reduce by 1. If ``"mincor"``, the
-        component will be scaled such that the overall correlation in the
-        remaining covariance is minimized. If ``"second"``, the component will
-        be scaled such that the remaining contribution of the first principal
-        component is equal to the second principal component. If ``"last"``,
-        the component will be scaled such that its contribution is equal to the
-        last principal component.
+        remaining covariance's rank will reduce by 1. See `Notes` for an explanation
+        of the other options.
     poshatch: str, optional
         The Matplotlib hatch styles for the positive direction of the first
         principal component.
@@ -301,6 +296,31 @@ def pcplot(
     component dominates the covariance of the data and/or there is a single
     last/lowest principal component that constrains the variation much more
     than the error bars suggest.
+
+    The `scaling` argument support a couple of modes to automatically determine
+    the desired scaling factor:
+
+    ``"mincor"``
+        The component will be scaled such that the overall correlation in the
+        remaining covariance is minimized.
+
+    ``"second"``
+        The component will be scaled such that the remaining contribution of
+        the first principal component is equal to the second principal
+        component.
+
+    ``"last"``
+        The component will be scaled such that its contribution is equal to the
+        last principal component.
+
+    ``"conditional"``
+        The scaling is maximised, while ensuring that the diagonal elements of
+        the remaining covariance are at least as big as the corresponding
+        conditional uncertainties of each bin.
+
+    ``"conditional-mincor"``
+        The overall correlation in the remaining covariance is minimized under
+        the same constraints as in the ``"conditional"`` case.
 
     Examples
     --------
@@ -388,40 +408,59 @@ def pcplot(
     # Don't remove all of 1st principal component.
     # Otherwise the remaining K will be degenerate.
     # This also ensures that we do nothing if ycov in uncorrelated.
-    if isinstance(scaling, float):
-        # Scale from 0 to maximum allowed
-        u *= yerrscale * scaling * np.sqrt(d[0])
-    elif scaling == "second":
-        # Scale so remaining contribution is same as second PCA component
-        u *= yerrscale * (np.sqrt(d[0] - d[1]))
-    elif scaling == "last":
-        # Scale so remaining contribution is same as last PCA component
-        u *= yerrscale * (np.sqrt(d[0] - d[-1]))
-    elif scaling == "mincor":
-        # Scale to minimize total correlation in remaining covariance
-        def fun(s: ArrayLike) -> Any:
-            v = u * yerrscale * s * np.sqrt(d[0])
-            V = v[:, np.newaxis] @ v[np.newaxis, :]
-            # Ignore degenerate components
-            L = (ycov - V)[d > 0, :][:, d > 0]
-
-            with np.errstate(divide="ignore", invalid="ignore"):
-                # Ignore divisions by zero when we scale by 1.0
-                det = np.linalg.det(L)
-                return np.prod(np.diag(L)) / det
-
-        # Start close to scaling to second, non-zero PCA component
-        # Ensures that we do nothing if everything is already uncorrelated
-        dl = d[d > 0]
-        ret = minimize(fun, x0=(1 - np.sqrt(dl[1] / dl[0])), bounds=[(0.0, 1.0)])
-        u *= yerrscale * ret.x * np.sqrt(d[0])
-    else:
+    if not isinstance(scaling, float) and scaling not in (
+        "second",
+        "last",
+        "mincor",
+        "conditional",
+        "conditional-mincor",
+    ):
         e = f"Unknown scaling: {scaling}"
         raise ValueError(e)
+
+    s: float = 1.0
+    if isinstance(scaling, float):
+        # Scale from 0 to maximum allowed
+        s = scaling
+    elif scaling == "second":
+        # Scale so remaining contribution is same as second PCA component
+        s = np.sqrt(1 - d[1] / d[0])
+    elif scaling == "last":
+        # Scale so remaining contribution is same as last PCA component
+        s = np.sqrt(1 - d[-1] / d[0])
+    else:
+        if "conditional" in scaling:
+            # Scale so remaining covaraince diagonals are >= the conditional uncertainties
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ss = np.sqrt(
+                    np.nanmin((yerr**2 - yconderr**2) / (d[0] * (yerrscale * u) ** 2))
+                )
+                s = min(1, ss)
+        if "mincor" in scaling:
+            # Scale to minimize total correlation in remaining covariance
+            def fun(x: ArrayLike) -> Any:
+                v = u * yerrscale * x * np.sqrt(d[0])
+                V = v[:, np.newaxis] @ v[np.newaxis, :]
+                # Ignore degenerate components
+                L = (ycov - V)[d > 0, :][:, d > 0]
+
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    # Ignore divisions by zero when we scale by 1.0
+                    det = np.linalg.det(L)
+                    return np.prod(np.diag(L)) / det
+
+            # Start close to scaling to second, non-zero PCA component
+            # Ensures that we do nothing if everything is already uncorrelated
+            dl = d[d > 0]
+            ret = minimize(fun, x0=(1 - np.sqrt(dl[1] / dl[0])), bounds=[(0.0, s)])
+            s = ret.x
+
+    u *= yerrscale * s * np.sqrt(d[0])
+
     U = u[:, np.newaxis] @ u[np.newaxis, :]
     K = ycov - U
     if np.any(np.diag(K) < 0):
-        e = "Remaining covariance is has negative diagonal elements! Try a less aggressive scaling?"
+        e = "Remaining covariance has negative diagonal elements! Try a less aggressive scaling?"
         raise RuntimeError(e)
 
     if ax is None:

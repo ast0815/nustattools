@@ -187,12 +187,12 @@ def hinton(
     m: int = np.max(matrix.shape)
     ax.xaxis.set_major_locator(
         ticker.MaxNLocator(
-            integer=True, min_n_ticks=1, nbins=1 + int(10 * matrix.shape[1] / m)
+            integer=True, min_n_ticks=1, nbins=1 + int(8 * matrix.shape[1] / m)
         )
     )
     ax.yaxis.set_major_locator(
         ticker.MaxNLocator(
-            integer=True, min_n_ticks=1, nbins=1 + int(10 * matrix.shape[0] / m)
+            integer=True, min_n_ticks=1, nbins=1 + int(8 * matrix.shape[0] / m)
         )
     )
     if origin == "upper":
