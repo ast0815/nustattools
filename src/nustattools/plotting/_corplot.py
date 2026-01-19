@@ -267,9 +267,7 @@ def pcplot(
         Whether to draw correlation lines of the remaining covariance.
     drawconditional: default=True
         Whether to draw the conditional uncertainty of each data point, i.e.
-        the allowed variance if all other points are fixed. The filling of the
-        triangles indicates the direction of the last (smallest) principal
-        component.
+        the allowed variance if all other points are fixed.
     normalize: default=True
         If ``True``, the covariance is scaled such that all diagonals are 1,
         and the PCA is run on the correlation matrix. If ``False``, the PCA is
