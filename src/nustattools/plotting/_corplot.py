@@ -536,7 +536,7 @@ def pcplot(
     )
 
     if drawconditional:
-        # Draw conditional probabilities and last component
+        # Draw conditional probabilities
         sw = np.sign(w)
         sw = np.where(sw == 0, 1, sw)
         yb = y + Kerr * sw
@@ -555,7 +555,7 @@ def pcplot(
         tri_col_pos.set_facecolor("none")
         tri_col_neg.set_linewidth(1)
         tri_col_neg.set_color(color)
-        tri_col_neg.set_alpha(0.8)
+        tri_col_neg.set_facecolor("none")
 
     if return_dict is not None:
         return_dict.update(
