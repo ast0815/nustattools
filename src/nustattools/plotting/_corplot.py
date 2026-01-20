@@ -147,13 +147,14 @@ def wedgeplot(
     **kwargs : dict, optional
         All other keyword arguments are passed to :py:class:`matplotlib.collections.PolyCollection`
 
+
     Returns
     -------
     matplotlib.collections.PolyCollection
 
+
     Examples
     --------
-
 
     .. plot::
         :include-source: True
@@ -238,6 +239,7 @@ def pcplot(
     difference to the full covariance matrix is plotted with the type of infill
     indicating the direction of the first principal component.
 
+
     Parameters
     ----------
 
@@ -285,19 +287,63 @@ def pcplot(
     **kwargs : dict, optional
         All other keyword arguments are passed to :py:func:`corlines`
 
+
     Returns
     -------
+
     matplotlib.container.ErrorbarContainer
         The return value of the :py:func:`corlines` function.
+
 
     Notes
     -----
 
-    This plotting style is most useful for data where the first principal
-    component dominates the covariance of the data and/or there is a single
-    last/lowest principal component that constrains the variation much more
-    than the error bars suggest.
+    This plotting style is most useful for data where the first one or two
+    principal components dominate the covariance of the data.
 
+    The algorithm for plotting is as follows:
+
+    1.  Calculate the principal components.
+
+        - This is done by doing a Single Value Decomposition of the covariance
+          matrix. If `normalize` is ``True``, the corresponding correlation
+          matrix is used instead.
+
+    2.  Determine the number principal components to be shown, ``N_pc``.
+
+        - If an integer number is provided, this number is used
+        - Otherwise the number is chosen so that those components together cover
+          the provided fraction of the total covariance, i.e. the sum of
+          singular values. Higher numbers mean more components.
+
+    3.  Determine the amount of each component that will be removed.
+
+        - Removing 100% of the principal components would make the remaining
+          covariance matrix degenerate and thus strongly correlated. The aim is
+          to make the plot of the remainder _less_ correlated, so the removed
+          components need to be scaled down.
+        - The scaling of the components is done so that the singular values
+          of the first ``N_pc`` components after the subtraction are equal to
+          the target value.
+        - The target value is the specified quantile of the original singular
+          values of the covariance matrix.
+        - If the target value is larger (i.e. less subtraction) than the
+          ``N_px+1``-th singular value, it is set to that value. So after the
+          subtraction, all singular values will be no bigger than of the largest
+          untouched principal component.
+
+    4.  Subtract the scaled contributions of the first ``N_pc`` principal
+        components. The remaining covariance is called ``K``.
+
+    5.  Plot the data with covariance ``K`` using :py:func:`corlines`.
+
+    6.  From smallest to largest, add the contribution of the subtracted
+        principal components again. Plot the difference to the error bars of
+        the previous covariance as hatched boxes.
+
+    7.  If requested, determine the conditional uncertainty of each data point
+        and plot those as wedges from the error bars of ``K`` pointing to the
+        conditional uncertainties.
 
 
     Examples
@@ -364,6 +410,12 @@ def pcplot(
         >>> cov = A @ cov @ A.T
         >>> y = rng.multivariate_normal(np.zeros(5), cov)
         >>> nuplt.pcplot(x, y, cov)
+
+
+    See also
+    --------
+
+    corlines : Plotting function for the remaining covariance
 
     """
 
