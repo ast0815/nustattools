@@ -1,10 +1,16 @@
+# General
+
+- If you learn something about the code base that is not reflected in the
+  `AGENTs.md` file, add it to the file.
+- If there are inconsistencies, ask the user for clarification and fix them
+
 # Build/Lint/Test:
 
 - Run all tests: `nox -s tests`
 - Run single test: `nox -s tests -- tests/test_file.py::test_name`
 - Lint: `nox -s lint`
 - PyLint: `nox -s pylint`
-- Typecheck: `nox -s mypy` (via pre-commit)
+- Typecheck: `nox -s lint` (mypy checks are part of the pre-commit checks)
 
 # Code Style:
 
