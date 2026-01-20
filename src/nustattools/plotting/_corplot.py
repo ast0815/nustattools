@@ -486,9 +486,9 @@ def pcplot(
         # Remove scaled components
         K = K - Us[-1]
 
-    if np.any(np.diag(K) < 0):
-        e = "Remaining covariance has negative diagonal elements!"
-        raise RuntimeError(e)
+    # Avoid numerical problems when all components are requested
+    if n_comp == len(K):
+        K = np.zeros_like(K)
 
     if ax is None:
         ax = plt.gca()

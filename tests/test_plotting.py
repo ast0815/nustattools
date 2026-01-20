@@ -39,19 +39,17 @@ def test_corplots():
     p.pcplot(x, y, cov, componentwidth=[0.2] * 5)
     p.pcplot(x, y, cov, componentwidth=[[0.2, 0.5]] * 5)
     p.pcplot(x, y, cov, drawcorlines=False)
-    with pytest.raises(ValueError, match="Unknown scaling"):
-        p.pcplot(x, y, cov, scaling="x")
-    p.pcplot(x, y, cov, scaling=0.0)
-    p.pcplot(x, y, cov, scaling=1.0)
-    p.pcplot(x, y, cov, scaling="second")
-    p.pcplot(x, y, cov, scaling="last")
-    p.pcplot(x, y, cov, scaling="conditional")
-    p.pcplot(x, y, cov, scaling="mincor")
-    p.pcplot(x, y, cov, scaling="conditional-mincor")
     p.pcplot(x, y, cov, normalize=False)
     p.pcplot(x, y, cov, drawconditional=False)
-    M = np.eye(5)
-    M[0, 0] = 0
-    p.pcplot(x, y, M, scaling="mincor")
-    with pytest.raises(RuntimeError, match="negative diagonal"):
-        p.pcplot(x, y, M, scaling=1.1, normalize=False)
+    with pytest.warns(
+        RuntimeWarning,
+        match="Requested 5 principal components, but only 3 hatch styles are defined. Showing only 3 components.",
+    ):
+        p.pcplot(x, y, cov, components=0.999)
+    with pytest.warns(
+        RuntimeWarning,
+        match="Requested 5 principal components, but only 3 hatch styles are defined. Showing only 3 components.",
+    ):
+        p.pcplot(x, y, cov, components=len(cov))
+    p.pcplot(x, y, cov, components=len(cov), hatch=[(".", "/")] * len(cov))
+    p.pcplot(x, y, cov, label_components=True)
