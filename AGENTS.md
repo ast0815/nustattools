@@ -29,6 +29,8 @@
 - Keep functions small and focused on a single responsibility
 - Use `pytest` fixtures for test setup and teardown
 - All tests must have 100% coverage
+- All user-facing changes must be documented in `CHANGELOG.md`
+  - These entried should be short and not go into details
 
 # Testing Best Practices:
 
