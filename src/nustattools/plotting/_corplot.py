@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import itertools
 from typing import Any
+from warnings import warn
 
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.collections import PolyCollection
-from numpy.typing import ArrayLike, NDArray
-from scipy.optimize import minimize
+from numpy.typing import NDArray
 
 
 def corlines(
@@ -147,13 +147,14 @@ def wedgeplot(
     **kwargs : dict, optional
         All other keyword arguments are passed to :py:class:`matplotlib.collections.PolyCollection`
 
+
     Returns
     -------
     matplotlib.collections.PolyCollection
 
+
     Examples
     --------
-
 
     .. plot::
         :include-source: True
@@ -220,13 +221,14 @@ def pcplot(
     ycov: NDArray[Any],
     *,
     componentwidth: Any = None,
-    scaling: float | str = "conditional-mincor",
-    poshatch: str = "/" * 5,
-    neghatch: str = "\\" * 2,
+    components: float | int = 0.5,
+    target_quantile: float = 0.5,
+    hatch: list[tuple[str, str]] | None = None,
     drawcorlines: bool = True,
     drawconditional: bool = True,
     normalize: bool = True,
     ax: Any = None,
+    label_components: bool = False,
     return_dict: None | dict[Any, Any] = None,
     **kwargs: Any,
 ) -> Any:
@@ -236,6 +238,7 @@ def pcplot(
     covariance and the remainder plotted with :py:func:`corlines`. Then the
     difference to the full covariance matrix is plotted with the type of infill
     indicating the direction of the first principal component.
+
 
     Parameters
     ----------
@@ -250,27 +253,25 @@ def pcplot(
         in axes coordinates. Can be a single number, so it is equal for all
         data points; an iterable of numbers so it is different for each, or an
         iterable of pairs of numbers, so there is an asymmetric width for each.
-    scaling: default="conditional-mincor"
-        Determines how the length of the first principal component is scaled
-        before removing its contribution from the covariance. If a
-        :py:class:`float`, the contribution is scaled with that value. At 0.0,
-        nothing is removed, at 1.0 the component is removed completely and the
-        remaining covariance's rank will reduce by 1. See `Notes` for an explanation
-        of the other options.
-    poshatch: str, optional
-        The Matplotlib hatch styles for the positive direction of the first
-        principal component.
-    neghatch: str, optional
-        The Matplotlib hatch styles for the negative direction of the first
-        principal component.
-    drawcorlines: default=True
+    components : int or float, default=0.5
+        How many components to show. If set to a ``float``, the number of
+        components is set to cover the requested fraction of the total
+        covariance. Cannot exceed the number of defined hatch styles.
+    target_quantile : float, default=0.5
+        Determines the scaling of the components to be removed and plotted
+        separately. The target is chose as the given quantile of the original
+        principal components. If the target is larger than the first untouched
+        component (e.g. the 3rd componend when 2 components are plotted), the
+        value of that untouched component is chosen as target.
+    hatch : list of tuple of str, optional
+        The Matplotlib hatch styles for the positive and negative  directions
+        of the principal components.
+    drawcorlines : default=True
         Whether to draw correlation lines of the remaining covariance.
-    drawconditional: default=True
+    drawconditional : default=True
         Whether to draw the conditional uncertainty of each data point, i.e.
-        the allowed variance if all other points are fixed. The filling of the
-        triangles indicates the direction of the last (smallest) principal
-        component.
-    normalize: default=True
+        the allowed variance if all other points are fixed.
+    normalize : default=True
         If ``True``, the covariance is scaled such that all diagonals are 1,
         and the PCA is run on the correlation matrix. If ``False``, the PCA is
         run on the covariance matrix directly. In the latter case, different
@@ -278,49 +279,72 @@ def pcplot(
         the selection of the components.
     ax : matplotlib.axes.Axes, optional
         Axes object to plot onto
+    label_components : default=False
+        Whether to add labels to the principal components.
     return_dict : dict, optional
         Dictionary to store some of the intermediary steps of the covariance
         decompositions.
     **kwargs : dict, optional
         All other keyword arguments are passed to :py:func:`corlines`
 
+
     Returns
     -------
+
     matplotlib.container.ErrorbarContainer
         The return value of the :py:func:`corlines` function.
+
 
     Notes
     -----
 
-    This plotting style is most useful for data where the first principal
-    component dominates the covariance of the data and/or there is a single
-    last/lowest principal component that constrains the variation much more
-    than the error bars suggest.
+    This plotting style is most useful for data where the first one or two
+    principal components dominate the covariance of the data.
 
-    The `scaling` argument support a couple of modes to automatically determine
-    the desired scaling factor:
+    The algorithm for plotting is as follows:
 
-    ``"mincor"``
-        The component will be scaled such that the overall correlation in the
-        remaining covariance is minimized.
+    1.  Calculate the principal components.
 
-    ``"second"``
-        The component will be scaled such that the remaining contribution of
-        the first principal component is equal to the second principal
-        component.
+        - This is done by doing a Single Value Decomposition of the covariance
+          matrix. If `normalize` is ``True``, the corresponding correlation
+          matrix is used instead.
 
-    ``"last"``
-        The component will be scaled such that its contribution is equal to the
-        last principal component.
+    2.  Determine the number principal components to be shown, ``N_pc``.
 
-    ``"conditional"``
-        The scaling is maximised, while ensuring that the diagonal elements of
-        the remaining covariance are at least as big as the corresponding
-        conditional uncertainties of each bin.
+        - If an integer number is provided, this number is used
+        - Otherwise the number is chosen so that those components together cover
+          the provided fraction of the total covariance, i.e. the sum of
+          singular values. Higher numbers mean more components.
 
-    ``"conditional-mincor"``
-        The overall correlation in the remaining covariance is minimized under
-        the same constraints as in the ``"conditional"`` case.
+    3.  Determine the amount of each component that will be removed.
+
+        - Removing 100% of the principal components would make the remaining
+          covariance matrix degenerate and thus strongly correlated. The aim is
+          to make the plot of the remainder _less_ correlated, so the removed
+          components need to be scaled down.
+        - The scaling of the components is done so that the singular values
+          of the first ``N_pc`` components after the subtraction are equal to
+          the target value.
+        - The target value is the specified quantile of the original singular
+          values of the covariance matrix.
+        - If the target value is larger (i.e. less subtraction) than the
+          ``N_px+1``-th singular value, it is set to that value. So after the
+          subtraction, all singular values will be no bigger than of the largest
+          untouched principal component.
+
+    4.  Subtract the scaled contributions of the first ``N_pc`` principal
+        components. The remaining covariance is called ``K``.
+
+    5.  Plot the data with covariance ``K`` using :py:func:`corlines`.
+
+    6.  From smallest to largest, add the contribution of the subtracted
+        principal components again. Plot the difference to the error bars of
+        the previous covariance as hatched boxes.
+
+    7.  If requested, determine the conditional uncertainty of each data point
+        and plot those as wedges from the error bars of ``K`` pointing to the
+        conditional uncertainties.
+
 
     Examples
     --------
@@ -335,29 +359,35 @@ def pcplot(
         >>> from nustattools import plotting as nuplt
         >>> rng = np.random.default_rng()
         >>> x = np.linspace(0, 10, 5)
+        >>> cov = np.eye(5)
         >>> u = x[:,np.newaxis] / 4
-        >>> u[-2] *= -1
-        >>> cov = np.eye(5) + u@u.T
+        >>> for i in range(3):
+        >>>     u[i] *= -1
+        >>>     cov = cov + u@u.T
         >>> y = rng.multivariate_normal(np.zeros(5), cov)
         >>> nuplt.pcplot(x, y, cov, marker="x")
 
     .. plot::
         :include-source: True
 
-        Compare scalings:
+        Compare number of components:
 
         >>> import numpy as np
         >>> from matplotlib import pyplot as plt
         >>> from nustattools import plotting as nuplt
         >>> rng = np.random.default_rng()
         >>> x = np.linspace(0, 10, 5)
+        >>> cov = np.eye(5)
         >>> u = x[:,np.newaxis] / 4
-        >>> u[-2] *= -1
-        >>> cov = np.eye(5) + u@u.T
+        >>> for i in range(4):
+        >>>     u *= 2
+        >>>     u[0] *= -1
+        >>>     cov = cov + u@u.T
+        >>>     u = np.roll(u, i+1)
         >>> y = rng.multivariate_normal(np.zeros(5), cov)
-        >>> nuplt.pcplot(x, y, cov, componentwidth=1, scaling="last", label="last")
-        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0.4,0)], scaling="second", label="second")
-        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0,0.4)], scaling="mincor", label="mincor")
+        >>> nuplt.pcplot(x, y, cov, componentwidth=1.4, components=1, label="1 components")
+        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0.4,0)], components=2, label="2 components")
+        >>> nuplt.pcplot(x, y, cov, componentwidth=[(0,0.4)], components=3, label="3 components")
         >>> plt.legend()
 
     .. plot::
@@ -370,14 +400,22 @@ def pcplot(
         >>> from nustattools import plotting as nuplt
         >>> rng = np.random.default_rng()
         >>> x = np.linspace(0, 10, 5)
+        >>> cov = np.eye(5)
         >>> u = x[:,np.newaxis] / 4
-        >>> u[-2] *= -1
-        >>> cov = np.eye(5) + u@u.T
+        >>> for i in range(3):
+        >>>     u[i] *= -1
+        >>>     cov = cov + u@u.T
         >>> # Matrix to project to constant sum of data points
         >>> A = np.eye(5) - np.ones((5,5)) * 1/5
         >>> cov = A @ cov @ A.T
         >>> y = rng.multivariate_normal(np.zeros(5), cov)
         >>> nuplt.pcplot(x, y, cov)
+
+
+    See also
+    --------
+
+    corlines : Plotting function for the remaining covariance
 
     """
 
@@ -401,67 +439,56 @@ def pcplot(
     ycovinv = np.linalg.inv(ycov_safe)
     yconderr = 1 / np.sqrt(np.diag(ycovinv))
 
-    # Get first and last principal components
+    # Get principal components
     q, d, _ = np.linalg.svd(ycor)
-    w = q[:, -1]
-    u = q[:, 0]
-    # Don't remove all of 1st principal component.
-    # Otherwise the remaining K will be degenerate.
-    # This also ensures that we do nothing if ycov in uncorrelated.
-    if not isinstance(scaling, float) and scaling not in (
-        "second",
-        "last",
-        "mincor",
-        "conditional",
-        "conditional-mincor",
-    ):
-        e = f"Unknown scaling: {scaling}"
-        raise ValueError(e)
 
-    s: float = 1.0
-    if isinstance(scaling, float):
-        # Scale from 0 to maximum allowed
-        s = scaling
-    elif scaling == "second":
-        # Scale so remaining contribution is same as second PCA component
-        s = np.sqrt(1 - d[1] / d[0])
-    elif scaling == "last":
-        # Scale so remaining contribution is same as last PCA component
-        s = np.sqrt(1 - d[-1] / d[0])
+    # Initialize with default hatch styles if not provided
+    if hatch is None:
+        hatch = [("/" * 5, "\\" * 3), ("O" * 3, "." * 3), ("X" * 3, "+" * 3)]
+
+    if isinstance(components, float):
+        # Find index to cover specified fraction of total covariance
+        D = np.cumsum(d)
+        D = D / D[-1]
+        n_comp = np.searchsorted(D, components) + 1
     else:
-        if "conditional" in scaling:
-            # Scale so remaining covaraince diagonals are >= the conditional uncertainties
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ss = np.sqrt(
-                    np.nanmin((yerr**2 - yconderr**2) / (d[0] * (yerrscale * u) ** 2))
-                )
-                s = min(1, ss)
-        if "mincor" in scaling:
-            # Scale to minimize total correlation in remaining covariance
-            def fun(x: ArrayLike) -> Any:
-                v = u * yerrscale * x * np.sqrt(d[0])
-                V = v[:, np.newaxis] @ v[np.newaxis, :]
-                # Ignore degenerate components
-                L = (ycov - V)[d > 0, :][:, d > 0]
+        n_comp = int(components)
+    n_comp = max(n_comp, 1)
 
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    # Ignore divisions by zero when we scale by 1.0
-                    det = np.linalg.det(L)
-                    return np.prod(np.diag(L)) / det
+    if n_comp > len(hatch):
+        m = (
+            f"Requested {n_comp} principal components, but only {len(hatch)} "
+            f"hatch styles are defined. Showing only {len(hatch)} components."
+        )
 
-            # Start close to scaling to second, non-zero PCA component
-            # Ensures that we do nothing if everything is already uncorrelated
-            dl = d[d > 0]
-            ret = minimize(fun, x0=(1 - np.sqrt(dl[1] / dl[0])), bounds=[(0.0, s)])
-            s = ret.x
+        warn(m, RuntimeWarning, stacklevel=2)
+        n_comp = len(hatch)
 
-    u *= yerrscale * s * np.sqrt(d[0])
+    # Scale the removed components
+    if n_comp == len(d):
+        target_covariance = 0
+    else:
+        target_covariance = np.quantile(d, target_quantile)
+        # Make sure we are at least targeting the size of the first
+        # untouched component
+        target_covariance = min(d[n_comp], target_covariance)
 
-    U = u[:, np.newaxis] @ u[np.newaxis, :]
-    K = ycov - U
-    if np.any(np.diag(K) < 0):
-        e = "Remaining covariance has negative diagonal elements! Try a less aggressive scaling?"
-        raise RuntimeError(e)
+    scaling_factors = np.sqrt(1 - target_covariance / d[:n_comp])
+
+    K = ycov
+    Us = []
+    for i, s in enumerate(scaling_factors):
+        u = q[:, i] * yerrscale * s * np.sqrt(d[i])
+
+        # Remember covariance contributions of removed components
+        Us.append(u[:, np.newaxis] @ u[np.newaxis, :])
+
+        # Remove scaled components
+        K = K - Us[-1]
+
+    # Avoid numerical problems when all components are requested
+    if n_comp == len(K):
+        K = np.zeros_like(K)
 
     if ax is None:
         ax = plt.gca()
@@ -471,81 +498,99 @@ def pcplot(
         cw = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)  # type: ignore[operator]
         componentwidth = itertools.cycle([cw])
 
-    try:
-        cw_cycle = itertools.cycle(componentwidth)
-    except TypeError:
-        cw_cycle = itertools.cycle([componentwidth])
-
     # Plot error bars with correlation lines
     bars = corlines(x, y, K, ax=ax, **kwargs)
     color = bars.lines[0].get_color()
     zorder = bars.lines[0].zorder
 
-    # Plot first principal component
+    # Plot principal components
     Kerr = np.sqrt(np.diag(K))
-    xx: list[float] = []
-    yy: list[float] = []
-    e_min: list[float] = []
-    e_max: list[float] = []
-    fill: list[bool] = []
-    for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle)):
+    inner_err = Kerr
+    for j in reversed(range(n_comp)):
+        xx: list[float] = []
+        yy: list[float] = []
+        e_min: list[float] = []
+        e_max: list[float] = []
+        fill: list[bool] = []
+
+        # Outer error band = Inner error band + component contribution
+        outer_err = np.sqrt(inner_err**2 + np.diag(Us[j]))
+
         try:
-            dxm = cw[0]
-            dxp = cw[1]
-        except (IndexError, TypeError):
-            dxm = cw / 2
-            dxp = cw / 2
-        su = np.sign(u[i])
-        su = 1 if su == 0 else su
-        emin = Kerr[i] * su
-        emax = yerr[i] * su
-        # Turn every data point into three so we can use fill_between
-        # and switch off filling in between points
-        xx.extend((xs - dxm, xs + dxp, xs + dxp))
-        yy.extend((ys,) * 3)
-        e_min.extend((emin,) * 3)
-        e_max.extend((emax,) * 3)
-        fill.extend((True, True, False))
+            cw_cycle = itertools.cycle(componentwidth)
+        except TypeError:
+            cw_cycle = itertools.cycle([componentwidth])
 
-    xx_arr = np.array(xx)
-    yy_arr = np.array(yy)
-    e_min_arr = np.array(e_min)
-    e_max_arr = np.array(e_max)
-    fill_arr = np.array(fill)
+        for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle)):
+            try:
+                dxm = cw[0]
+                dxp = cw[1]
+            except (IndexError, TypeError):
+                dxm = cw / 2
+                dxp = cw / 2
+            su = np.sign(q[:, j][i])
+            su = 1 if su == 0 else su
+            emin = inner_err[i] * su
+            emax = outer_err[i] * su
+            # Turn every data point into three so we can use fill_between
+            # and switch off filling in between points
+            xx.extend((xs - dxm, xs + dxp, xs + dxp))
+            yy.extend((ys,) * 3)
+            e_min.extend((emin,) * 3)
+            e_max.extend((emax,) * 3)
+            fill.extend((True, True, False))
 
-    # Draw first component
-    ax.fill_between(
-        xx_arr,
-        yy_arr + e_min_arr,
-        yy_arr + e_max_arr,
-        where=fill_arr,
-        hatch=poshatch,
-        facecolor="none",
-        edgecolor=color,
-        zorder=zorder,
-    )
-    ax.fill_between(
-        xx_arr,
-        yy_arr - e_min_arr,
-        yy_arr - e_max_arr,
-        where=fill_arr,
-        hatch=neghatch,
-        facecolor="none",
-        edgecolor=color,
-        zorder=zorder,
-    )
+        xx_arr = np.array(xx)
+        yy_arr = np.array(yy)
+        e_min_arr = np.array(e_min)
+        e_max_arr = np.array(e_max)
+        fill_arr = np.array(fill)
+
+        hatch_pair = hatch[j]
+
+        # Draw component
+        if label_components:
+            comp_label = f"Principal component #{j+1}"
+        else:
+            comp_label = None
+
+        # Make sure we have hatch styles before accessing them
+        if hatch is not None:
+            hatch_pair = hatch[j]
+
+            ax.fill_between(
+                xx_arr,
+                yy_arr + e_min_arr,
+                yy_arr + e_max_arr,
+                where=fill_arr,
+                hatch=hatch_pair[0],
+                facecolor="none",
+                edgecolor=color,
+                zorder=zorder,
+                label=comp_label,
+            )
+            ax.fill_between(
+                xx_arr,
+                yy_arr - e_min_arr,
+                yy_arr - e_max_arr,
+                where=fill_arr,
+                hatch=hatch_pair[1],
+                facecolor="none",
+                edgecolor=color,
+                zorder=zorder,
+            )
+
+        inner_err = outer_err
 
     if drawconditional:
-        # Draw conditional probabilities and last component
-        sw = np.sign(w)
-        sw = np.where(sw == 0, 1, sw)
-        yb = y + Kerr * sw
-        yd = -(Kerr - yconderr) * sw
+        # Draw conditional probabilities
+        yb = y + Kerr
+        yd = -(Kerr - yconderr)
         tri_col_pos = wedgeplot(
             x, yb, yd, wedgewidth=componentwidth, closed=True, zorder=zorder
         )
-        yb = y - Kerr * sw
-        yd = (Kerr - yconderr) * sw
+        yb = y - Kerr
+        yd = Kerr - yconderr
         tri_col_neg = wedgeplot(
             x, yb, yd, wedgewidth=componentwidth, closed=True, zorder=zorder
         )
@@ -555,15 +600,16 @@ def pcplot(
         tri_col_pos.set_facecolor("none")
         tri_col_neg.set_linewidth(1)
         tri_col_neg.set_color(color)
-        tri_col_neg.set_alpha(0.8)
+        tri_col_neg.set_facecolor("none")
 
     if return_dict is not None:
         return_dict.update(
             {
                 "K": K,
-                "u": u,
-                "w": w,
+                "q": q,
                 "yconderr": yconderr,
+                "d": d,
+                "n_comp": n_comp,
             }
         )
 
