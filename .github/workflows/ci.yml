@@ -60,7 +60,7 @@ jobs:
       - name: Install nox
         run: pip install nox
       - name: Run tests
-        run: nox -s tests
+        run: nox -s tests-${{ matrix.python-version }}
 
   lint:
     needs: setup
