@@ -6,8 +6,9 @@
 
 # Build/Lint/Test:
 
-- Run all tests: `nox -s tests`
-- Run single test: `nox -s tests -- tests/test_file.py::test_name`
+- Run all tests: `nox -s tests-3.13`
+- Run all tests with all available Python versions: `nox -s tests`
+- Run single test: `nox -s tests-3.13 -- tests/test_file.py::test_name`
 - Lint: `nox -s lint`
 - PyLint: `nox -s pylint`
 - Typecheck: `nox -s lint` (mypy checks are part of the pre-commit checks)
