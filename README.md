@@ -4,6 +4,7 @@ Statistical tools (not just) for neutrino physics
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
+[![Zenodo][zenodo-badge]][zenodo-link]
 
 [![PyPI version][pypi-version]][pypi-link]
 [![Conda-Forge][conda-badge]][conda-link]
@@ -30,6 +31,8 @@ Alternatively or additionally you can cite this code directly on Zenodo:
 
 [![Zenodo][zenodo-badge]][zenodo-link]
 
+See the DOIs listed there if you want to cite a specific release.
+
 <!-- prettier-ignore-start -->
 [actions-badge]:            https://github.com/ast0815/nustattools/workflows/CI/badge.svg
 [actions-link]:             https://github.com/ast0815/nustattools/actions
@@ -42,7 +45,7 @@ Alternatively or additionally you can cite this code directly on Zenodo:
 [pypi-version]:             https://img.shields.io/pypi/v/nustattools
 [rtd-badge]:                https://readthedocs.org/projects/nustattools/badge/?version=latest
 [rtd-link]:                 https://nustattools.readthedocs.io/en/latest/?badge=latest
-[zenodo-badge]:             https://zenodo.org/badge/841949970.svg
+[zenodo-badge]:             https://zenodo.org/badge/DOI/10.5281/zenodo.13331496.svg
 [zenodo-link]:              https://zenodo.org/doi/10.5281/zenodo.13331496
 
 <!-- prettier-ignore-end -->
