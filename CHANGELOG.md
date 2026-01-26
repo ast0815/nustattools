@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+Nothing
+
+## [0.8.0]
+
 ### Changed
 
 - Changed how the `pcplot` works. Now plots multiple principal components.
