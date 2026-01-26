@@ -222,4 +222,4 @@ class OptimalFMaxStatistic(FMaxStatistic):
         super().__init__(k=k, funcs=funcs)
 
 
-__all__ = ["TestStatistic", "FMaxStatistic", "QMaxStatistic", "OptimalFMaxStatistic"]
+__all__ = ["FMaxStatistic", "OptimalFMaxStatistic", "QMaxStatistic", "TestStatistic"]

@@ -550,7 +550,7 @@ def pcplot(
 
         # Draw component
         if label_components:
-            comp_label = f"Principal component #{j+1}"
+            comp_label = f"Principal component #{j + 1}"
         else:
             comp_label = None
 
