@@ -57,7 +57,7 @@ def test_derate_single_covariance():
             [np.nan, np.nan, 2.0, 3.0],
         ]
     )
-    with pytest.warns(UserWarning):
+    with pytest.warns(UserWarning, match="Had to increase covariance diagonal"):
         assert np.abs(r.derate_covariance(cov, sigma=2) - 1.3117) < 0.05
 
 
@@ -96,7 +96,9 @@ def test_derate_multi_covariance():
     with pytest.raises(ValueError, match="is all zeros"):
         r.derate_covariance([cov1, cov2, cov3, cov4], sigma=2)
     cov3[-1, -1] = 0
-    with pytest.warns(UserWarning), pytest.raises(ValueError, match="is all zeros"):
+    with pytest.warns(
+        UserWarning, match="Had to increase covariance diagonal"
+    ), pytest.raises(ValueError, match="is all zeros"):
         r.derate_covariance([cov1, cov2, cov3], sigma=2)
 
 

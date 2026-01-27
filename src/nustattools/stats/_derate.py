@@ -14,8 +14,8 @@ from scipy.stats import chi2
 from .gx2.functions import gx2inv
 
 
-@njit()  # type: ignore[misc]
-def _fix(cov: NDArray[Any]) -> NDArray[Any]:
+@njit()
+def _fix(cov):  # type: ignore[no-untyped-def]
     changed = True
     while changed:
         changed = False

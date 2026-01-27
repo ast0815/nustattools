@@ -182,7 +182,7 @@ def wedgeplot(
 
     if wedgewidth is None:
         # Try to guess a reasonable width from the data
-        ww = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)  # type: ignore[operator]
+        ww = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)
         wedgewidth = itertools.cycle([ww])
 
     try:
@@ -495,7 +495,7 @@ def pcplot(
 
     if componentwidth is None:
         # Try to guess a reasonable width from the data
-        cw = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)  # type: ignore[operator]
+        cw = min(np.min(np.diff(x)) * 0.9, (np.max(x) - np.min(x)) / 15)
         componentwidth = itertools.cycle([cw])
 
     # Plot error bars with correlation lines
@@ -550,7 +550,7 @@ def pcplot(
 
         # Draw component
         if label_components:
-            comp_label = f"Principal component #{j+1}"
+            comp_label = f"Principal component #{j + 1}"
         else:
             comp_label = None
 

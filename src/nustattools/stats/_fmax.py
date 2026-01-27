@@ -12,7 +12,7 @@ from scipy.stats import chi2
 
 
 class TestStatistic(ABC):
-    """General class for test statistcs.
+    """General class for test statistics.
 
     A TestStatistic must implement a way to calculate the test statistic from
     some data, as well as a way to calculate the CDF of the expected
@@ -222,4 +222,4 @@ class OptimalFMaxStatistic(FMaxStatistic):
         super().__init__(k=k, funcs=funcs)
 
 
-__all__ = ["TestStatistic", "FMaxStatistic", "QMaxStatistic", "OptimalFMaxStatistic"]
+__all__ = ["FMaxStatistic", "OptimalFMaxStatistic", "QMaxStatistic", "TestStatistic"]

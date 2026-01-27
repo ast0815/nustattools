@@ -22,7 +22,7 @@ def test_hinton():
         p.hinton(M, origin=o)
     with pytest.raises(ValueError, match="Unknown origin"):
         p.hinton(M, origin="")
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     p.hinton(M, ax=ax)
 
 
