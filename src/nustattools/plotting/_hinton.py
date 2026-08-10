@@ -18,7 +18,7 @@ def hinton(
     origin: str = "upper",
     cmap: str = "cividis",
     legend: bool = False,
-    ax: None | Any = None,
+    ax: Any | None = None,
 ) -> tuple[Any, Any]:
     """Draw Hinton diagram for visualizing a matrix with positive and negative values.
 
