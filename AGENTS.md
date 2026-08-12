@@ -12,6 +12,10 @@
 - Lint: `nox -s lint`
 - PyLint: `nox -s pylint`
 - Typecheck: `nox -s lint` (mypy checks are part of the pre-commit checks)
+- Dependency management uses `uv`: `uv sync` creates the dev venv, `uv lock`
+  regenerates `uv.lock` after changing dependencies in `pyproject.toml`, and
+  `uv lock --check` verifies the lockfile is up to date. The nox sessions use
+  the `uv` venv backend (`nox.options.default_venv_backend`).
 
 # Code Style:
 

@@ -22,6 +22,19 @@ Install via pip:
 $ pip install nustattools
 ```
 
+## Development setup
+
+```bash
+# Create the environment and install the dev dependencies
+uv sync
+
+# Run the test suite (or any other nox session)
+uv run nox -s tests-3.13
+
+# Update the lockfile after changing dependencies in pyproject.toml
+uv lock
+```
+
 ## Citing
 
 If you use this package in your research, please cite the papers linked to in

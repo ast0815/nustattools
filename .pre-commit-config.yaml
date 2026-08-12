@@ -81,6 +81,11 @@ repos:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: "0.12.3"
+    hooks:
+      - id: uv-lock
+
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: "0.37.4"
     hooks:

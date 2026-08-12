@@ -16,6 +16,9 @@ and this project adheres to
 ### Added
 
 - Support for Python 3.14.
+- Documented the `uv`-based development workflow (`uv sync`, `uv lock`) in the
+  README and `AGENTS.md`.
+- CI now checks that `uv.lock` is up to date and uses `uv` to install `nox`.
 
 ## [0.8.0]
 
