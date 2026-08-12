@@ -12,7 +12,7 @@ nox.needs_version = ">=2024.3.2"
 nox.options.sessions = ["lint", "pylint", "tests", "build_api_docs", "docs"]
 nox.options.default_venv_backend = "uv|virtualenv"
 
-PYTHON_VERSIONS = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 
 @nox.session(python=PYTHON_VERSIONS[-1])

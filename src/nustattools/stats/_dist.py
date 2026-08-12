@@ -8,7 +8,8 @@ Statistical distributions that are useful, but not available in
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray

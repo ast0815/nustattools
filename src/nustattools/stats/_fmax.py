@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Iterable, cast
+from collections.abc import Callable, Iterable
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -131,7 +132,7 @@ class FMaxStatistic(TestStatistic):
     def _cdf(self, statistic: ArrayLike) -> NDArray[Any]:
         z = np.asarray(statistic)
         M2 = np.ndarray((*z.shape, len(self.funcs)))  # type: NDArray[Any]
-        for i, (f, invf) in enumerate(zip(self.funcs, self.inv_funcs)):
+        for i, (f, invf) in enumerate(zip(self.funcs, self.inv_funcs, strict=True)):
             if invf is None:
                 m2 = np.ndarray(z.shape)  # type: NDArray[Any]
                 for j, zz in enumerate(z.flat):

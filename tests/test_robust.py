@@ -96,9 +96,10 @@ def test_derate_multi_covariance():
     with pytest.raises(ValueError, match="is all zeros"):
         r.derate_covariance([cov1, cov2, cov3, cov4], sigma=2)
     cov3[-1, -1] = 0
-    with pytest.warns(
-        UserWarning, match="Had to increase covariance diagonal"
-    ), pytest.raises(ValueError, match="is all zeros"):
+    with (
+        pytest.warns(UserWarning, match="Had to increase covariance diagonal"),
+        pytest.raises(ValueError, match="is all zeros"),
+    ):
         r.derate_covariance([cov1, cov2, cov3], sigma=2)
 
 

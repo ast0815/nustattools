@@ -8,7 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
-Nothing
+### Removed
+
+- Dropped support for Python 3.8 and 3.9. The minimum required Python version is
+  now 3.10.
+
+### Added
+
+- Support for Python 3.14.
 
 ## [0.8.0]
 

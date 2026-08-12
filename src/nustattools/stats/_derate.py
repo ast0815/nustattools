@@ -14,8 +14,9 @@ from scipy.stats import chi2
 from .gx2.functions import gx2inv
 
 
-@njit()
-def _fix(cov):  # type: ignore[no-untyped-def]
+@njit()  # type: ignore[untyped-decorator]
+def _fix(orig: NDArray[Any]) -> NDArray[Any]:
+    cov = orig.copy()
     changed = True
     while changed:
         changed = False
@@ -49,7 +50,7 @@ def fill_max_correlation(cor: ArrayLike, target: ArrayLike) -> NDArray[Any]:
     Only replaces elements in `cor` that are ``np.nan``.
     """
 
-    cora = np.array(cor)
+    cora: NDArray[Any] = np.array(cor)
     target = np.asarray(target)
 
     # Check and fix connections to other elements
@@ -59,7 +60,7 @@ def fill_max_correlation(cor: ArrayLike, target: ArrayLike) -> NDArray[Any]:
         np.argsort(np.abs(target), axis=None)[::-1], target.shape
     )
 
-    for i, j in zip(*priority):
+    for i, j in zip(*priority, strict=True):
         if np.isfinite(cora[i, j]):
             continue
 
@@ -351,7 +352,7 @@ def derate_covariance(
     # Transform to whitened coordinate systems and calculate "nightmare_cov"
     # covariance, then transform back
     nightmare_cov = np.zeros_like(cov_0)
-    for c, c0 in zip(covl, cov_0_l):
+    for c, c0 in zip(covl, cov_0_l, strict=True):
         # Whitened correlation is identity matrix
         cor = np.eye(len(c0))
         # Set unknowns back to NaN

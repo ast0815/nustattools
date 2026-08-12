@@ -193,7 +193,7 @@ def wedgeplot(
     # Plot create wedges
 
     paths = []
-    for xx, yy, dd, w in zip(x, y, dy, ww_cycle):
+    for xx, yy, dd, w in zip(x, y, dy, ww_cycle, strict=False):
         try:
             dxm = w[0]
             dxp = w[1]
@@ -424,6 +424,7 @@ def pcplot(
 
     yerr = np.sqrt(np.diag(ycov))
     yerr_safe = np.where(yerr > 0, yerr, 1e-12)
+    yerrscale: float | NDArray[Any]
     if normalize:
         ycor = ycov / yerr_safe[:, np.newaxis] / yerr_safe[np.newaxis, :]
         yerrscale = yerr
@@ -450,7 +451,7 @@ def pcplot(
         # Find index to cover specified fraction of total covariance
         D = np.cumsum(d)
         D = D / D[-1]
-        n_comp = np.searchsorted(D, components) + 1
+        n_comp = int(np.searchsorted(D, components) + 1)
     else:
         n_comp = int(components)
     n_comp = max(n_comp, 1)
@@ -466,12 +467,12 @@ def pcplot(
 
     # Scale the removed components
     if n_comp == len(d):
-        target_covariance = 0
+        target_covariance = 0.0
     else:
-        target_covariance = np.quantile(d, target_quantile)
+        target_covariance = float(np.quantile(d, target_quantile))
         # Make sure we are at least targeting the size of the first
         # untouched component
-        target_covariance = min(d[n_comp], target_covariance)
+        target_covariance = min(float(d[n_comp]), target_covariance)
 
     scaling_factors = np.sqrt(1 - target_covariance / d[:n_comp])
 
@@ -521,7 +522,7 @@ def pcplot(
         except TypeError:
             cw_cycle = itertools.cycle([componentwidth])
 
-        for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle)):
+        for i, (xs, ys, cw) in enumerate(zip(x, y, cw_cycle, strict=False)):
             try:
                 dxm = cw[0]
                 dxp = cw[1]
