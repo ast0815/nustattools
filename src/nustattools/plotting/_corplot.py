@@ -221,7 +221,7 @@ def pcplot(
     ycov: NDArray[Any],
     *,
     componentwidth: Any = None,
-    components: float = 0.5,
+    components: float | int = 0.5,  # noqa: PYI041
     target_quantile: float = 0.5,
     hatch: list[tuple[str, str]] | None = None,
     drawcorlines: bool = True,
