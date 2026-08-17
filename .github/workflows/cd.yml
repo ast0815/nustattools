@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 1
           submodules: true
 
-      - uses: hynek/build-and-inspect-python-package@v2
+      - uses: hynek/build-and-inspect-python-package@v3.0.1
 
   publish:
     needs: [dist]
