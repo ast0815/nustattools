@@ -51,12 +51,6 @@ def _canonicalize(
     return b, binv, d
 
 
-def _decanonicalize(delta_star: NDArray[Any], binv: NDArray[Any]) -> NDArray[Any]:
-    """Transform an estimate back from canonical to original coordinates."""
-
-    return cast(NDArray[Any], delta_star @ binv.T)
-
-
 def _berger_canonical(
     x: NDArray[Any], d: NDArray[Any], c: float, positive: bool
 ) -> NDArray[Any]:
@@ -180,7 +174,7 @@ def berger(
     b, binv, d = _canonicalize(cova, qa)
     x_star = xa @ b.T
     delta_star = _berger_canonical(x_star, d, c, positive)
-    return _decanonicalize(delta_star, binv)
+    return cast(NDArray[Any], delta_star @ binv.T)
 
 
 def shrink(
