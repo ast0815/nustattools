@@ -64,6 +64,9 @@ def corlines(
     correlation line attaches. Of course, this is a symmetric relationship and
     the "fixing" and "causing" can equally be read in the opposite direction.
 
+    This method for visualising correlated uncertainties is discussed in
+    [Koch2026]_.
+
     Examples
     --------
 
@@ -152,6 +155,11 @@ def wedgeplot(
     -------
     matplotlib.collections.PolyCollection
 
+    Notes
+    -----
+
+    Wedges are used in [Koch2026]_ to indicate the conditional uncertainty of
+    each data point, i.e. the allowed variance if all other points are fixed.
 
     Examples
     --------
@@ -344,6 +352,8 @@ def pcplot(
     7.  If requested, determine the conditional uncertainty of each data point
         and plot those as wedges from the error bars of ``K`` pointing to the
         conditional uncertainties.
+
+    The method implemented here is described in [Koch2026]_.
 
 
     Examples

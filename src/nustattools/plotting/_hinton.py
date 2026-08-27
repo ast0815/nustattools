@@ -96,6 +96,9 @@ def hinton(
 
     Based on https://matplotlib.org/stable/gallery/specialty_plots/hinton_demo.html
 
+    Hinton diagrams were originally introduced in [Hinton1991]_. They are
+    discussed in the context of plotting correlated data in [Koch2026]_.
+
 
     """
     ax = ax if ax is not None else plt.gca()

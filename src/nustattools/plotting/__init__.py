@@ -1,7 +1,18 @@
 """
 Copyright (c) 2024 Lukas Koch. All rights reserved.
 
-Potentially useful statistical tools that are not available in ``scipy.stats``.
+Plotting tools for data with correlated uncertainties that are not available in
+``matplotlib``.
+
+References
+----------
+
+.. [Koch2026] L. Koch, "Plotting correlated data,"
+    https://arxiv.org/abs/2601.20805
+
+.. [Hinton1991] G. E. Hinton and T. Shallice, "Lesioning an Attractor Network:
+    Investigations of Acquired Dyslexia," Psychological Review 98, no. 1, 74 (1991),
+    https://doi.org/10.1037/0033-295x.98.1.74
 
 """
 

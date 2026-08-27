@@ -19,6 +19,12 @@ and this project adheres to
 - Documented the `uv`-based development workflow (`uv sync`, `uv lock`) in the
   README and `AGENTS.md`.
 - CI now checks that `uv.lock` is up to date and uses `uv` to install `nox`.
+- Paper citation in docstrings of `FMaxStatistic`, `QMaxStatistic`,
+  `OptimalFMaxStatistic`, and `Cee2`.
+- Citation of "Plotting correlated data" (Koch 2026, arXiv:2601.20805) in
+  docstrings of `corlines`, `wedgeplot`, and `pcplot`.
+- Citation of the same paper and the original Hinton diagram reference (Hinton &
+  Shallice 1991) in the docstring of `hinton`.
 
 ## [0.8.0]
 

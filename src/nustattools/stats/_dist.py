@@ -68,14 +68,6 @@ class Bee2(rv_continuous):
     This distribution is discussed in [Koch2021]_ in the context of robust test
     statistics.
 
-
-    References
-    ----------
-
-    .. [Koch2021] L. Koch, "Robust test statistics for data sets with missing
-        correlation information," Phys. Rev. D 103, 113008 (2021) , Vol. 103, No.
-        11 p. 113008, https://arxiv.org/abs/2102.06172
-
     """
 
     def _cdf(self, x: ArrayLike, df: int) -> ArrayLike:
@@ -169,8 +161,8 @@ class Cee2(rv_continuous):
     Notes
     -----
 
-    TODO: Add reference to paper.
-
+    This distribution is a generalisation of the :class:`Bee2` distribution
+    of [Koch2021]_ to chi² variables with arbitrary degrees of freedom.
 
     """
 

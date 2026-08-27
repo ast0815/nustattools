@@ -298,18 +298,6 @@ def derate_covariance(
     matrix is prepended, which aligns the whitened coordinate axes with the
     model parameter space given by `jacobian`. See [Koch2024]_.
 
-    References
-    ----------
-
-    .. [Kessy2015] Kessy, Agnan / Lewin, Alex / Strimmer, Korbinian
-       "Optimal whitening and decorrelation",
-       The American Statistician 2018, Vol. 72, No. 4, pp. 309-314 , Vol. 72, No. 4,
-       Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
-
-    .. [Koch2024] L. Koch "Hypothesis tests and model parameter estimation on
-       data sets1 with missing correlation information",
-       https://arxiv.org/abs/2410.22333
-
     """
 
     # Make sure we have a list of covariances

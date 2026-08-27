@@ -3,6 +3,22 @@ Copyright (c) 2024 Lukas Koch. All rights reserved.
 
 Potentially useful statistical tools that are not available in ``scipy.stats``.
 
+References
+----------
+
+.. [Koch2021] L. Koch, "Robust test statistics for data sets with missing
+    correlation information," Phys. Rev. D 103, 113008 (2021),
+    https://arxiv.org/abs/2102.06172
+
+.. [Koch2024] L. Koch "Hypothesis tests and model parameter estimation on
+    data sets with missing correlation information",
+    https://arxiv.org/abs/2410.22333
+
+.. [Kessy2015] Kessy, Agnan / Lewin, Alex / Strimmer, Korbinian
+    "Optimal whitening and decorrelation",
+    The American Statistician 2018, Vol. 72, No. 4, pp. 309-314,
+    Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
+
 """
 
 from __future__ import annotations

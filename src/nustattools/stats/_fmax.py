@@ -93,7 +93,8 @@ class FMaxStatistic(TestStatistic):
     Notes
     -----
 
-    TODO: Cite paper.
+    This class is the base class for the test statistics introduced in
+    [Koch2021]_, which are robust against missing correlation information.
 
     """
 
@@ -168,7 +169,7 @@ class QMaxStatistic(FMaxStatistic):
     Notes
     -----
 
-    TODO: Cite paper.
+    This statistic is one of the `invariant` test statistics of [Koch2021]_.
 
     """
 
@@ -204,7 +205,8 @@ class OptimalFMaxStatistic(FMaxStatistic):
     Notes
     -----
 
-    TODO: Cite paper.
+    This statistic corresponds to an optimal choice of the `invariant 3`
+    test statistic of [Koch2021]_.
 
     """
 
