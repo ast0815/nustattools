@@ -25,6 +25,9 @@ and this project adheres to
   docstrings of `corlines`, `wedgeplot`, and `pcplot`.
 - Citation of the same paper and the original Hinton diagram reference (Hinton &
   Shallice 1991) in the docstring of `hinton`.
+- Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
+  including Berger's minimax estimator and a canonical-form front-end that
+  handles general covariance and loss matrices.
 
 ## [0.8.0]
 
