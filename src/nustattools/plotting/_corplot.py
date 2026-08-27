@@ -19,7 +19,7 @@ def corlines(
     *,
     corlinestyle: str = ":",
     cormarker: str = "_",
-    ax: None | Any = None,
+    ax: Any | None = None,
     **kwargs: Any,
 ) -> Any:
     """Plot data points with error bars and correlation lines.
@@ -229,7 +229,7 @@ def pcplot(
     ycov: NDArray[Any],
     *,
     componentwidth: Any = None,
-    components: float | int = 0.5,
+    components: float | int = 0.5,  # noqa: PYI041
     target_quantile: float = 0.5,
     hatch: list[tuple[str, str]] | None = None,
     drawcorlines: bool = True,
@@ -237,7 +237,7 @@ def pcplot(
     normalize: bool = True,
     ax: Any = None,
     label_components: bool = False,
-    return_dict: None | dict[Any, Any] = None,
+    return_dict: dict[Any, Any] | None = None,
     **kwargs: Any,
 ) -> Any:
     """Plot data points with 1st PCA component and correlation lines.

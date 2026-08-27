@@ -19,8 +19,8 @@ References
 from __future__ import annotations
 
 from . import _corplot, _hinton
-from ._corplot import *  # noqa: F403
-from ._hinton import *  # noqa: F403
+from ._corplot import *
+from ._hinton import *
 
 # Export all exports from the sub-modules
 __all__ = _hinton.__all__ + _corplot.__all__
