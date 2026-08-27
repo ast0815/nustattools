@@ -23,6 +23,7 @@ References
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, cast
 
 import numpy as np
@@ -73,25 +74,70 @@ def _berger_canonical(
     return cast(NDArray[Any], factor * x)
 
 
-def _resolve_q(q: ArrayLike | None, p: int) -> NDArray[Any]:
-    """Return ``Q`` as a validated positive definite matrix."""
+def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
+    """Validate that ``a`` is symmetric positive definite with the given shape."""
 
-    if q is None:
-        return np.eye(p)
-    qa = np.asarray(q)
-    if qa.shape != (p, p):
-        msg = f"Loss matrix Q must have shape {(p, p)}, got {qa.shape}."
+    aa = np.asarray(a)
+    if aa.shape != shape:
+        msg = f"{name} must have shape {shape}, got {aa.shape}."
         raise ValueError(msg)
-    if not np.allclose(qa, qa.T):
-        msg = "Loss matrix Q must be symmetric."
+    if not np.allclose(aa, aa.T):
+        msg = f"{name} must be symmetric."
         raise ValueError(msg)
-    # Validate positive definiteness (also gives a clean error message)
     try:
-        np.linalg.cholesky(qa)
+        np.linalg.cholesky(aa)
     except np.linalg.LinAlgError as e:
-        msg = "Loss matrix Q must be positive definite."
+        msg = f"{name} must be positive definite."
         raise ValueError(msg) from e
-    return qa
+    return aa
+
+
+def _validate(
+    x: ArrayLike, cov: ArrayLike, q: ArrayLike | None
+) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], int]:
+    """Validate and resolve the common estimator inputs.
+
+    Returns ``(x, cov, q, p)`` where ``x`` has shape ``(..., p)``, ``cov`` and
+    ``q`` are symmetric positive definite ``(p, p)`` matrices and ``q`` is the
+    identity if ``Q`` was not given.
+
+    """
+
+    xa = np.asarray(x)
+    if xa.ndim < 1:
+        msg = "x must have at least one dimension."
+        raise ValueError(msg)
+    p = xa.shape[-1]
+    cova = _validate_sympd(cov, (p, p), "covariance matrix")
+    if q is None:
+        qa = np.eye(p)
+    else:
+        qa = _validate_sympd(q, (p, p), "loss matrix Q")
+    return xa, cova, qa, p
+
+
+def _estimate(
+    x: ArrayLike,
+    cov: ArrayLike,
+    q: ArrayLike | None,
+    canonical_estimator: Callable[..., NDArray[Any]],
+    **kwargs: Any,
+) -> NDArray[Any]:
+    """Run a canonical-form estimator on the given problem.
+
+    Validates and canonicalizes the common inputs, applies
+    ``canonical_estimator`` to the canonical data, and transforms the estimate
+    back to the original coordinates.  ``canonical_estimator`` must have the
+    signature ``canonical(x_star, d, **kwargs)``, where ``x_star`` has shape
+    ``(..., p)`` and ``d`` holds the coordinate variances ``(p,)``; it returns
+    the canonical-form estimate with shape ``(..., p)``.
+
+    """
+
+    xa, cova, qa, _ = _validate(x, cov, q)
+    b, binv, d = _canonicalize(cova, qa)
+    delta_star = canonical_estimator(xa @ b.T, d, **kwargs)
+    return cast(NDArray[Any], delta_star @ binv.T)
 
 
 def berger(
@@ -144,26 +190,8 @@ def berger(
 
     """
 
-    xa: NDArray[Any] = np.asarray(x)
-    cova: NDArray[Any] = np.asarray(cov)
+    xa = np.asarray(x)
     p = xa.shape[-1]
-
-    if xa.ndim < 1:
-        msg = "x must have at least one dimension."
-        raise ValueError(msg)
-    if cova.shape != (p, p):
-        msg = f"covariance matrix must have shape {(p, p)}, got {cova.shape}."
-        raise ValueError(msg)
-    if not np.allclose(cova, cova.T):
-        msg = "covariance matrix must be symmetric."
-        raise ValueError(msg)
-    try:
-        np.linalg.cholesky(cova)
-    except np.linalg.LinAlgError as e:
-        msg = "covariance matrix must be positive definite."
-        raise ValueError(msg) from e
-
-    qa = _resolve_q(Q, p)
 
     if c is None:
         c = float(p - 2)
@@ -171,10 +199,7 @@ def berger(
         msg = "Shrinkage constant c must be non-negative."
         raise ValueError(msg)
 
-    b, binv, d = _canonicalize(cova, qa)
-    x_star = xa @ b.T
-    delta_star = _berger_canonical(x_star, d, c, positive)
-    return cast(NDArray[Any], delta_star @ binv.T)
+    return _estimate(x, cov, Q, _berger_canonical, c=c, positive=positive)
 
 
 def shrink(
@@ -211,10 +236,17 @@ def shrink(
 
     """
 
-    if method == "berger":
-        return berger(x, cov, Q=Q, **kwargs)
-    msg = f"Unknown shrinkage method '{method}'."
-    raise ValueError(msg)
+    try:
+        estimator = _METHODS[method]
+    except KeyError as e:
+        msg = f"Unknown shrinkage method '{method}'."
+        raise ValueError(msg) from e
+    return estimator(x, cov, Q=Q, **kwargs)
+
+
+_METHODS: dict[str, Callable[..., NDArray[Any]]] = {
+    "berger": berger,
+}
 
 
 __all__ = ["berger", "shrink"]

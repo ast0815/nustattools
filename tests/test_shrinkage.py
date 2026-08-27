@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import nustattools.stats as s
+from nustattools.stats import shrinkage as _shrinkage
 
 
 def rng():
@@ -132,3 +133,34 @@ def test_berger_not_pd_error():
 def test_berger_negative_c_error():
     with pytest.raises(ValueError, match="non-negative"):
         s.berger(rng().normal(size=3), np.eye(3), c=-1.0)
+
+
+def test_estimate_canonicalizes_and_decanonicalizes():
+    # The shared _estimate wrapper must canonicalize the inputs, pass the
+    # canonical data to the estimator, and transform the result back.  Use a
+    # synthetic canonical estimator so the transform is exercised for an
+    # estimator that is not the built-in Berger one.
+    calls = []
+
+    def dummy_canonical(x_star, d, *, scale):
+        calls.append((np.array(x_star), np.array(d)))
+        return scale * x_star
+
+    a = rng().normal(size=(4, 4))
+    cov = a @ a.T + np.eye(4)
+    b = rng().normal(size=(4, 4))
+    q = b @ b.T + np.eye(4)
+    xa = rng().normal(size=(2, 4))
+
+    _shrinkage._estimate(xa, cov, q, dummy_canonical, scale=2.0)
+    (x_star, d) = calls[0]
+
+    # The estimator receives the canonical data from the shared transform.
+    bmat, _, d_from_transform = _shrinkage._canonicalize(cov, q)
+    np.testing.assert_allclose(x_star, xa @ bmat.T)
+    np.testing.assert_allclose(d, d_from_transform)
+
+    # Applying the identity canonical estimator recovers the original data, so
+    # the decanonicalization exactly inverts the canonicalization.
+    out_identity = _shrinkage._estimate(xa, cov, q, lambda xs, _dd: xs)
+    np.testing.assert_allclose(out_identity, xa)
