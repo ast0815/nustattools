@@ -290,10 +290,10 @@ def berger(
     --------
 
     >>> import numpy as np
-    >>> import nustattools.stats as s
+    >>> import nustattools.stats.shrinkage as sh
     >>> rng = np.random.default_rng(0)
     >>> x = rng.normal(size=5)
-    >>> s.berger(x).shape
+    >>> sh.berger(x).shape
     (5,)
 
     """

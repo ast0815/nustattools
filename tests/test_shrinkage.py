@@ -35,7 +35,7 @@ def test_berger_homoscedastic_equals_james_stein():
     x = rng().normal(size=7)
     expected = (1 - 5 * sigma**2 / np.sum(x**2)) * x
     np.testing.assert_allclose(
-        s.berger(x, cov=sigma**2 * np.eye(7), positive=False), expected
+        _shrinkage.berger(x, cov=sigma**2 * np.eye(7), positive=False), expected
     )
 
 
@@ -43,14 +43,16 @@ def test_berger_positive_part_preserves_sign():
     # Positive part should never flip the sign of any coordinate, only
     # shrink it (possibly to zero).
     x = rng().normal(size=5) * 0.05
-    delta = s.berger(x, cov=np.eye(5))
+    delta = _shrinkage.berger(x, cov=np.eye(5))
     assert np.all(delta * x >= -1e-12)
 
 
 def test_berger_default_cov_is_identity():
     x = rng().normal(size=6)
-    np.testing.assert_allclose(s.berger(x), s.berger(x, cov=np.eye(6)))
-    assert s.berger(x).shape == (6,)
+    np.testing.assert_allclose(
+        _shrinkage.berger(x), _shrinkage.berger(x, cov=np.eye(6))
+    )
+    assert _shrinkage.berger(x).shape == (6,)
 
 
 def test_shrink_default_cov_is_identity():
@@ -60,7 +62,7 @@ def test_shrink_default_cov_is_identity():
 
 def test_berger_zero_shrinkage_is_identity():
     x = rng().normal(size=5)
-    np.testing.assert_allclose(s.berger(x, cov=np.eye(5), c=0.0), x)
+    np.testing.assert_allclose(_shrinkage.berger(x, cov=np.eye(5), c=0.0), x)
 
 
 def test_berger_general_matches_closed_form():
@@ -71,7 +73,7 @@ def test_berger_general_matches_closed_form():
     x = rng().normal(size=5)
     c = 3.0
     np.testing.assert_allclose(
-        s.berger(x, cov=cov, positive=False, c=c),
+        _shrinkage.berger(x, cov=cov, positive=False, c=c),
         _berger_general_formula(x, cov, np.eye(5), c),
     )
 
@@ -84,7 +86,7 @@ def test_berger_general_Q_matches_closed_form():
     x = rng().normal(size=5)
     c = 2.5
     np.testing.assert_allclose(
-        s.berger(x, cov=cov, Q=q, positive=False, c=c),
+        _shrinkage.berger(x, cov=cov, Q=q, positive=False, c=c),
         _berger_general_formula(x, cov, q, c),
     )
 
@@ -92,11 +94,11 @@ def test_berger_general_Q_matches_closed_form():
 def test_berger_broadcasting_shapes():
     p = 5
     x = rng().normal(size=(4, 3, p))
-    out = s.berger(x, cov=np.eye(p))
+    out = _shrinkage.berger(x, cov=np.eye(p))
     assert out.shape == (4, 3, p)
     for idx in np.ndindex(4, 3):
         np.testing.assert_allclose(
-            out[idx], s.berger(x[idx], cov=np.eye(p)), rtol=1e-12
+            out[idx], _shrinkage.berger(x[idx], cov=np.eye(p)), rtol=1e-12
         )
 
 
@@ -109,16 +111,16 @@ def test_berger_minimaxity():
     n = 200_000
     gen = rng()
     xs = gen.multivariate_normal(np.zeros(p), cov, size=n)
-    loss = np.sum(s.berger(xs, cov=cov, positive=False) ** 2, axis=1)
+    loss = np.sum(_shrinkage.berger(xs, cov=cov, positive=False) ** 2, axis=1)
     assert np.mean(loss) <= np.trace(cov) + 0.02
     # The positive-part version further reduces risk.
-    lossp = np.sum(s.berger(xs, cov=cov, positive=True) ** 2, axis=1)
+    lossp = np.sum(_shrinkage.berger(xs, cov=cov, positive=True) ** 2, axis=1)
     assert np.mean(lossp) <= np.mean(loss) - 0.05
 
 
 def test_shrink_dispatch():
     x = rng().normal(size=5)
-    np.testing.assert_allclose(s.shrink(x, np.eye(5)), s.berger(x, np.eye(5)))
+    np.testing.assert_allclose(s.shrink(x, np.eye(5)), _shrinkage.berger(x, np.eye(5)))
 
 
 def test_shrink_unknown_method():
@@ -128,22 +130,22 @@ def test_shrink_unknown_method():
 
 def test_berger_shape_error():
     with pytest.raises(ValueError, match="covariance matrix must have shape"):
-        s.berger(rng().normal(size=3), np.eye(4))
+        _shrinkage.berger(rng().normal(size=3), np.eye(4))
 
 
 def test_berger_nonsymmetric_error():
     with pytest.raises(ValueError, match="must be symmetric"):
-        s.berger(rng().normal(size=2), np.array([[1.0, 0.5], [0.0, 1.0]]))
+        _shrinkage.berger(rng().normal(size=2), np.array([[1.0, 0.5], [0.0, 1.0]]))
 
 
 def test_berger_not_pd_error():
     with pytest.raises(ValueError, match="positive definite"):
-        s.berger(rng().normal(size=3), np.zeros((3, 3)))
+        _shrinkage.berger(rng().normal(size=3), np.zeros((3, 3)))
 
 
 def test_berger_negative_c_error():
     with pytest.raises(ValueError, match="non-negative"):
-        s.berger(rng().normal(size=3), np.eye(3), c=-1.0)
+        _shrinkage.berger(rng().normal(size=3), np.eye(3), c=-1.0)
 
 
 def test_estimate_canonicalizes_and_decanonicalizes():
@@ -190,7 +192,9 @@ def test_berger_point_offset_equals_shift():
     p = 6
     x = gen.normal(size=p)
     t = gen.normal(size=p)
-    np.testing.assert_allclose(s.berger(x, offset=t), t + s.berger(x - t), rtol=1e-12)
+    np.testing.assert_allclose(
+        _shrinkage.berger(x, offset=t), t + _shrinkage.berger(x - t), rtol=1e-12
+    )
 
 
 def test_berger_full_projection_is_identity():
@@ -200,8 +204,10 @@ def test_berger_full_projection_is_identity():
     p = 6
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
-    np.testing.assert_allclose(s.berger(x, projection=np.eye(p)), x)
-    np.testing.assert_allclose(s.berger(x, projection=np.eye(p), offset=offset), x)
+    np.testing.assert_allclose(_shrinkage.berger(x, projection=np.eye(p)), x)
+    np.testing.assert_allclose(
+        _shrinkage.berger(x, projection=np.eye(p), offset=offset), x
+    )
 
 
 def test_berger_projection_c_zero_recovers_x():
@@ -212,9 +218,11 @@ def test_berger_projection_c_zero_recovers_x():
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
     proj = _projection(gen.normal(size=(p, 2)))
-    np.testing.assert_allclose(s.berger(x, projection=proj, c=0.0), x, rtol=1e-9)
     np.testing.assert_allclose(
-        s.berger(x, projection=proj, offset=offset, c=0.0), x, rtol=1e-9
+        _shrinkage.berger(x, projection=proj, c=0.0), x, rtol=1e-9
+    )
+    np.testing.assert_allclose(
+        _shrinkage.berger(x, projection=proj, offset=offset, c=0.0), x, rtol=1e-9
     )
 
 
@@ -225,7 +233,7 @@ def test_berger_small_complement_is_identity():
     p = 6
     x = gen.normal(size=p)
     proj = np.diag([1.0, 1.0, 1.0, 1.0, 0.0, 0.0])
-    np.testing.assert_allclose(s.berger(x, projection=proj), x)
+    np.testing.assert_allclose(_shrinkage.berger(x, projection=proj), x)
 
 
 def test_berger_subspace_matches_james_stein_identity():
@@ -241,7 +249,7 @@ def test_berger_subspace_matches_james_stein_identity():
     residual = (np.eye(p) - proj) @ x
     expected = proj @ x + (1 - 2 / np.sum(residual**2)) * residual
     np.testing.assert_allclose(
-        s.berger(x, projection=proj, positive=False), expected, rtol=1e-10
+        _shrinkage.berger(x, projection=proj, positive=False), expected, rtol=1e-10
     )
 
 
@@ -257,7 +265,7 @@ def test_berger_affine_subspace_matches_shifted_identity():
     residual = (np.eye(p) - proj) @ y
     expected = offset + proj @ y + (1 - 2 / np.sum(residual**2)) * residual
     np.testing.assert_allclose(
-        s.berger(x, projection=proj, offset=offset, positive=False),
+        _shrinkage.berger(x, projection=proj, offset=offset, positive=False),
         expected,
         rtol=1e-10,
     )
@@ -270,7 +278,7 @@ def test_berger_subspace_keeps_projected_component():
     p = 6
     x = gen.normal(size=p)
     proj = _projection(gen.normal(size=(p, 2)))
-    delta = s.berger(x, projection=proj)
+    delta = _shrinkage.berger(x, projection=proj)
     np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
     resid = (np.eye(p) - proj) @ delta
     raw = (np.eye(p) - proj) @ x
@@ -288,7 +296,7 @@ def test_berger_subspace_reduces_general_cov():
     bmat = gen.normal(size=(p, p))
     q = bmat @ bmat.T + np.eye(p)
     proj = _projection(gen.normal(size=(p, 2)))
-    delta = s.berger(x, cov=cov, Q=q, projection=proj)
+    delta = _shrinkage.berger(x, cov=cov, Q=q, projection=proj)
     assert delta.shape == (p,)
     assert np.linalg.norm(delta) <= np.linalg.norm(x)
 
@@ -301,24 +309,24 @@ def test_shrink_dispatches_offset_projection():
     proj = _projection(gen.normal(size=(p, 2)))
     np.testing.assert_allclose(
         s.shrink(x, offset=offset, projection=proj),
-        s.berger(x, offset=offset, projection=proj),
+        _shrinkage.berger(x, offset=offset, projection=proj),
         rtol=1e-12,
     )
 
 
 def test_projection_shape_error():
     with pytest.raises(ValueError, match="projection must have shape"):
-        s.berger(rng().normal(size=3), projection=np.eye(4))
+        _shrinkage.berger(rng().normal(size=3), projection=np.eye(4))
 
 
 def test_projection_not_idempotent_error():
     with pytest.raises(ValueError, match="idempotent"):
-        s.berger(rng().normal(size=3), projection=2.0 * np.eye(3))
+        _shrinkage.berger(rng().normal(size=3), projection=2.0 * np.eye(3))
 
 
 def test_berger_offset_shape_error():
     with pytest.raises(ValueError, match="offset must have shape"):
-        s.berger(rng().normal(size=3), offset=np.ones(4))
+        _shrinkage.berger(rng().normal(size=3), offset=np.ones(4))
 
 
 def test_affine_reduce_structure():

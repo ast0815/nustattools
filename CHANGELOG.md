@@ -13,6 +13,15 @@ and this project adheres to
 - Dropped support for Python 3.8 and 3.9. The minimum required Python version is
   now 3.10.
 
+### Changed
+
+- Only the `shrink` front-end is now exported from the `nustattools.stats`
+  package; the other shrinkage estimators (e.g. `berger`) and helpers are
+  available through the `nustattools.stats.shrinkage` submodule.
+- The API docs now render each module on its own page; in particular
+  `nustattools.stats.shrinkage` is documented on a separate page below
+  `nustattools.stats` (via `sphinx-apidoc --separate`).
+
 ### Added
 
 - Support for Python 3.14.

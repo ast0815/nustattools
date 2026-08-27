@@ -102,6 +102,7 @@ def build_api_docs(session: nox.Session) -> None:
         "api/",
         "--module-first",
         "--no-toc",
+        "--separate",
         "--force",
         "../src/nustattools",
     )

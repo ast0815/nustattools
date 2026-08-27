@@ -19,22 +19,20 @@ References
     The American Statistician 2018, Vol. 72, No. 4, pp. 309-314,
     Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
 
-.. [Tan2015] Z. Tan, "Improved minimax estimation of a multivariate normal
-    mean under heteroscedasticity",
-    Bernoulli 21(1) (2015) 574-603, https://arxiv.org/abs/1505.07607
-
 """
 
 from __future__ import annotations
 
-from . import _derate, _dist, _fmax, shrinkage
+# ``shrinkage`` is imported so that the ``nustattools.stats.shrinkage``
+# submodule is available, while only ``shrink`` is re-exported at package level.
+from . import _derate, _dist, _fmax, shrinkage  # noqa: F401
 from ._derate import *
 from ._dist import *
 from ._fmax import *
-from .shrinkage import *
+from .shrinkage import shrink
 
 # Export all exports from the sub-modules
-__all__ = _dist.__all__ + _derate.__all__ + _fmax.__all__ + shrinkage.__all__
+__all__ = _dist.__all__ + _derate.__all__ + _fmax.__all__ + ["shrink"]
 
 # Some extra effort, so Sphinx picks up the data docstrings
 # mypy: disable-error-code=name-defined
