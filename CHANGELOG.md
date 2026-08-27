@@ -28,6 +28,8 @@ and this project adheres to
 - Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
   including Berger's minimax estimator and a canonical-form front-end that
   handles general covariance and loss matrices.
+- The shrinkage estimators now accept `offset` and `projection` arguments to
+  shrink towards an arbitrary affine subspace.
 
 ## [0.8.0]
 
