@@ -47,6 +47,17 @@ def test_berger_positive_part_preserves_sign():
     assert np.all(delta * x >= -1e-12)
 
 
+def test_berger_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(s.berger(x), s.berger(x, cov=np.eye(6)))
+    assert s.berger(x).shape == (6,)
+
+
+def test_shrink_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(s.shrink(x), s.shrink(x, cov=np.eye(6)))
+
+
 def test_berger_zero_shrinkage_is_identity():
     x = rng().normal(size=5)
     np.testing.assert_allclose(s.berger(x, cov=np.eye(5), c=0.0), x)

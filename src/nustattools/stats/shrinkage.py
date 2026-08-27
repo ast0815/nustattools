@@ -93,13 +93,13 @@ def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[
 
 
 def _validate(
-    x: ArrayLike, cov: ArrayLike, q: ArrayLike | None
+    x: ArrayLike, cov: ArrayLike | None, q: ArrayLike | None
 ) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], int]:
     """Validate and resolve the common estimator inputs.
 
     Returns ``(x, cov, q, p)`` where ``x`` has shape ``(..., p)``, ``cov`` and
-    ``q`` are symmetric positive definite ``(p, p)`` matrices and ``q`` is the
-    identity if ``Q`` was not given.
+    ``q`` are symmetric positive definite ``(p, p)`` matrices, and ``cov`` is
+    the identity if it was not given, as is ``q``.
 
     """
 
@@ -108,7 +108,10 @@ def _validate(
         msg = "x must have at least one dimension."
         raise ValueError(msg)
     p = xa.shape[-1]
-    cova = _validate_sympd(cov, (p, p), "covariance matrix")
+    if cov is None:
+        cova = np.eye(p)
+    else:
+        cova = _validate_sympd(cov, (p, p), "covariance matrix")
     if q is None:
         qa = np.eye(p)
     else:
@@ -118,7 +121,7 @@ def _validate(
 
 def _estimate(
     x: ArrayLike,
-    cov: ArrayLike,
+    cov: ArrayLike | None,
     q: ArrayLike | None,
     canonical_estimator: Callable[..., NDArray[Any]],
     **kwargs: Any,
@@ -142,7 +145,7 @@ def _estimate(
 
 def berger(
     x: ArrayLike,
-    cov: ArrayLike,
+    cov: ArrayLike | None = None,
     *,
     Q: ArrayLike | None = None,
     positive: bool = True,
@@ -156,9 +159,9 @@ def berger(
         Observed data.  A single vector of shape ``(p,)`` or a stack of
         observations of shape ``(..., p)``.  The estimator is applied to each
         observation over the last axis.
-    cov : array_like
+    cov : array_like, default=None
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
-        symmetric and positive definite.
+        symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  Defaults to the identity,
         i.e. squared-error loss.
@@ -185,7 +188,7 @@ def berger(
     >>> import nustattools.stats as s
     >>> rng = np.random.default_rng(0)
     >>> x = rng.normal(size=5)
-    >>> s.berger(x, cov=np.eye(5)).shape
+    >>> s.berger(x).shape
     (5,)
 
     """
@@ -204,7 +207,7 @@ def berger(
 
 def shrink(
     x: ArrayLike,
-    cov: ArrayLike,
+    cov: ArrayLike | None = None,
     *,
     Q: ArrayLike | None = None,
     method: str = "berger",
@@ -220,8 +223,9 @@ def shrink(
     x : array_like
         Observed data.  A single vector of shape ``(p,)`` or a stack of
         observations of shape ``(..., p)``.
-    cov : array_like
-        The known covariance matrix of ``x``, of shape ``(p, p)``.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Defaults
+        to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
     method : str, default="berger"
