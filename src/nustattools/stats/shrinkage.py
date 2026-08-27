@@ -18,7 +18,7 @@ The estimators may shrink towards an arbitrary affine subspace
 whitened space — is encoded in ``P``).  Shrinking towards such a subspace
 reduces the effective dimension: the component in the subspace is kept and the
 residual is shrunk towards zero in the orthogonal complement, following the
-reduction in [Oman1982]_ and [TanStein2016]_.
+reduction in [Tan2016]_.
 
 References
 ----------
@@ -27,13 +27,9 @@ References
     under heteroscedasticity," Bernoulli 21(1), 574-603 (2015),
     https://arxiv.org/abs/1505.07607
 
-.. [Oman1982] S. D. Oman, "Contracting towards subspaces when estimating the
-    mean of a multivariate normal distribution," Journal of Multivariate
-    Analysis 12, 102-109 (1982).
-
-.. [TanStein2016] Z. Tan, "Steinized empirical Bayes estimation of
-    heteroscedastic hierarchical models," Statistica Sinica 26, 1471-1490
-    (2016).
+.. [Tan2016] Z. Tan, "Steinized empirical Bayes estimation of heteroscedastic
+    data," Statistica Sinica 26(3), 1219-1248 (2016),
+    https://doi.org/10.5705/ss.202014.0069
 
 """
 
