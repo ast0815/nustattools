@@ -596,7 +596,8 @@ def _canonical_directions(
     * a name: ``"uniform"`` (``u* ~ 1``), ``"proportional"`` (``u* ~ sqrt(d)``,
       constant signal-to-noise ratio) or ``"inverse"`` (``u* ~ 1/sqrt(d)``);
     * an integer ``j``: the ``j``-th canonical axis, ordered by *decreasing*
-      variance (``j = 0`` is the largest variance);
+      variance (``j = 0`` is the largest variance and ``j = -1`` the
+      smallest);
     * an array of the original dimension: mapped to canonical space as
       ``u* ~ raw @ B.T``.
 
@@ -627,7 +628,7 @@ def _canonical_directions(
             default_label = raw
         elif isinstance(raw, (int, np.integer)):
             axis = int(raw)
-            if not 0 <= axis < p:
+            if not -p <= axis < p:
                 msg = f"Direction axis {axis} out of range for dimension {p}."
                 raise ValueError(msg)
             u = np.zeros(p)
@@ -719,7 +720,8 @@ def estimate_risk_curve(
         canonical-space direction (``"uniform"``, ``"proportional"`` ~
         ``sqrt(d)``, ``"inverse"`` ~ ``1/sqrt(d)``); an integer ``j`` selects
         the ``j``-th canonical axis ordered by decreasing variance (``j = 0``
-        is the largest variance); an array of shape ``(p,)`` is a raw direction
+        is the largest variance and ``j = -1`` the smallest); an array of shape
+        ``(p,)`` is a raw direction
         in the original space, mapped to canonical space as ``u* ~ raw @ B.T``.
         A list or tuple combines several directions.  Every direction is
         normalized so that ``||u*|| = 1``.
@@ -745,9 +747,11 @@ def estimate_risk_curve(
     -------
     list of dict
         One record per ``(direction, distance, estimator)`` with keys
-        ``direction``, ``distance``, ``estimator``, ``risk``, ``se`` and
-        ``risk_ratio = risk / trace(Q @ cov)`` (the minimax risk of the raw
-        estimator ``delta0 = x``, so a value <= 1 indicates minimaxity).
+        ``direction``, ``distance``, ``mahalanobis``, ``estimator``, ``risk``,
+        ``se`` and ``risk_ratio = risk / trace(Q @ cov)`` (the minimax risk of
+        the raw estimator ``delta0 = x``, so a value <= 1 indicates minimaxity).
+        ``mahalanobis = sqrt(theta^T cov^-1 theta)`` is the Mahalanobis distance
+        of the true mean (same for every estimator at a given sweep point).
 
     Examples
     --------
@@ -785,6 +789,7 @@ def estimate_risk_curve(
 
     baseline: float = float(np.trace(qa @ cova))
     b, binv, d = _canonicalize(cova, qa)
+    pinv: NDArray[Any] = np.linalg.inv(cova)
 
     dirs = _canonical_directions(directions, d, b, direction_labels)
     _, est_list = _normalize_estimators(estimators)
@@ -795,6 +800,7 @@ def estimate_risk_curve(
     for direction, u_star in dirs:
         for t in magnitudes:
             theta = (t * u_star) @ binv.T
+            mahalanobis: float = float(np.sqrt(theta @ pinv @ theta))
             full = estimate_risk(
                 theta,
                 cova,
@@ -809,6 +815,7 @@ def estimate_risk_curve(
                     {
                         "direction": direction,
                         "distance": float(t),
+                        "mahalanobis": mahalanobis,
                         "estimator": est_label,
                         "risk": float(risk),
                         "se": float(se),

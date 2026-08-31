@@ -617,11 +617,64 @@ def test_estimate_risk_curve_record_shape():
     assert set(recs[0]) == {
         "direction",
         "distance",
+        "mahalanobis",
         "estimator",
         "risk",
         "se",
         "risk_ratio",
     }
+
+
+def test_estimate_risk_curve_mahalanobis():
+    # The mahalanobis field is sqrt(theta^T cov^-1 theta), the same for every
+    # estimator at a given sweep point, and agrees with a direct computation.
+    cov = np.diag([1.0, 3.0, 2.0])
+    est = [functools.partial(s.shrink, c=2.0), functools.partial(s.shrink, c=0.0)]
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        est,
+        Q=np.diag([2.0, 1.0, 1.0]),
+        directions="proportional",
+        distances=[1.0, 3.0],
+        n_reps=50,
+        seed=0,
+    )
+    pinv = np.linalg.inv(np.asarray(cov, dtype=float))
+    _b, binv, d = _shrinkage._canonicalize(
+        np.asarray(cov, dtype=float), np.asarray(np.diag([2.0, 1.0, 1.0]), dtype=float)
+    )
+    refs = {}
+    for r in recs:
+        refs.setdefault(r["distance"], r["mahalanobis"])
+        assert r["mahalanobis"] == refs[r["distance"]]
+    for key, val in refs.items():
+        u = np.sqrt(d)
+        u = u / np.linalg.norm(u)
+        theta = (float(key) * u) @ binv.T
+        np.testing.assert_allclose(val, np.sqrt(theta @ pinv @ theta), rtol=1e-6)
+
+
+def test_estimate_risk_curve_negative_axis():
+    # A negative axis selects from the largest-first ordering: -1 is the
+    # smallest variance and differs from axis 0 (the largest variance).
+    cov = np.diag([1.0, 3.0, 2.0])
+    est = functools.partial(s.shrink, c=2.0)
+    recs = _shrinkage.estimate_risk_curve(
+        cov, est, directions=-1, distances=[0.0, 1.0], n_reps=200, seed=0
+    )
+    assert recs[0]["direction"] == "axis -1"
+    _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
+    smallest = int(np.argsort(d)[::-1][-1])
+    raw = np.eye(3)[smallest] @ binv
+    by_raw = _shrinkage.estimate_risk_curve(
+        cov, est, directions=[raw], distances=[0.0, 1.0], n_reps=200, seed=0
+    )
+    for a, b_ in zip(recs, by_raw, strict=True):
+        np.testing.assert_allclose(a["risk"], b_["risk"], rtol=1e-12)
+    axis0 = _shrinkage.estimate_risk_curve(
+        cov, est, directions=0, distances=[1.0], n_reps=200, seed=0
+    )
+    assert not np.allclose(recs[0]["risk"], axis0[0]["risk"])
 
 
 def test_estimate_risk_curve_matches_brute_force():

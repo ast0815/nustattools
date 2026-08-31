@@ -52,7 +52,9 @@ and this project adheres to
 - Added `stats.estimate_risk_curve`, which sweeps the estimated risk of several
   shrinkage estimators against the true mean along configurable directions
   (named, canonical axis, or a raw vector) at increasing distances, returning
-  records ready for a data frame and a seaborn plot.
+  records ready for a data frame and a seaborn plot. Each record includes the
+  Mahalanobis distance of the true mean, and integer directions accept negative
+  indices (e.g. -1 is the smallest variance).
 
 ## [0.8.0]
 
