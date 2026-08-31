@@ -13,12 +13,17 @@ per-estimator implementations simple: they only ever need to shrink a vector
 towards zero with independent coordinates of varying variance.
 
 The estimators may shrink towards an arbitrary affine subspace
-``offset + P (x - offset)`` where ``P`` is a user-supplied projection matrix
-(the projection metric — orthogonal in the original coordinates or in the
-whitened space — is encoded in ``P``).  Shrinking towards such a subspace
-reduces the effective dimension: the component in the subspace is kept and the
-residual is shrunk towards zero in the orthogonal complement, following the
-reduction in [Tan2016]_.
+``offset + span(dirs)``, where ``dirs`` is a matrix whose columns span the
+affine direction.  Following [Tan2016]_, Section 3.3, the projection onto this
+subspace is built in the *covariance* (precision) metric: for a matrix
+``V = dirs_star`` in canonical coordinates, the projector is
+``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``.  This makes the fitted component
+``P y`` and the residual ``(I - P) y`` statistically uncorrelated, so their
+risks add and each can be improved independently.  The component in the
+subspace is kept and the residual is shrunk towards zero; because the residual
+basis ``l2`` is taken orthonormal (eigenvectors of the symmetric residual
+covariance), the change of coordinates is an isometry of the squared-error
+loss, so the reduced shrinkage conserves the full loss exactly.
 
 References
 ----------
@@ -140,39 +145,75 @@ def _validate(
     return xa, cova, qa, p
 
 
-def _validate_projection(projection: ArrayLike, p: int) -> NDArray[Any]:
-    """Validate a projection matrix and return it as an array of shape ``(p, p)``."""
+def _validate_dirs(dirs: ArrayLike, p: int) -> NDArray[Any]:
+    """Validate spanning vectors and return them as an array of shape ``(p, k)``.
 
-    pp = np.asarray(projection, dtype=float)
-    if pp.shape != (p, p):
-        msg = f"projection must have shape {(p, p)}, got {pp.shape}."
-        raise ValueError(msg)
-    if not np.allclose(pp @ pp, pp):
-        msg = "projection must be idempotent (P @ P = P)."
-        raise ValueError(msg)
-    return pp
-
-
-def _affine_reduce(
-    y: NDArray[Any], d: NDArray[Any], p: NDArray[Any]
-) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
-    """Decompose ``y`` relative to the projection ``P`` onto an affine direction.
-
-    Returns ``(kept, eta, d_perp, l2)``.  ``kept = P y`` is the component lying
-    in the direction (kept unshrunk).  The residual ``(I - P) y`` lives in the
-    orthogonal complement ``S_perp`` of the direction; ``l2`` is an
-    orthonormal basis of ``S_perp`` in which the residual covariance is
-    diagonal, ``eta`` are the coordinates of the residual in that basis and
-    ``d_perp`` the corresponding reduced (diagonal) variances.  This reduces
-    the effective dimension of the shrinkage problem from ``len(d)`` to
-    ``len(d_perp)``.
+    ``dirs`` must have shape ``(p, k)`` with ``k >= 1`` and full column rank
+    (its columns span the affine direction of shrinkage, i.e. they form a
+    basis of the subspace).  Returns the matrix of shape ``(p, k)``.
 
     """
 
-    p_perp = np.eye(p.shape[0]) - p
+    dv = np.asarray(dirs, dtype=float)
+    if dv.ndim != 2 or dv.shape[0] != p or dv.shape[1] < 1:
+        msg = f"dirs must have shape ({p}, k) with k >= 1, got shape {dv.shape}."
+        raise ValueError(msg)
+    if not np.all(np.isfinite(dv)):
+        msg = "dirs must contain only finite values."
+        raise ValueError(msg)
+    rank = np.linalg.matrix_rank(dv)
+    if rank < dv.shape[1]:
+        msg = (
+            "dirs must have linearly independent columns (full column rank), "
+            f"got rank {rank} for {dv.shape[1]} columns."
+        )
+        raise ValueError(msg)
+    return dv
+
+
+def _dirs_projection(v: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
+    """Covariance-metric projector onto the column space of ``v``.
+
+    In canonical coordinates (diagonal covariance ``D = diag(d)``, identity
+    loss), returns ``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``, the projection
+    orthogonal in the precision metric ``D^{-1}``.  Such a projection makes
+    ``P y`` and ``(I - P) y`` uncorrelated for ``y ~ (I, D)``, so their risks
+    separate (see [Tan2016]_, Section 3.3).
+
+    """
+
+    dinv: NDArray[Any] = np.diag(1.0 / d)
+    g: NDArray[Any] = v.T @ dinv @ v
+    inv_g: NDArray[Any] = np.linalg.inv(g)
+    return cast(NDArray[Any], v @ inv_g @ v.T @ dinv)
+
+
+def _subspace_reduce(
+    y: NDArray[Any], d: NDArray[Any], v: NDArray[Any]
+) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
+    """Decompose ``y`` relative to the affine direction spanned by ``v``.
+
+    Returns ``(kept, eta, d_perp, l2)``.  ``kept = P y`` is the component lying
+    in the direction (kept unshrunk), with ``P`` the covariance-metric
+    projector of :func:`_dirs_projection`.  The residual ``(I - P) y`` lives in
+    the complement ``S_perp``; ``l2`` is an orthonormal basis of ``S_perp`` in
+    which the residual covariance is diagonal, ``eta`` the coordinates of the
+    residual in that basis and ``d_perp`` the reduced (diagonal) variances.
+    This reduces the effective dimension of the shrinkage problem from ``len(d)``
+    to ``len(d_perp)``.
+
+    Since ``l2`` holds the orthonormal eigenvectors of the symmetric residual
+    covariance ``(I - P) D (I - P)^T``, ``l2^T l2 = I``: the change of basis is
+    an isometry of the squared-error loss, so shrinking ``eta`` conserves the
+    full-dimensional loss exactly.
+
+    """
+
+    p = _dirs_projection(v, d)
+    p_perp = np.eye(d.shape[0]) - p
     # Residual covariance (I - P) D (I - P)^T; its range is S_perp.  Its
-    # positive eigenvalues give the reduced variances and the top eigenvectors
-    # an orthonormal basis that diagonalizes the residual.
+    # positive eigenvalues give the reduced variances and its (orthonormal)
+    # eigenvectors a basis that diagonalizes the residual.
     m = p_perp @ np.diag(d) @ p_perp.T
     lam, vecs = np.linalg.eigh(m)
     keep = lam > 1e-12
@@ -190,7 +231,7 @@ def _estimate(
     canonical_estimator: Callable[..., NDArray[Any]],
     *,
     offset: ArrayLike | None = None,
-    projection: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
     """Run a canonical-form estimator on the given problem.
@@ -203,11 +244,14 @@ def _estimate(
     the canonical-form estimate with shape ``(..., p)``.
 
     The estimate shrinks towards the point ``offset`` (default zero) or, when
-    ``projection`` (an idempotent ``(p, p)`` matrix) is given, towards the
-    affine subspace spanned by ``projection`` through ``offset``.  In the
-    latter case the residual ``(I - projection) (x - offset)`` is shrunk in the
-    orthogonal complement, so ``canonical_estimator`` receives the reduced
-    data ``(eta, d_perp)`` whose length is the effective dimension.
+    ``dirs`` (a matrix whose columns span the affine direction) is given,
+    towards the affine subspace ``offset + span(dirs)``.  In the latter case the
+    projection is built in the covariance (precision) metric so the fitted and
+    residual components are uncorrelated, and the residual
+    ``(I - P) (x - offset)`` is shrunk in the complement.  The residual problem
+    is itself a canonical normal problem (diagonal covariance ``d_perp``,
+    identity loss) and is solved by recursing into ``_estimate`` with no
+    subspace or offset, so the effective dimension becomes ``len(d_perp)``.
 
     """
 
@@ -223,13 +267,16 @@ def _estimate(
             raise ValueError(msg)
         offset_star = o @ b.T
     y = x_star - offset_star
-    if projection is None:
+    if dirs is None:
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
-        proj = _validate_projection(projection, p)
-        proj_star = b @ proj @ binv
-        kept, eta, d_perp, l2 = _affine_reduce(y, d, proj_star)
-        reduced = canonical_estimator(eta, d_perp, **kwargs)
+        v = b @ _validate_dirs(dirs, p)
+        kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
+        # The residual (eta, diag(d_perp), identity loss) is itself a canonical
+        # normal problem with no subspace and no offset; solve it recursively.
+        reduced = _estimate(
+            eta, np.diag(d_perp), np.eye(d_perp.shape[0]), canonical_estimator, **kwargs
+        )
         delta_star = offset_star + kept + reduced @ l2.T
     return cast(NDArray[Any], delta_star @ binv.T)
 
@@ -242,7 +289,7 @@ def berger(
     positive: bool = True,
     c: float | None = None,
     offset: ArrayLike | None = None,
-    projection: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
 ) -> NDArray[Any]:
     """Berger's minimax shrinkage estimator for a multivariate normal mean.
 
@@ -262,19 +309,19 @@ def berger(
         Use the positive-part estimator, which dominates the plain one.
     c : float, default=None
         The shrinkage constant.  Defaults to ``p_eff - 2``, where ``p_eff`` is
-        the effective dimension (``p`` or, with ``projection``, the dimension
-        of the orthogonal complement).  The estimator is minimax for
+        the effective dimension (``p`` or, with ``dirs``, the dimension of the
+        orthogonal complement).  The estimator is minimax for
         ``0 <= c <= 2 (p_eff - 2)``.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
-    projection : array_like, default=None
-        An idempotent ``(p, p)`` matrix ``P`` projecting onto a subspace.  If
-        given, the estimate shrinks towards the affine subspace
-        ``offset + P (x - offset)``: the component in the direction is kept and
-        the residual ``(I - P) (x - offset)`` is shrunk in the orthogonal
-        complement.  If ``None``, the estimate shrinks towards the single
-        point ``offset``.
+    dirs : array_like, default=None
+        A matrix of shape ``(p, k)`` whose columns span the affine direction
+        of shrinkage.  If given, the estimate shrinks towards the affine
+        subspace ``offset + span(dirs)``: the component in the subspace is kept
+        and the residual ``(I - P) (x - offset)`` (with ``P`` the
+        covariance-metric projector) is shrunk towards zero in the complement.
+        If ``None``, the estimate shrinks towards the single point ``offset``.
 
     Returns
     -------
@@ -310,7 +357,7 @@ def berger(
         c=c,
         positive=positive,
         offset=offset,
-        projection=projection,
+        dirs=dirs,
     )
 
 
@@ -321,7 +368,7 @@ def shrink(
     Q: ArrayLike | None = None,
     method: str = "berger",
     offset: ArrayLike | None = None,
-    projection: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
     """Shrink an observed multivariate normal mean towards an affine subspace.
@@ -343,10 +390,10 @@ def shrink(
         Which estimator to use.  Currently only ``"berger"`` is available.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
-    projection : array_like, default=None
-        An idempotent ``(p, p)`` matrix ``P`` projecting onto a subspace.  If
-        given, the estimate shrinks towards the affine subspace
-        ``offset + P (x - offset)``.
+    dirs : array_like, default=None
+        A matrix of shape ``(p, k)`` whose columns span the affine direction
+        of shrinkage.  If given, the estimate shrinks towards the affine
+        subspace ``offset + span(dirs)``.
     **kwargs
         Additional keyword arguments passed to the estimator.
 
@@ -362,7 +409,7 @@ def shrink(
     except KeyError as e:
         msg = f"Unknown shrinkage method '{method}'."
         raise ValueError(msg) from e
-    return estimator(x, cov, Q=Q, offset=offset, projection=projection, **kwargs)
+    return estimator(x, cov, Q=Q, offset=offset, dirs=dirs, **kwargs)
 
 
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {

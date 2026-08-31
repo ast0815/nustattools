@@ -21,6 +21,9 @@ and this project adheres to
 - The API docs now render each module on its own page; in particular
   `nustattools.stats.shrinkage` is documented on a separate page below
   `nustattools.stats` (via `sphinx-apidoc --separate`).
+- The affine-subspace interface of the shrinkage estimators changed: the
+  idempotent `projection` matrix argument was replaced by `dirs`, a matrix
+  whose columns span the subspace (see the `Added` entry).
 
 ### Added
 
@@ -37,8 +40,12 @@ and this project adheres to
 - Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
   including Berger's minimax estimator and a canonical-form front-end that
   handles general covariance and loss matrices.
-- The shrinkage estimators now accept `offset` and `projection` arguments to
-  shrink towards an arbitrary affine subspace.
+- The shrinkage estimators accept `offset` and `dirs` arguments: an arbitrary
+  affine subspace `offset + span(dirs)` is specified by its spanning vectors,
+  and the projection onto it is built in the covariance (precision) metric (per
+  Tan 2016, Section 3.3) so the fitted and residual components are uncorrelated.
+  The residual is then shrunk recursively, conserving the full squared-error
+  loss exactly.
 
 ## [0.8.0]
 

@@ -180,14 +180,19 @@ def test_estimate_canonicalizes_and_decanonicalizes():
 
 
 def _projection(basis):
-    """Orthogonal projection matrix onto the span of the columns of ``basis``."""
+    """Euclidean-orthogonal projection matrix onto the span of ``basis``.
+
+    Only used to build the *expected* values in the identity-loss closed-form
+    tests, where it coincides with the covariance-metric projector.
+
+    """
     u, _ = np.linalg.qr(np.asarray(basis, dtype=float))
     return u @ u.T
 
 
 def test_berger_point_offset_equals_shift():
-    # Shrinking towards a point ``t`` (no projection) must equal ``t +``
-    # shrinking ``x - t`` towards zero.
+    # Shrinking towards a point ``t`` (no dirs) must equal ``t +`` shrinking
+    # ``x - t`` towards zero.
     gen = rng()
     p = 6
     x = gen.normal(size=p)
@@ -197,32 +202,30 @@ def test_berger_point_offset_equals_shift():
     )
 
 
-def test_berger_full_projection_is_identity():
-    # Projecting onto the whole space leaves nothing to shrink, so the result
-    # is the identity regardless of the offset.
+def test_berger_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of the offset.
     gen = rng()
     p = 6
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
-    np.testing.assert_allclose(_shrinkage.berger(x, projection=np.eye(p)), x)
+    np.testing.assert_allclose(_shrinkage.berger(x, dirs=np.eye(p)), x, atol=1e-12)
     np.testing.assert_allclose(
-        _shrinkage.berger(x, projection=np.eye(p), offset=offset), x
+        _shrinkage.berger(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
     )
 
 
-def test_berger_projection_c_zero_recovers_x():
+def test_berger_dirs_c_zero_recovers_x():
     # With c = 0 Berger performs no shrinkage, so the subspace machinery must
-    # reconstruct the input exactly for any projection and offset.
+    # reconstruct the input exactly for any direction and offset.
     gen = rng()
     p = 6
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
-    proj = _projection(gen.normal(size=(p, 2)))
+    v = gen.normal(size=(p, 2))
+    np.testing.assert_allclose(_shrinkage.berger(x, dirs=v, c=0.0), x, rtol=1e-9)
     np.testing.assert_allclose(
-        _shrinkage.berger(x, projection=proj, c=0.0), x, rtol=1e-9
-    )
-    np.testing.assert_allclose(
-        _shrinkage.berger(x, projection=proj, offset=offset, c=0.0), x, rtol=1e-9
+        _shrinkage.berger(x, dirs=v, offset=offset, c=0.0), x, rtol=1e-9
     )
 
 
@@ -232,24 +235,24 @@ def test_berger_small_complement_is_identity():
     gen = rng()
     p = 6
     x = gen.normal(size=p)
-    proj = np.diag([1.0, 1.0, 1.0, 1.0, 0.0, 0.0])
-    np.testing.assert_allclose(_shrinkage.berger(x, projection=proj), x)
+    v = gen.normal(size=(p, 4))  # complement dimension 2
+    np.testing.assert_allclose(_shrinkage.berger(x, dirs=v), x, atol=1e-12)
 
 
 def test_berger_subspace_matches_james_stein_identity():
-    # With cov = Q = I and an orthogonal projection P onto a 2-dimensional
-    # subspace of R^6, Berger reduces to the James-Stein estimator shrunk
-    # towards the subspace (Lehmann & Casella, Ex. 6.2): the component in the
-    # subspace is kept and the residual is shrunk by 1 - p_eff/||r||^2 with
-    # p_eff = 4.
+    # With cov = Q = I and dirs spanning a 2-dimensional subspace of R^6,
+    # Berger reduces to the James-Stein estimator shrunk towards the subspace
+    # (Lehmann & Casella, Ex. 6.2): the component in the subspace is kept and
+    # the residual is shrunk by 1 - p_eff/||r||^2 with p_eff = 4.
     gen = rng()
     p = 6
     x = gen.normal(size=p)
-    proj = _projection(gen.normal(size=(p, 2)))
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
     residual = (np.eye(p) - proj) @ x
     expected = proj @ x + (1 - 2 / np.sum(residual**2)) * residual
     np.testing.assert_allclose(
-        _shrinkage.berger(x, projection=proj, positive=False), expected, rtol=1e-10
+        _shrinkage.berger(x, dirs=v, positive=False), expected, rtol=1e-10
     )
 
 
@@ -260,12 +263,13 @@ def test_berger_affine_subspace_matches_shifted_identity():
     p = 6
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
-    proj = _projection(gen.normal(size=(p, 2)))
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
     y = x - offset
     residual = (np.eye(p) - proj) @ y
     expected = offset + proj @ y + (1 - 2 / np.sum(residual**2)) * residual
     np.testing.assert_allclose(
-        _shrinkage.berger(x, projection=proj, offset=offset, positive=False),
+        _shrinkage.berger(x, dirs=v, offset=offset, positive=False),
         expected,
         rtol=1e-10,
     )
@@ -277,8 +281,9 @@ def test_berger_subspace_keeps_projected_component():
     gen = rng()
     p = 6
     x = gen.normal(size=p)
-    proj = _projection(gen.normal(size=(p, 2)))
-    delta = _shrinkage.berger(x, projection=proj)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.berger(x, dirs=v)
     np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
     resid = (np.eye(p) - proj) @ delta
     raw = (np.eye(p) - proj) @ x
@@ -287,7 +292,8 @@ def test_berger_subspace_keeps_projected_component():
 
 def test_berger_subspace_reduces_general_cov():
     # A nontrivial general covariance / loss pair must still support shrinking
-    # towards a subspace and return the right shape.
+    # towards a subspace. The affine component of the estimate is kept exactly
+    # as in the data, and the orthogonal residual is shrunk towards zero.
     gen = rng()
     p = 6
     x = gen.normal(size=p)
@@ -295,33 +301,50 @@ def test_berger_subspace_reduces_general_cov():
     cov = a @ a.T + np.eye(p)
     bmat = gen.normal(size=(p, p))
     q = bmat @ bmat.T + np.eye(p)
-    proj = _projection(gen.normal(size=(p, 2)))
-    delta = _shrinkage.berger(x, cov=cov, Q=q, projection=proj)
+    v = gen.normal(size=(p, 2))
+
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    v_star = b @ v
+    x_star = x @ b.T
+    pmat = _shrinkage._dirs_projection(v_star, d)
+
+    delta = _shrinkage.berger(x, cov=cov, Q=q, dirs=v)
     assert delta.shape == (p,)
-    assert np.linalg.norm(delta) <= np.linalg.norm(x)
+    delta_star = delta @ b.T
+    # The affine (projected) component of the estimate equals that of the data.
+    np.testing.assert_allclose(pmat @ delta_star, pmat @ x_star, atol=1e-10)
+    # The orthogonal residual is shrunk towards zero, so its norm does not grow.
+    assert np.linalg.norm((np.eye(p) - pmat) @ delta_star) <= np.linalg.norm(
+        (np.eye(p) - pmat) @ x_star
+    )
 
 
-def test_shrink_dispatches_offset_projection():
+def test_shrink_dispatches_offset_dirs():
     gen = rng()
     p = 6
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
-    proj = _projection(gen.normal(size=(p, 2)))
+    v = gen.normal(size=(p, 2))
     np.testing.assert_allclose(
-        s.shrink(x, offset=offset, projection=proj),
-        _shrinkage.berger(x, offset=offset, projection=proj),
+        s.shrink(x, offset=offset, dirs=v),
+        _shrinkage.berger(x, offset=offset, dirs=v),
         rtol=1e-12,
     )
 
 
-def test_projection_shape_error():
-    with pytest.raises(ValueError, match="projection must have shape"):
-        _shrinkage.berger(rng().normal(size=3), projection=np.eye(4))
+def test_dirs_shape_error():
+    with pytest.raises(ValueError, match="dirs must have shape"):
+        _shrinkage.berger(rng().normal(size=3), dirs=np.eye(4))
+    with pytest.raises(ValueError, match="dirs must have shape"):
+        _shrinkage.berger(rng().normal(size=3), dirs=rng().normal(size=(3, 0)))
 
 
-def test_projection_not_idempotent_error():
-    with pytest.raises(ValueError, match="idempotent"):
-        _shrinkage.berger(rng().normal(size=3), projection=2.0 * np.eye(3))
+def test_dirs_dependent_columns_error():
+    # A linearly dependent set does not span a fixed subspace (not a basis) and
+    # yields a singular Gram matrix, so it must be rejected.
+    dep = np.column_stack([np.ones(3), np.ones(3)])
+    with pytest.raises(ValueError, match="linearly independent"):
+        _shrinkage.berger(rng().normal(size=3), dirs=dep)
 
 
 def test_berger_offset_shape_error():
@@ -329,21 +352,80 @@ def test_berger_offset_shape_error():
         _shrinkage.berger(rng().normal(size=3), offset=np.ones(4))
 
 
-def test_affine_reduce_structure():
-    # _affine_reduce must return an orthonormal basis of the complement, the
+def test_subspace_reduce_structure():
+    # _subspace_reduce must return an orthonormal basis of the complement, the
     # kept (projected) part, reduced variances, and residual coordinates such
     # that the residual is reconstructed as eta @ l2.T.
     gen = rng()
     p = 6
     y = gen.normal(size=p)
     d = np.sort(gen.uniform(0.5, 3.0, p))[::-1]
-    proj = _projection(gen.normal(size=(p, 2)))
-    kept, eta, d_perp, l2 = _shrinkage._affine_reduce(y, d, proj)
+    v = gen.normal(size=(p, 2))
+    kept, eta, d_perp, l2 = _shrinkage._subspace_reduce(y, d, v)
     assert l2.shape == (p, 4)
     assert d_perp.shape == (4,)
     np.testing.assert_allclose(l2.T @ l2, np.eye(4), atol=1e-12)
     residual = y - kept
     np.testing.assert_allclose(eta @ l2.T, residual, atol=1e-10)
     assert np.all(d_perp > 0)
-    # kept lies in the projected direction.
-    np.testing.assert_allclose(kept, y @ proj, atol=1e-12)
+
+
+def test_dirs_projection_uncorrelates():
+    # The covariance-metric projector must make fitted and residual
+    # uncorrelated: P D (I - P)^T = 0. Without this, the risk of the two
+    # components would not separate and independent shrinkage would be invalid.
+    gen = rng()
+    p = 7
+    d = np.sort(gen.uniform(0.5, 4.0, p))[::-1]
+    v = gen.normal(size=(p, 3))
+    pmat = _shrinkage._dirs_projection(v, d)
+    cross = pmat @ np.diag(d) @ (np.eye(p) - pmat).T
+    np.testing.assert_allclose(cross, np.zeros((p, p)), atol=1e-10)
+    # The projector is idempotent.
+    np.testing.assert_allclose(pmat @ pmat, pmat, atol=1e-10)
+
+
+def test_subspace_reduce_loss_isometry():
+    # The reduced problem must be isometric to the full-space residual loss:
+    # l2 orthonormal AND eta's covariance exactly diag(d_perp). Together these
+    # guarantee the recursion minimizes the same squared-error loss as the
+    # full-dimensional problem (loss conservation).
+    gen = rng()
+    p = 7
+    d = np.sort(gen.uniform(0.5, 4.0, p))[::-1]
+    v = gen.normal(size=(p, 2))
+    _kept, _eta, d_perp, l2 = _shrinkage._subspace_reduce(gen.normal(size=p), d, v)
+    # l2 orthonormal -> change of basis is an isometry of the Euclidean loss.
+    np.testing.assert_allclose(l2.T @ l2, np.eye(l2.shape[1]), atol=1e-12)
+    # eta has exactly the diagonal covariance reported as d_perp.
+    pmat = _shrinkage._dirs_projection(v, d)
+    m = (np.eye(p) - pmat) @ np.diag(d) @ (np.eye(p) - pmat).T
+    np.testing.assert_allclose(l2.T @ m @ l2, np.diag(d_perp), atol=1e-10)
+
+
+def test_subspace_loss_conserved_by_recursion():
+    # Loss conservation (independence): because the covariance-metric
+    # projection is used, the affine (kept) component and the residual are
+    # uncorrelated, so the total loss of the estimator is exactly the sum of
+    # the kept-component loss and the residual-shrinkage loss, with zero cross
+    # term. Verify this as a Pythagorean identity when the truth lies in the
+    # direction of shrinkage (residual truth is zero).
+    gen = rng()
+    p = 6
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    truth = proj @ gen.normal(size=p)  # lies in the subspace
+    x = truth + gen.normal(size=p)
+    delta = _shrinkage.berger(x, dirs=v, positive=False)
+    # The affine component of the estimate equals that of the data...
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+    # ...so its loss is the noise projected onto the subspace.
+    kept_loss = np.sum((proj @ x - proj @ truth) ** 2)
+    # The residual is James-Stein shrunk and its truth is zero.
+    residual = (np.eye(p) - proj) @ x
+    shrunk = (1 - 2 / np.sum(residual**2)) * residual
+    residual_loss = np.sum(shrunk**2)
+    # The cross term between the kept and residual components vanishes
+    # (independent shrinkage), so the total loss is the exact sum.
+    total_loss = np.sum((delta - truth) ** 2)
+    np.testing.assert_allclose(total_loss, kept_loss + residual_loss, rtol=1e-6)
