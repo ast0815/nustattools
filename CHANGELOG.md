@@ -16,14 +16,21 @@ and this project adheres to
 ### Changed
 
 - Only the `shrink` front-end is now exported from the `nustattools.stats`
-  package; the other shrinkage estimators (e.g. `berger`) and helpers are
-  available through the `nustattools.stats.shrinkage` submodule.
+  package; the other shrinkage estimators (e.g. `berger` and `tan`) and helpers
+  are available through the `nustattools.stats.shrinkage` submodule.
+- `nustattools.stats.shrinkage` is now a subpackage: the implementation is split
+  across private `_core`, `_estimators` and `_risk` modules (which keeps
+  individual files well under 2000 lines), with the public API re-exported from
+  `nustattools.stats.shrinkage` unchanged.
 - The API docs now render each module on its own page; in particular
   `nustattools.stats.shrinkage` is documented on a separate page below
   `nustattools.stats` (via `sphinx-apidoc --separate`).
 - The affine-subspace interface of the shrinkage estimators changed: the
   idempotent `projection` matrix argument was replaced by `dirs`, a matrix whose
   columns span the subspace (see the `Added` entry).
+- Berger's estimator renames its shrinkage-magnitude parameter `c` to
+  `strength`, now expressed as a fraction of the optimal minimax value (0 =
+  identity, 1 = optimal, 2 = boundary of the minimax class).
 
 ### Added
 
@@ -40,6 +47,10 @@ and this project adheres to
 - Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
   including Berger's minimax estimator and a canonical-form front-end that
   handles general covariance and loss matrices.
+- `stats.shrinkage.tan`, Tan's improved minimax shrinkage estimator (Tan 2015),
+  which segments coordinates by Bayes importance and improves on Berger's
+  estimator when the truth concentrates in low-variance coordinates. Supports
+  the `gamma=0` (no prior) and `gamma=inf` (flat prior) special cases.
 - The shrinkage estimators accept `offset` and `dirs` arguments: an arbitrary
   affine subspace `offset + span(dirs)` is specified by its spanning vectors,
   and the projection onto it is built in the covariance (precision) metric (per

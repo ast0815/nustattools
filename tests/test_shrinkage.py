@@ -64,7 +64,7 @@ def test_shrink_default_cov_is_identity():
 
 def test_berger_zero_shrinkage_is_identity():
     x = rng().normal(size=5)
-    np.testing.assert_allclose(_shrinkage.berger(x, cov=np.eye(5), c=0.0), x)
+    np.testing.assert_allclose(_shrinkage.berger(x, cov=np.eye(5), strength=0.0), x)
 
 
 def test_berger_general_matches_closed_form():
@@ -73,9 +73,10 @@ def test_berger_general_matches_closed_form():
     a = rng().normal(size=(5, 5))
     cov = a @ a.T + np.eye(5)
     x = rng().normal(size=5)
-    c = 3.0
+    c = 3.0  # with p=5, c = strength * (p-2) = strength * 3, so strength=1.0
+    strength = c / 3.0
     np.testing.assert_allclose(
-        _shrinkage.berger(x, cov=cov, positive=False, c=c),
+        _shrinkage.berger(x, cov=cov, positive=False, strength=strength),
         _berger_general_formula(x, cov, np.eye(5), c),
     )
 
@@ -86,9 +87,10 @@ def test_berger_general_Q_matches_closed_form():
     b = rng().normal(size=(5, 5))
     q = b @ b.T + np.eye(5)
     x = rng().normal(size=5)
-    c = 2.5
+    c = 2.5  # with p=5, c = strength * (p-2) = strength * 3, so strength = 2.5/3
+    strength = c / 3.0
     np.testing.assert_allclose(
-        _shrinkage.berger(x, cov=cov, Q=q, positive=False, c=c),
+        _shrinkage.berger(x, cov=cov, Q=q, positive=False, strength=strength),
         _berger_general_formula(x, cov, q, c),
     )
 
@@ -145,9 +147,10 @@ def test_berger_not_pd_error():
         _shrinkage.berger(rng().normal(size=3), np.zeros((3, 3)))
 
 
-def test_berger_negative_c_error():
-    with pytest.raises(ValueError, match="non-negative"):
-        _shrinkage.berger(rng().normal(size=3), np.eye(3), c=-1.0)
+def test_berger_out_of_range_strength_error():
+    for bad in (-1.0, 3.0):
+        with pytest.raises(ValueError, match="strength"):
+            _shrinkage.berger(rng().normal(size=3), np.eye(3), strength=bad)
 
 
 def test_estimate_canonicalizes_and_decanonicalizes():
@@ -225,9 +228,9 @@ def test_berger_dirs_c_zero_recovers_x():
     x = gen.normal(size=p)
     offset = gen.normal(size=p)
     v = gen.normal(size=(p, 2))
-    np.testing.assert_allclose(_shrinkage.berger(x, dirs=v, c=0.0), x, rtol=1e-9)
+    np.testing.assert_allclose(_shrinkage.berger(x, dirs=v, strength=0.0), x, rtol=1e-9)
     np.testing.assert_allclose(
-        _shrinkage.berger(x, dirs=v, offset=offset, c=0.0), x, rtol=1e-9
+        _shrinkage.berger(x, dirs=v, offset=offset, strength=0.0), x, rtol=1e-9
     )
 
 
@@ -439,7 +442,7 @@ def test_estimate_risk_single_returns_pair():
     p = 3
     theta = gen.normal(size=p)
     res = _shrinkage.estimate_risk(
-        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=2000, seed=0
+        theta, np.eye(p), functools.partial(s.shrink, strength=1.0), n_reps=2000, seed=0
     )
     assert res.shape == (2,)
     assert res[0] > 0  # risk is positive
@@ -452,8 +455,8 @@ def test_estimate_risk_sequence_returns_rows():
     p = 3
     theta = gen.normal(size=p)
     est = [
-        functools.partial(s.shrink, c=2.0),
-        functools.partial(s.shrink, c=0.0),
+        functools.partial(s.shrink, strength=1.0),
+        functools.partial(s.shrink, strength=0.0),
         s.shrink,
     ]
     res = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=2000, seed=0)
@@ -466,11 +469,15 @@ def test_estimate_risk_single_element_sequence_keeps_dim():
     p = 3
     theta = gen.normal(size=p)
     res = _shrinkage.estimate_risk(
-        theta, np.eye(p), [functools.partial(s.shrink, c=2.0)], n_reps=2000, seed=0
+        theta,
+        np.eye(p),
+        [functools.partial(s.shrink, strength=1.0)],
+        n_reps=2000,
+        seed=0,
     )
     assert res.shape == (1, 2)
     single = _shrinkage.estimate_risk(
-        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=2000, seed=0
+        theta, np.eye(p), functools.partial(s.shrink, strength=1.0), n_reps=2000, seed=0
     )
     np.testing.assert_allclose(res[0], single, rtol=1e-12)
 
@@ -484,7 +491,11 @@ def test_estimate_risk_identity_matches_trace():
     theta = gen.normal(size=p)
     n_reps = 20_000
     res = _shrinkage.estimate_risk(
-        theta, np.eye(p), functools.partial(s.shrink, c=0.0), n_reps=n_reps, seed=0
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=0.0),
+        n_reps=n_reps,
+        seed=0,
     )
     np.testing.assert_allclose(res[0], p, rtol=0.02)
     expected_se = np.sqrt(2.0 * p / n_reps)
@@ -504,7 +515,7 @@ def test_estimate_risk_general_loss_matches_trace():
     res = _shrinkage.estimate_risk(
         theta,
         cov,
-        functools.partial(s.shrink, c=0.0),
+        functools.partial(s.shrink, strength=0.0),
         Q=q,
         n_reps=20_000,
         seed=0,
@@ -519,10 +530,18 @@ def test_estimate_risk_berger_beats_identity():
     p = 6
     theta = gen.normal(size=p)
     shrinker = _shrinkage.estimate_risk(
-        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=20_000, seed=0
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=1.0),
+        n_reps=20_000,
+        seed=0,
     )
     identity = _shrinkage.estimate_risk(
-        theta, np.eye(p), functools.partial(s.shrink, c=0.0), n_reps=20_000, seed=0
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=0.0),
+        n_reps=20_000,
+        seed=0,
     )
     assert shrinker[0] < identity[0]
 
@@ -535,8 +554,8 @@ def test_estimate_risk_shares_samples():
     theta = gen.normal(size=p)
     n_reps = 2000
     est = [
-        functools.partial(s.shrink, c=2.0),
-        functools.partial(s.shrink, c=0.0),
+        functools.partial(s.shrink, strength=1.0),
+        functools.partial(s.shrink, strength=0.0),
     ]
     multi = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=n_reps, seed=7)
     for i, e in enumerate(est):
@@ -574,7 +593,7 @@ def test_estimate_risk_n_reps_must_be_at_least_two():
     for n in (0, 1, -5):
         with pytest.raises(ValueError, match="n_reps must be an integer >= 2"):
             _shrinkage.estimate_risk(
-                theta, np.eye(3), functools.partial(s.shrink, c=2.0), n_reps=n
+                theta, np.eye(3), functools.partial(s.shrink, strength=1.0), n_reps=n
             )
 
 
@@ -584,7 +603,7 @@ def test_estimate_risk_seed_determinism():
     gen = rng()
     p = 3
     theta = gen.normal(size=p)
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     a = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
     b = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
     np.testing.assert_allclose(a, b, rtol=0.0, atol=0.0)
@@ -609,7 +628,7 @@ def test_estimate_risk_curve_record_shape():
     # One record per (direction, distance, estimator); single estimator gives
     # one record per (direction, distance).
     cov = np.diag([1.0, 2.0, 3.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     recs = _shrinkage.estimate_risk_curve(
         cov, est, directions="uniform", distances=(0.0, 10.0, 5), n_reps=500, seed=0
     )
@@ -629,7 +648,10 @@ def test_estimate_risk_curve_mahalanobis():
     # The mahalanobis field is sqrt(theta^T cov^-1 theta), the same for every
     # estimator at a given sweep point, and agrees with a direct computation.
     cov = np.diag([1.0, 3.0, 2.0])
-    est = [functools.partial(s.shrink, c=2.0), functools.partial(s.shrink, c=0.0)]
+    est = [
+        functools.partial(s.shrink, strength=1.0),
+        functools.partial(s.shrink, strength=0.0),
+    ]
     recs = _shrinkage.estimate_risk_curve(
         cov,
         est,
@@ -658,7 +680,7 @@ def test_estimate_risk_curve_negative_axis():
     # A negative axis selects from the largest-first ordering: -1 is the
     # smallest variance and differs from axis 0 (the largest variance).
     cov = np.diag([1.0, 3.0, 2.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     recs = _shrinkage.estimate_risk_curve(
         cov, est, directions=-1, distances=[0.0, 1.0], n_reps=200, seed=0
     )
@@ -681,7 +703,7 @@ def test_estimate_risk_curve_matches_brute_force():
     # The sweep must agree with directly evaluating estimate_risk at each
     # (direction, distance) pair, given the same seed.
     cov = np.diag([1.0, 3.0, 2.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     n_reps = 800
     seed = 11
     recs = _shrinkage.estimate_risk_curve(
@@ -720,7 +742,7 @@ def test_estimate_risk_curve_matches_brute_force():
 def test_estimate_risk_curve_distance_is_canonical_norm():
     # The distance entry equals the canonical Euclidean norm of the mean.
     cov = np.diag([1.0, 2.0, 3.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     recs = _shrinkage.estimate_risk_curve(
         cov, est, directions="uniform", distances=[2.0, 4.0], n_reps=200, seed=0
     )
@@ -751,7 +773,7 @@ def test_estimate_risk_curve_axis_ordering():
     # Axis 0 is the coordinate with the largest variance.  It must match a raw
     # vector whose canonical image is the largest-variance coordinate.
     cov = np.diag([1.0, 3.0, 2.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     recs = _shrinkage.estimate_risk_curve(
         cov, est, directions=0, distances=[0.0, 1.0], n_reps=200, seed=0
     )
@@ -770,7 +792,7 @@ def test_estimate_risk_curve_raw_vector_matches_canonical_when_identity():
     # For cov = Q = I the canonical and original space coincide, so a raw vector
     # proportional to sqrt(d) reproduces the named "proportional" direction.
     cov = np.eye(3)
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     d = np.ones(3)
     prop = _shrinkage.estimate_risk_curve(
         cov, est, directions="proportional", distances=[0.0, 2.0], n_reps=300, seed=0
@@ -788,7 +810,7 @@ def test_estimate_risk_curve_estimator_labels():
     cov = np.diag([1.0, 2.0, 3.0])
     recs = _shrinkage.estimate_risk_curve(
         cov,
-        functools.partial(s.shrink, c=2.0),
+        functools.partial(s.shrink, strength=1.0),
         directions="uniform",
         distances=[1.0],
         n_reps=100,
@@ -819,7 +841,7 @@ def test_estimate_risk_curve_direction_labels():
 def test_estimate_risk_curve_mixed_directions_counts():
     # Mixed named / axis / vector directions all contribute records in order.
     cov = np.diag([1.0, 2.0, 3.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     recs = _shrinkage.estimate_risk_curve(
         cov,
         est,
@@ -840,7 +862,7 @@ def test_estimate_risk_curve_mixed_directions_counts():
 
 def test_estimate_risk_curve_validation_errors():
     cov = np.diag([1.0, 2.0, 3.0])
-    est = functools.partial(s.shrink, c=2.0)
+    est = functools.partial(s.shrink, strength=1.0)
     with pytest.raises(ValueError, match="Unknown direction"):
         _shrinkage.estimate_risk_curve(
             cov, est, directions="bogus", distances=[1.0], n_reps=100
@@ -878,3 +900,175 @@ def test_estimate_risk_curve_validation_errors():
         _shrinkage.estimate_risk_curve(
             cov, est, directions="uniform", distances=[1.0], n_reps=1
         )
+
+
+def test_tan_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(_shrinkage.tan(x), _shrinkage.tan(x, cov=np.eye(6)))
+    assert _shrinkage.tan(x).shape == (6,)
+
+
+def test_tan_default_similar_to_berger_homoscedastic():
+    # In the homoscedastic case D = sigma^2 I, both estimators reduce to a
+    # James-Stein type shrinkage and should give comparable estimates.
+    sigma = 1.0
+    x = rng().normal(size=8)
+    t = _shrinkage.tan(x, cov=sigma**2 * np.eye(8), positive=False)
+    b = _shrinkage.berger(x, cov=sigma**2 * np.eye(8), positive=False)
+    # Both must reproduce the sign pattern of x (no sign flips) and shrink.
+    assert np.all(t * x >= -1e-12)
+    assert np.all(b * x >= -1e-12)
+
+
+def test_tan_zero_strength_is_identity():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(_shrinkage.tan(x, strength=0.0), x, atol=1e-12)
+
+
+def test_tan_shape():
+    p = 5
+    x = rng().normal(size=p)
+    assert _shrinkage.tan(x).shape == (p,)
+    assert _shrinkage.tan(x, gamma=float("inf")).shape == (p,)
+
+
+def test_tan_broadcasting_shapes():
+    p = 5
+    x = rng().normal(size=(4, 3, p))
+    out = _shrinkage.tan(x, cov=np.eye(p))
+    assert out.shape == (4, 3, p)
+    for idx in np.ndindex(4, 3):
+        np.testing.assert_allclose(
+            out[idx], _shrinkage.tan(x[idx], cov=np.eye(p)), rtol=1e-12
+        )
+
+
+def test_tan_small_dim_is_identity():
+    # For p < 3 there is no shrinkage; the estimate is the input.
+    x = rng().normal(size=2)
+    np.testing.assert_allclose(_shrinkage.tan(x), x, atol=1e-12)
+    np.testing.assert_allclose(_shrinkage.tan(x, gamma=float("inf")), x, atol=1e-12)
+
+
+def test_tan_positive_dominates_plain():
+    # The positive-part estimator must have lower (or equal) risk than the
+    # plain one.
+    rngg = rng()
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    theta = np.array([0.0, 0.0, 0.0, 2.0, 2.0])
+    xs = rngg.multivariate_normal(theta, cov, size=100_000)
+    plain_loss = np.sum(
+        (_shrinkage.tan(xs, cov=cov, positive=False) - theta) ** 2, axis=1
+    )
+    pos_loss = np.sum((_shrinkage.tan(xs, cov=cov, positive=True) - theta) ** 2, axis=1)
+    assert np.mean(pos_loss) <= np.mean(plain_loss) + 0.05
+
+
+def test_tan_minimaxity():
+    # Tan's estimator is minimax: its risk is never greater than tr(cov), for
+    # any true mean.  Evaluate at theta = 0 where the signal is strongest.
+    p = 5
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    n = 200_000
+    xs = rng().multivariate_normal(np.zeros(p), cov, size=n)
+    for gamma in (0.0, float("inf")):
+        loss = np.sum(_shrinkage.tan(xs, cov=cov, gamma=gamma) ** 2, axis=1)
+        assert np.mean(loss) <= np.trace(cov) + 0.05
+
+
+def test_tan_beats_berger_low_variance_truth():
+    # Berger shrinks low-variance (low-importance) coordinates too
+    # aggressively (inversely proportional to variance).  When the truth
+    # concentrates in the low-variance coordinates, Tan's estimator should
+    # reduce the risk more substantially than Berger.
+    rngg = rng()
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    theta = np.array([0.0, 0.0, 0.0, 2.0, 2.0])
+    xs = rngg.multivariate_normal(theta, cov, size=100_000)
+    risk_tan = np.mean(
+        np.sum((_shrinkage.tan(xs, cov=cov, gamma=0.0) - theta) ** 2, axis=1)
+    )
+    risk_berg = np.mean(np.sum((_shrinkage.berger(xs, cov=cov) - theta) ** 2, axis=1))
+    assert risk_tan < risk_berg - 0.5
+
+
+def test_tan_gamma_two_special_cases_differ():
+    # gamma=0 (A†_0) and gamma=inf (A†_∞) produce different shrinkage
+    # directions under heteroscedasticity, so in general the estimates differ.
+    d = np.linspace(0.5, 3.0, 6)
+    x = rng().normal(size=6) * np.sqrt(d)
+    a = _shrinkage.tan(x, cov=np.diag(d), gamma=0.0)
+    b = _shrinkage.tan(x, cov=np.diag(d), gamma=float("inf"))
+    assert not np.allclose(a, b, atol=1e-8)
+
+
+def test_tan_strength_validation():
+    for bad in (-1.0, 3.0):
+        with pytest.raises(ValueError, match="strength"):
+            _shrinkage.tan(rng().normal(size=5), strength=bad)
+
+
+def test_tan_gamma_validation():
+    for bad in (0.5, 1.0, -1.0):
+        with pytest.raises(ValueError, match="gamma"):
+            _shrinkage.tan(rng().normal(size=5), gamma=bad)
+
+
+def test_tan_point_offset_equals_shift():
+    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
+    # towards zero.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.tan(x, offset=t), t + _shrinkage.tan(x - t), rtol=1e-10
+    )
+
+
+def test_tan_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of offset.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(_shrinkage.tan(x, dirs=np.eye(p)), x, atol=1e-12)
+
+
+def test_tan_dirs_small_complement_is_identity():
+    # When the orthogonal complement has dimension < 3 there is no shrinkage
+    # in the complement, so the estimate is the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 4))  # complement dimension 2
+    np.testing.assert_allclose(_shrinkage.tan(x, dirs=v), x, atol=1e-12)
+
+
+def test_tan_dirs_c_zero_recovers_x():
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    np.testing.assert_allclose(_shrinkage.tan(x, dirs=v, strength=0.0), x, rtol=1e-9)
+
+
+def test_tan_subspace_keeps_projected_component():
+    # The component of the estimate along the projected direction must equal
+    # the projection of the data; only the orthogonal residual is shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.tan(x, dirs=v)
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+
+
+def test_shrink_dispatches_tan():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(s.shrink(x, np.eye(5), method="tan"), _shrinkage.tan(x))
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="tan", gamma=float("inf")),
+        _shrinkage.tan(x, gamma=float("inf")),
+    )
