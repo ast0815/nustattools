@@ -46,6 +46,9 @@ and this project adheres to
   Tan 2016, Section 3.3) so the fitted and residual components are uncorrelated.
   The residual is then shrunk recursively, conserving the full squared-error
   loss exactly.
+- Added `stats.estimate_risk`, a Monte-Carlo helper to estimate the risk (and
+  its standard error) of a shrinkage estimator on shared samples, making
+  performance comparisons between estimators easier.
 
 ## [0.8.0]
 

@@ -40,7 +40,7 @@ References
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import numpy as np
@@ -412,9 +412,136 @@ def shrink(
     return estimator(x, cov, Q=Q, offset=offset, dirs=dirs, **kwargs)
 
 
+_Estimator = Callable[..., NDArray[Any]] | str
+
+
+def estimate_risk(
+    theta: ArrayLike,
+    cov: ArrayLike,
+    estimators: _Estimator | Sequence[_Estimator],
+    *,
+    Q: ArrayLike | None = None,
+    n_reps: int = 10_000,
+    seed: int | np.random.Generator | None = None,
+    **kwargs: Any,
+) -> NDArray[Any]:
+    """Estimate the risk of shrinkage estimators by Monte Carlo.
+
+    For the normal-mean problem ``x ~ N(theta, cov)`` with loss
+    ``(delta - theta)^T Q (delta - theta)``, the risk of an estimator ``delta``
+    is ``R = E[(delta(x) - theta)^T Q (delta(x) - theta)]``, which generally has
+    no closed form for shrinkage estimators.  This function estimates it by
+    averaging the quadratic loss over ``n_reps`` samples ``x`` drawn from
+    ``N(theta, cov)``.
+
+    If an ``estimators`` *sequence* is given, all estimators are evaluated on
+    the *same* Monte Carlo samples, so that any difference between their
+    estimated risks reflects genuine performance differences rather than
+    sampling noise.
+
+    Parameters
+    ----------
+    theta : array_like
+        The true mean, of shape ``(p,)``.
+    cov : array_like
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.
+    estimators : callable or str, or sequence of these
+        The estimator(s) to evaluate.  A callable is applied as
+        ``estimator(x, cov, Q=Q, **kwargs)``; a string is resolved through the
+        registry of known methods (see :func:`shrink`).  To compare estimators
+        with different parameters, pass callables, e.g.
+        ``functools.partial(berger, c=3.0)``.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
+    n_reps : int, default=10000
+        Number of Monte Carlo draws.  Must be at least 2 so that the standard
+        error is finite.
+    seed : int or numpy.random.Generator, default=None
+        Seed for the random number generator, for reproducible results.
+    **kwargs
+        Additional keyword arguments passed to every estimator (e.g. ``c``,
+        ``positive``, ``offset``, ``dirs``).
+
+    Returns
+    -------
+    risk : numpy.ndarray
+        Each estimator contributes a row ``[risk, standard error]``, where
+        ``risk`` is the Monte Carlo mean of the quadratic loss and ``standard
+        error`` is its Monte Carlo standard error ``std(loss) / sqrt(n_reps)``.
+        If ``estimators`` is a single estimator the result has shape ``(2,)``;
+        if a sequence, shape ``(len(estimators), 2)``, in the given order.
+
+    Examples
+    --------
+    Estimate the risk of Berger's estimator and compare it with the risk of the
+    raw (identity) estimator, using a shared set of samples.
+
+    >>> import functools
+    >>> import numpy as np
+    >>> import nustattools.stats as s
+    >>> rng = np.random.default_rng(0)
+    >>> theta = np.array([1.0, 0.0, 0.0])
+    >>> estimators = [
+    ...     functools.partial(s.shrink, c=2.0),
+    ...     functools.partial(s.shrink, c=0.0),
+    ... ]
+    >>> s.estimate_risk(theta, np.eye(3), estimators, n_reps=2000, seed=0).shape
+    (2, 2)
+
+    """
+
+    if n_reps < 2:
+        msg = "n_reps must be an integer >= 2."
+        raise ValueError(msg)
+
+    theta_arr = np.asarray(theta, dtype=float)
+    if theta_arr.ndim != 1:
+        msg = f"theta must be a 1-D vector, got shape {theta_arr.shape}."
+        raise ValueError(msg)
+    p = theta_arr.shape[0]
+    cova = _validate_sympd(cov, (p, p), "cov")
+    qa = np.eye(p) if Q is None else _validate_sympd(Q, (p, p), "Q")
+
+    if isinstance(estimators, (list, tuple)):
+        is_single = False
+        est_list: list[_Estimator] = list(estimators)
+    elif isinstance(estimators, str) or callable(estimators):
+        is_single = True
+        est_list = [estimators]
+    else:
+        msg = "estimators must be a callable, a method name, or a sequence of these."
+        raise TypeError(msg)
+
+    gen = np.random.default_rng(seed)
+    x = gen.multivariate_normal(theta_arr, cova, size=n_reps)
+
+    results = []
+    for est in est_list:
+        if isinstance(est, str):
+            try:
+                fn = _METHODS[est]
+            except KeyError as e:
+                msg = f"Unknown shrinkage method '{est}'."
+                raise ValueError(msg) from e
+        else:
+            fn = est
+        delta = fn(x, cova, Q=qa, **kwargs)
+        d = delta - theta_arr
+        loss = np.einsum("ni,ij,nj->n", d, qa, d)
+        risk: float = float(np.mean(loss))
+        se: float = float(np.std(loss, ddof=1) / np.sqrt(n_reps))
+        results.append((risk, se))
+
+    result: NDArray[Any] = np.array(results, dtype=float)
+    if is_single:
+        return cast(NDArray[Any], result[0])
+    return result
+
+
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "berger": berger,
 }
 
 
-__all__ = ["berger", "shrink"]
+__all__ = ["berger", "estimate_risk", "shrink"]

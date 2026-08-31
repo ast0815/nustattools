@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pytest
 
@@ -429,3 +431,175 @@ def test_subspace_loss_conserved_by_recursion():
     # (independent shrinkage), so the total loss is the exact sum.
     total_loss = np.sum((delta - truth) ** 2)
     np.testing.assert_allclose(total_loss, kept_loss + residual_loss, rtol=1e-6)
+
+
+def test_estimate_risk_single_returns_pair():
+    # A single estimator is squeezed to a (2,) [risk, standard error] pair.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    res = _shrinkage.estimate_risk(
+        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=2000, seed=0
+    )
+    assert res.shape == (2,)
+    assert res[0] > 0  # risk is positive
+    assert res[1] > 0  # standard error is positive
+
+
+def test_estimate_risk_sequence_returns_rows():
+    # A sequence of estimators yields one [risk, se] row per estimator, in order.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    est = [
+        functools.partial(s.shrink, c=2.0),
+        functools.partial(s.shrink, c=0.0),
+        s.shrink,
+    ]
+    res = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=2000, seed=0)
+    assert res.shape == (3, 2)
+
+
+def test_estimate_risk_single_element_sequence_keeps_dim():
+    # A sequence with a single entry keeps the leading estimator dimension.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    res = _shrinkage.estimate_risk(
+        theta, np.eye(p), [functools.partial(s.shrink, c=2.0)], n_reps=2000, seed=0
+    )
+    assert res.shape == (1, 2)
+    single = _shrinkage.estimate_risk(
+        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=2000, seed=0
+    )
+    np.testing.assert_allclose(res[0], single, rtol=1e-12)
+
+
+def test_estimate_risk_identity_matches_trace():
+    # With c=0 Berger is the identity, so the risk is trace(Q @ cov).  For
+    # cov = Q = I that is p, and each draw is chi-squared_p, whose sample mean
+    # has standard error sqrt(2p / n_reps).
+    gen = rng()
+    p = 4
+    theta = gen.normal(size=p)
+    n_reps = 20_000
+    res = _shrinkage.estimate_risk(
+        theta, np.eye(p), functools.partial(s.shrink, c=0.0), n_reps=n_reps, seed=0
+    )
+    np.testing.assert_allclose(res[0], p, rtol=0.02)
+    expected_se = np.sqrt(2.0 * p / n_reps)
+    np.testing.assert_allclose(res[1], expected_se, rtol=0.1)
+
+
+def test_estimate_risk_general_loss_matches_trace():
+    # The identity estimator's risk is trace(Q @ cov) for general Q and cov.
+    gen = rng()
+    p = 4
+    theta = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    expected = np.trace(q @ cov)
+    res = _shrinkage.estimate_risk(
+        theta,
+        cov,
+        functools.partial(s.shrink, c=0.0),
+        Q=q,
+        n_reps=20_000,
+        seed=0,
+    )
+    np.testing.assert_allclose(res[0], expected, rtol=0.03)
+
+
+def test_estimate_risk_berger_beats_identity():
+    # Shrinking a nontrivial mean must reduce the estimated risk below the
+    # raw (identity) baseline.
+    gen = rng()
+    p = 6
+    theta = gen.normal(size=p)
+    shrinker = _shrinkage.estimate_risk(
+        theta, np.eye(p), functools.partial(s.shrink, c=2.0), n_reps=20_000, seed=0
+    )
+    identity = _shrinkage.estimate_risk(
+        theta, np.eye(p), functools.partial(s.shrink, c=0.0), n_reps=20_000, seed=0
+    )
+    assert shrinker[0] < identity[0]
+
+
+def test_estimate_risk_shares_samples():
+    # All estimators in a sequence are evaluated on the same draws, so each row
+    # equals the single-estimator result built from the same seed.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    n_reps = 2000
+    est = [
+        functools.partial(s.shrink, c=2.0),
+        functools.partial(s.shrink, c=0.0),
+    ]
+    multi = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=n_reps, seed=7)
+    for i, e in enumerate(est):
+        single = _shrinkage.estimate_risk(theta, np.eye(p), e, n_reps=n_reps, seed=7)
+        np.testing.assert_allclose(multi[i], single, rtol=1e-12)
+
+
+def test_estimate_risk_method_name_equals_callable():
+    # Passing the method name as a string must give the same result as passing
+    # the corresponding callable.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    by_name = _shrinkage.estimate_risk(theta, np.eye(p), "berger", n_reps=2000, seed=0)
+    by_fn = _shrinkage.estimate_risk(
+        theta, np.eye(p), _shrinkage.berger, n_reps=2000, seed=0
+    )
+    np.testing.assert_allclose(by_name, by_fn, rtol=1e-12)
+
+
+def test_estimate_risk_invalid_method_raises():
+    with pytest.raises(ValueError, match="Unknown shrinkage method"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=3), np.eye(3), "not-a-method", n_reps=100
+        )
+    with pytest.raises(ValueError, match="Unknown shrinkage method"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=3), np.eye(3), ["berger", "nope"], n_reps=100
+        )
+
+
+def test_estimate_risk_n_reps_must_be_at_least_two():
+    gen = rng()
+    theta = gen.normal(size=3)
+    for n in (0, 1, -5):
+        with pytest.raises(ValueError, match="n_reps must be an integer >= 2"):
+            _shrinkage.estimate_risk(
+                theta, np.eye(3), functools.partial(s.shrink, c=2.0), n_reps=n
+            )
+
+
+def test_estimate_risk_seed_determinism():
+    # The same seed reproduces the same draws; a different seed (almost surely)
+    # gives a different result.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    est = functools.partial(s.shrink, c=2.0)
+    a = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
+    b = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
+    np.testing.assert_allclose(a, b, rtol=0.0, atol=0.0)
+    c = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=4)
+    assert not np.allclose(a[0], c[0])
+
+
+def test_estimate_risk_bad_shapes_raise():
+    with pytest.raises(ValueError, match="theta must be a 1-D vector"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=(3, 3)), np.eye(3), s.shrink, n_reps=100
+        )
+    with pytest.raises(ValueError, match="cov must have shape"):
+        _shrinkage.estimate_risk(rng().normal(size=3), np.eye(4), s.shrink, n_reps=100)
+    with pytest.raises(ValueError, match="Q must have shape"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=3), np.eye(3), s.shrink, Q=np.eye(4), n_reps=100
+        )
