@@ -22,8 +22,8 @@ and this project adheres to
   `nustattools.stats.shrinkage` is documented on a separate page below
   `nustattools.stats` (via `sphinx-apidoc --separate`).
 - The affine-subspace interface of the shrinkage estimators changed: the
-  idempotent `projection` matrix argument was replaced by `dirs`, a matrix
-  whose columns span the subspace (see the `Added` entry).
+  idempotent `projection` matrix argument was replaced by `dirs`, a matrix whose
+  columns span the subspace (see the `Added` entry).
 
 ### Added
 
