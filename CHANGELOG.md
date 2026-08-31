@@ -49,6 +49,10 @@ and this project adheres to
 - Added `stats.estimate_risk`, a Monte-Carlo helper to estimate the risk (and
   its standard error) of a shrinkage estimator on shared samples, making
   performance comparisons between estimators easier.
+- Added `stats.estimate_risk_curve`, which sweeps the estimated risk of several
+  shrinkage estimators against the true mean along configurable directions
+  (named, canonical axis, or a raw vector) at increasing distances, returning
+  records ready for a data frame and a seaborn plot.
 
 ## [0.8.0]
 

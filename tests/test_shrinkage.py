@@ -603,3 +603,225 @@ def test_estimate_risk_bad_shapes_raise():
         _shrinkage.estimate_risk(
             rng().normal(size=3), np.eye(3), s.shrink, Q=np.eye(4), n_reps=100
         )
+
+
+def test_estimate_risk_curve_record_shape():
+    # One record per (direction, distance, estimator); single estimator gives
+    # one record per (direction, distance).
+    cov = np.diag([1.0, 2.0, 3.0])
+    est = functools.partial(s.shrink, c=2.0)
+    recs = _shrinkage.estimate_risk_curve(
+        cov, est, directions="uniform", distances=(0.0, 10.0, 5), n_reps=500, seed=0
+    )
+    assert len(recs) == 5
+    assert set(recs[0]) == {
+        "direction",
+        "distance",
+        "estimator",
+        "risk",
+        "se",
+        "risk_ratio",
+    }
+
+
+def test_estimate_risk_curve_matches_brute_force():
+    # The sweep must agree with directly evaluating estimate_risk at each
+    # (direction, distance) pair, given the same seed.
+    cov = np.diag([1.0, 3.0, 2.0])
+    est = functools.partial(s.shrink, c=2.0)
+    n_reps = 800
+    seed = 11
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        est,
+        Q=np.diag([2.0, 1.0, 1.0]),
+        directions=["proportional", 1],
+        distances=[1.0, 3.0, 5.0],
+        n_reps=n_reps,
+        seed=seed,
+    )
+    _b, binv, d = _shrinkage._canonicalize(
+        np.diag([1.0, 3.0, 2.0]), np.diag([2.0, 1.0, 1.0])
+    )
+    descend = np.argsort(d)[::-1]
+    for r in recs:
+        if r["direction"] == "proportional":
+            u_star = np.sqrt(d)
+        else:  # axis 1
+            u_star = np.zeros(3)
+            u_star[descend[1]] = 1.0
+        u_star = u_star / np.linalg.norm(u_star)
+        theta = (r["distance"] * u_star) @ binv.T
+        direct = _shrinkage.estimate_risk(
+            theta,
+            np.diag([1.0, 3.0, 2.0]),
+            est,
+            Q=np.diag([2.0, 1.0, 1.0]),
+            n_reps=n_reps,
+            seed=seed,
+        )
+        np.testing.assert_allclose(r["risk"], direct[0], rtol=1e-12)
+        np.testing.assert_allclose(r["se"], direct[1], rtol=1e-12)
+
+
+def test_estimate_risk_curve_distance_is_canonical_norm():
+    # The distance entry equals the canonical Euclidean norm of the mean.
+    cov = np.diag([1.0, 2.0, 3.0])
+    est = functools.partial(s.shrink, c=2.0)
+    recs = _shrinkage.estimate_risk_curve(
+        cov, est, directions="uniform", distances=[2.0, 4.0], n_reps=200, seed=0
+    )
+    assert [r["distance"] for r in recs] == [2.0, 4.0]
+
+
+def test_estimate_risk_curve_risk_ratio():
+    # risk_ratio = risk / trace(Q @ cov), and a minimax estimator keeps it <= 1.
+    cov = np.diag([1.0, 2.0, 5.0])
+    est = "berger"
+    q = np.diag([2.0, 1.0, 1.0])
+    baseline = float(np.trace(q @ cov))
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        est,
+        Q=q,
+        directions="proportional",
+        distances=[0.0, 2.0],
+        n_reps=2000,
+        seed=0,
+    )
+    for r in recs:
+        np.testing.assert_allclose(r["risk_ratio"], r["risk"] / baseline, rtol=1e-12)
+        assert r["risk_ratio"] <= 1.0 + 1e-6
+
+
+def test_estimate_risk_curve_axis_ordering():
+    # Axis 0 is the coordinate with the largest variance.  It must match a raw
+    # vector whose canonical image is the largest-variance coordinate.
+    cov = np.diag([1.0, 3.0, 2.0])
+    est = functools.partial(s.shrink, c=2.0)
+    recs = _shrinkage.estimate_risk_curve(
+        cov, est, directions=0, distances=[0.0, 1.0], n_reps=200, seed=0
+    )
+    assert recs[0]["direction"] == "axis 0"
+    _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
+    largest = int(np.argsort(d)[::-1][0])
+    raw = np.eye(3)[largest] @ binv
+    same_axis = _shrinkage.estimate_risk_curve(
+        cov, est, directions=[raw], distances=[0.0, 1.0], n_reps=200, seed=0
+    )
+    for a, b_ in zip(recs, same_axis, strict=True):
+        np.testing.assert_allclose(a["risk"], b_["risk"], rtol=1e-12)
+
+
+def test_estimate_risk_curve_raw_vector_matches_canonical_when_identity():
+    # For cov = Q = I the canonical and original space coincide, so a raw vector
+    # proportional to sqrt(d) reproduces the named "proportional" direction.
+    cov = np.eye(3)
+    est = functools.partial(s.shrink, c=2.0)
+    d = np.ones(3)
+    prop = _shrinkage.estimate_risk_curve(
+        cov, est, directions="proportional", distances=[0.0, 2.0], n_reps=300, seed=0
+    )
+    raw = _shrinkage.estimate_risk_curve(
+        cov, est, directions=[np.sqrt(d)], distances=[0.0, 2.0], n_reps=300, seed=0
+    )
+    for rp, rr in zip(prop, raw, strict=True):
+        np.testing.assert_allclose(rp["risk"], rr["risk"], rtol=1e-12)
+
+
+def test_estimate_risk_curve_estimator_labels():
+    # Explicit estimator labels are used verbatim; a single callable defaults to
+    # its __name__; a functools.partial falls back to its position.
+    cov = np.diag([1.0, 2.0, 3.0])
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        functools.partial(s.shrink, c=2.0),
+        directions="uniform",
+        distances=[1.0],
+        n_reps=100,
+        seed=0,
+        estimator_labels=["my shrinker"],
+    )
+    assert recs[0]["estimator"] == "my shrinker"
+    recs = _shrinkage.estimate_risk_curve(
+        cov, "berger", directions="uniform", distances=[1.0], n_reps=100, seed=0
+    )
+    assert recs[0]["estimator"] == "berger"
+
+
+def test_estimate_risk_curve_direction_labels():
+    cov = np.diag([1.0, 2.0, 3.0])
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        "berger",
+        directions=["uniform", "inverse"],
+        distances=[1.0],
+        n_reps=100,
+        seed=0,
+        direction_labels=["a", "b"],
+    )
+    assert [r["direction"] for r in recs] == ["a", "b"]
+
+
+def test_estimate_risk_curve_mixed_directions_counts():
+    # Mixed named / axis / vector directions all contribute records in order.
+    cov = np.diag([1.0, 2.0, 3.0])
+    est = functools.partial(s.shrink, c=2.0)
+    recs = _shrinkage.estimate_risk_curve(
+        cov,
+        est,
+        directions=["uniform", 0, np.array([1.0, 0.0, 0.0])],
+        distances=[1.0, 2.0],
+        n_reps=200,
+        seed=0,
+    )
+    assert [r["direction"] for r in recs] == [
+        "uniform",
+        "uniform",
+        "axis 0",
+        "axis 0",
+        "dir 2",
+        "dir 2",
+    ]
+
+
+def test_estimate_risk_curve_validation_errors():
+    cov = np.diag([1.0, 2.0, 3.0])
+    est = functools.partial(s.shrink, c=2.0)
+    with pytest.raises(ValueError, match="Unknown direction"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions="bogus", distances=[1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="out of range"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions=3, distances=[1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="zero canonical norm"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions=[np.zeros(3)], distances=[1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="must have shape"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions=[np.ones(4)], distances=[1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="non-negative"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions="uniform", distances=[-1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="estimator_labels"):
+        _shrinkage.estimate_risk_curve(
+            cov,
+            est,
+            directions="uniform",
+            distances=[1.0],
+            n_reps=100,
+            estimator_labels=["a", "b"],
+        )
+    with pytest.raises(ValueError, match="must be a square matrix"):
+        _shrinkage.estimate_risk_curve(
+            np.eye(4)[:3], est, directions="uniform", distances=[1.0], n_reps=100
+        )
+    with pytest.raises(ValueError, match="n_reps must be"):
+        _shrinkage.estimate_risk_curve(
+            cov, est, directions="uniform", distances=[1.0], n_reps=1
+        )

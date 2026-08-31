@@ -29,10 +29,15 @@ from . import _derate, _dist, _fmax, shrinkage  # noqa: F401
 from ._derate import *
 from ._dist import *
 from ._fmax import *
-from .shrinkage import estimate_risk, shrink
+from .shrinkage import estimate_risk, estimate_risk_curve, shrink
 
 # Export all exports from the sub-modules
-__all__ = _dist.__all__ + _derate.__all__ + _fmax.__all__ + ["shrink", "estimate_risk"]
+__all__ = (
+    _dist.__all__
+    + _derate.__all__
+    + _fmax.__all__
+    + ["shrink", "estimate_risk", "estimate_risk_curve"]
+)
 
 # Some extra effort, so Sphinx picks up the data docstrings
 # mypy: disable-error-code=name-defined
