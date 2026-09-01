@@ -15,6 +15,11 @@ and this project adheres to
 
 ### Changed
 
+- `estimate_risk` and `estimate_risk_curve` are faster: the quadratic loss is
+  evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws
+  the Monte Carlo noise once as `N(0, cov)` and translates it to each sweep
+  point (common random numbers) instead of re-drawing per point. Results are
+  unchanged for seeded calls.
 - Only the `shrink` front-end is now exported from the `nustattools.stats`
   package; the other shrinkage estimators (e.g. `berger` and `tan`) and helpers
   are available through the `nustattools.stats.shrinkage` submodule.

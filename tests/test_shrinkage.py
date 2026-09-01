@@ -766,16 +766,18 @@ def test_estimate_risk_curve_negative_axis():
 
 
 def test_estimate_risk_curve_matches_brute_force():
-    # The sweep must agree with directly evaluating estimate_risk at each
-    # (direction, distance) pair, given the same seed.
+    # The sweep draws N(0, cov) once and translates it to each (direction,
+    # distance) pair, so re-evaluating each point on that same shared draw must
+    # reproduce the recorded risk and standard error exactly.
     cov = np.diag([1.0, 3.0, 2.0])
+    q = np.diag([2.0, 1.0, 1.0])
     est = functools.partial(s.shrink, strength=1.0)
     n_reps = 800
     seed = 11
     recs = _shrinkage.estimate_risk_curve(
         cov,
         est,
-        Q=np.diag([2.0, 1.0, 1.0]),
+        Q=q,
         directions=["proportional", 1],
         distances=[1.0, 3.0, 5.0],
         n_reps=n_reps,
@@ -785,6 +787,8 @@ def test_estimate_risk_curve_matches_brute_force():
         np.diag([1.0, 3.0, 2.0]), np.diag([2.0, 1.0, 1.0])
     )
     descend = np.argsort(d)[::-1]
+    rng = np.random.default_rng(seed)
+    x0 = rng.multivariate_normal(np.zeros(3), cov, size=n_reps)
     for r in recs:
         if r["direction"] == "proportional":
             u_star = np.sqrt(d)
@@ -793,16 +797,14 @@ def test_estimate_risk_curve_matches_brute_force():
             u_star[descend[1]] = 1.0
         u_star = u_star / np.linalg.norm(u_star)
         theta = (r["distance"] * u_star) @ binv.T
-        direct = _shrinkage.estimate_risk(
-            theta,
-            np.diag([1.0, 3.0, 2.0]),
-            est,
-            Q=np.diag([2.0, 1.0, 1.0]),
-            n_reps=n_reps,
-            seed=seed,
+        x = x0 + theta
+        delta = est(x, cov, Q=q)
+        diff = delta - theta
+        loss = np.einsum("ni,ij,nj->n", diff, q, diff)
+        np.testing.assert_allclose(r["risk"], np.mean(loss), rtol=1e-10)
+        np.testing.assert_allclose(
+            r["se"], np.std(loss, ddof=1) / np.sqrt(n_reps), rtol=1e-10
         )
-        np.testing.assert_allclose(r["risk"], direct[0], rtol=1e-12)
-        np.testing.assert_allclose(r["se"], direct[1], rtol=1e-12)
 
 
 def test_estimate_risk_curve_distance_is_canonical_norm():

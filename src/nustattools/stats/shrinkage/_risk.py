@@ -133,6 +133,31 @@ def estimate_risk(
     gen = np.random.default_rng(seed)
     x = gen.multivariate_normal(theta_arr, cova, size=n_reps)
 
+    result = _risk_from_samples(x, theta_arr, cova, qa, est_list, n_reps, **kwargs)
+    if is_single:
+        return cast(NDArray[Any], result[0])
+    return result
+
+
+def _risk_from_samples(
+    x: NDArray[Any],
+    theta: NDArray[Any],
+    cova: NDArray[Any],
+    qa: NDArray[Any],
+    est_list: list[_Estimator],
+    n_reps: int,
+    **kwargs: Any,
+) -> NDArray[Any]:
+    """Estimate risk and standard error from a batch of pre-drawn samples.
+
+    ``x`` has shape ``(n_reps, p)`` and holds draws from ``N(theta, cova)``.
+    Each estimator yields a row ``[risk, standard error]``.  The quadratic
+    loss is evaluated as ``sum(d * (d @ qa), axis=1)``, which avoids the
+    ``(p, p)`` einsum factorization and is faster for the typical small
+    ``p`` of a risk sweep.
+
+    """
+
     results = []
     for est in est_list:
         if isinstance(est, str):
@@ -144,16 +169,12 @@ def estimate_risk(
         else:
             fn = est
         delta = fn(x, cova, Q=qa, **kwargs)
-        d = delta - theta_arr
-        loss = np.einsum("ni,ij,nj->n", d, qa, d)
-        risk: float = float(np.mean(loss))
-        se: float = float(np.std(loss, ddof=1) / np.sqrt(n_reps))
+        d = delta - theta
+        loss = np.sum(d * (d @ qa), axis=1)
+        risk = float(np.mean(loss))
+        se = float(np.std(loss, ddof=1) / np.sqrt(n_reps))
         results.append((risk, se))
-
-    result: NDArray[Any] = np.array(results, dtype=float)
-    if is_single:
-        return cast(NDArray[Any], result[0])
-    return result
+    return np.array(results, dtype=float)
 
 
 _Direction = str | int | np.integer | NDArray[Any]
@@ -307,10 +328,18 @@ def estimate_risk_curve(
     """Sweep the estimated risk of estimators against the true mean.
 
     The mean is moved along one or more *directions* in canonical space, at
-    increasing *distances* ``t = ||theta_star||``, and :func:`estimate_risk` is
-    evaluated at each ``(direction, distance)`` pair.  The result is a list of
-    records, one per ``(direction, distance, estimator)``, suitable for wrapping
-    in ``pandas.DataFrame`` for e.g. a seaborn plot.
+    increasing *distances* ``t = ||theta_star||``, and the risk of each
+    estimator is evaluated at each ``(direction, distance)`` pair (as in
+    :func:`estimate_risk`).  The result is a list of records, one per
+    ``(direction, distance, estimator)``, suitable for wrapping in
+    ``pandas.DataFrame`` for e.g. a seaborn plot.
+
+    Because the covariance is fixed across the sweep, the Monte Carlo noise is
+    drawn *once* as ``N(0, cov)`` and translated to each sweep point.  All
+    points therefore share the same draws (common random numbers): this avoids
+    re-drawing per point and sharply reduces the sampling noise on the risk
+    curve, so differences between neighbouring points are less polluted by
+    Monte Carlo error.
 
     Parameters
     ----------
@@ -337,7 +366,8 @@ def estimate_risk_curve(
         num)`` triple is expanded with ``np.linspace``; otherwise the argument
         is used directly as an array of (non-negative) magnitudes.
     n_reps : int, default=10000
-        Number of Monte Carlo draws per ``(direction, distance)`` pair.
+        Number of Monte Carlo draws.  The same ``n_reps`` draws are shared by
+        every ``(direction, distance)`` pair.
     seed : int or numpy.random.Generator, default=None
         Seed for the random number generator, for reproducible results.
     estimator_labels : sequence of str, default=None
@@ -404,18 +434,20 @@ def estimate_risk_curve(
     magnitudes = _as_magnitudes(distances)
 
     records: list[dict[str, Any]] = []
+    # Draw the noise once and translate it to each sweep point.  Because the
+    # covariance is fixed, ``N(theta, cov)`` is ``N(0, cov) + theta``, so all
+    # sweep points share the *same* Monte Carlo draws (common random numbers).
+    # This both avoids re-drawing per point and makes neighbouring points'
+    # estimates strongly correlated, greatly reducing the sampling noise on the
+    # risk curve.
+    gen = np.random.default_rng(seed)
+    x0 = gen.multivariate_normal(np.zeros(p), cova, size=n_reps)
     for direction, u_star in dirs:
         for t in magnitudes:
             theta = (t * u_star) @ binv.T
             mahalanobis: float = float(np.sqrt(theta @ pinv @ theta))
-            full = estimate_risk(
-                theta,
-                cova,
-                est_list,
-                Q=qa,
-                n_reps=n_reps,
-                seed=seed,
-                **kwargs,
+            full = _risk_from_samples(
+                x0 + theta, theta, cova, qa, est_list, n_reps, **kwargs
             )
             for est_label, (risk, se) in zip(est_labels, full, strict=True):
                 records.append(
