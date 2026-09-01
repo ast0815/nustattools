@@ -49,12 +49,12 @@ References
 from __future__ import annotations
 
 from ._core import (
-    _canonicalize,
-    _dirs_projection,
-    _estimate,
-    _subspace_reduce,
+    _canonicalize,  # noqa: F401  (re-exported for tests/advanced use)
+    _dirs_projection,  # noqa: F401
+    _estimate,  # noqa: F401
+    _subspace_reduce,  # noqa: F401
 )
-from ._estimators import _METHODS, berger, shrink, tan
+from ._estimators import berger, shrink, tan
 from ._risk import estimate_risk, estimate_risk_curve
 
 __all__ = ["berger", "estimate_risk", "estimate_risk_curve", "shrink", "tan"]

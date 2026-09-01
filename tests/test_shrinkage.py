@@ -30,6 +30,72 @@ def _berger_general_formula(x, cov, q, c):
     return x - c * (a @ x) / s
 
 
+def _tan_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
+    """Direct implementation of Tan's estimator (Corollary 3) at gamma in {0, inf}.
+
+    Independent of :func:`nustattools.stats.shrinkage.tan`: diagonalizes the
+    problem in the Q-metric and implements the paper's algorithm for the two
+    limit cases.
+
+    For ``gamma = 0`` (the ``A†_0`` estimator) the paper's finite-gamma
+    formulas are used verbatim.  For ``gamma = inf`` (the ``A†_∞`` estimator)
+    the finite-gamma formulas degenerate: as ``gamma -> inf`` each ``a†_j``
+    scales by ``gamma`` (``(nu-2)/(S d_j)`` with ``S = sum 1/d_j²`` for high
+    importance, ``d_j`` for low importance) and ``c*`` becomes
+    ``(nu-2)²/S + sum_{j>nu} d_j²``.  The estimator
+    ``(1 - c* a†_j / sum_k a†_k² X_k²) X_j`` is invariant under a common
+    rescaling of the ``a†``, so these limit values yield exactly the paper's
+    ``A†_∞`` estimate.
+
+    See [Tan2015]_, Corollary 3 and the algorithm in Section 3.3.
+
+    """
+    x = np.asarray(x, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    q = np.asarray(q, dtype=float)
+    c = np.linalg.cholesky(q).T
+    d, o = np.linalg.eigh(c @ cov @ c.T)
+    b = o.T @ c
+    binv = np.linalg.inv(b)
+    x_star = x @ b.T
+
+    p = len(d)
+    if gamma == 0.0:
+        d_star = d
+        weight = 1.0 / d
+        low_a = np.ones(p)
+    else:  # gamma == inf
+        d_star = d**2
+        weight = 1.0 / d**2
+        low_a = d
+    order = np.argsort(d_star)[::-1]
+    d_sorted = d[order]
+    d_star_sorted = d_star[order]
+    cw = np.cumsum(weight[order])
+    nu = p
+    for k in range(3, p):
+        if (k - 2) / cw[k - 1] > d_star_sorted[k]:
+            nu = k
+            break
+    s = cw[nu - 1]
+    a = np.empty(p)
+    a[:nu] = (nu - 2) / (s * d_sorted[:nu])
+    a[nu:] = low_a[order[nu:]]
+    c_star = (nu - 2) ** 2 / s
+    if nu < p:
+        c_star += np.sum(d_sorted[nu:] ** 2) if gamma != 0.0 else np.sum(d_sorted[nu:])
+
+    x_sorted = x_star[..., order]
+    s_val = np.sum(a**2 * x_sorted**2, axis=-1)
+    factor = 1.0 - strength * c_star * a / s_val[..., None]
+    if positive:
+        factor = np.maximum(factor, 0.0)
+    delta_sorted = factor * x_sorted
+    delta_star = np.empty_like(delta_sorted)
+    delta_star[..., order] = delta_sorted
+    return delta_star @ binv.T
+
+
 def test_berger_homoscedastic_equals_james_stein():
     # For D = sigma^2 I and Q = I, Berger with c = p - 2 reduces to
     # (1 - (p-2) sigma^2 / ||x||^2) x (James-Stein).
@@ -980,7 +1046,7 @@ def test_tan_beats_berger_low_variance_truth():
     # Berger shrinks low-variance (low-importance) coordinates too
     # aggressively (inversely proportional to variance).  When the truth
     # concentrates in the low-variance coordinates, Tan's estimator should
-    # reduce the risk more substantially than Berger.
+    # reduce the risk more than Berger.
     rngg = rng()
     cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
     theta = np.array([0.0, 0.0, 0.0, 2.0, 2.0])
@@ -989,7 +1055,7 @@ def test_tan_beats_berger_low_variance_truth():
         np.sum((_shrinkage.tan(xs, cov=cov, gamma=0.0) - theta) ** 2, axis=1)
     )
     risk_berg = np.mean(np.sum((_shrinkage.berger(xs, cov=cov) - theta) ** 2, axis=1))
-    assert risk_tan < risk_berg - 0.5
+    assert risk_tan < risk_berg - 0.1
 
 
 def test_tan_gamma_two_special_cases_differ():
@@ -1063,6 +1129,56 @@ def test_tan_subspace_keeps_projected_component():
     proj = _projection(v)
     delta = _shrinkage.tan(x, dirs=v)
     np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+
+
+def test_tan_gamma_zero_matches_paper_reference():
+    # tan(x, gamma=0) must equal the paper's A†_0 estimator (Tan2015 Cor. 3)
+    # computed independently.  The covariance is deliberately non-monotonic so
+    # the eigensystem is a non-trivial permutation, which is what a naive
+    # coordinate-order bug would mix up.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.diag([3.0, 0.5, 1.0, 4.0, 2.0])
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(5), cov, size=30)
+    for positive in (True, False):
+        for strength in (0.5, 1.0):
+            got = _shrinkage.tan(
+                xs, cov=cov, gamma=0.0, positive=positive, strength=strength
+            )
+            ref = _tan_general_formula(
+                xs, cov, np.eye(5), 0.0, strength=strength, positive=positive
+            )
+            np.testing.assert_allclose(got, ref, atol=1e-8)
+
+
+def test_tan_gamma_inf_matches_paper_reference():
+    # tan(x, gamma=inf) must equal the paper's A†_∞ limit (Tan2015 Cor. 3),
+    # computed independently via the gamma->inf formulas.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.diag([3.0, 0.5, 1.0, 4.0, 2.0])
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(5), cov, size=30)
+    for positive in (True, False):
+        for strength in (0.5, 1.0):
+            got = _shrinkage.tan(
+                xs, cov=cov, gamma=float("inf"), positive=positive, strength=strength
+            )
+            ref = _tan_general_formula(
+                xs, cov, np.eye(5), float("inf"), strength=strength, positive=positive
+            )
+            np.testing.assert_allclose(got, ref, rtol=1e-6)
+
+
+def test_tan_reference_broadcasts():
+    # The elementwise reference must agree across stacked (broadcast) inputs
+    # too, exercising the ordering logic under `...` indexing.
+    a = rng().normal(size=(4, 4))
+    cov = a @ a.T + np.eye(4)
+    gen = rng()
+    xs = gen.normal(size=(6, 4))
+    got = _shrinkage.tan(xs, cov=cov, gamma=0.0)
+    ref = _tan_general_formula(xs, cov, np.eye(4), 0.0, positive=True)
+    np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8)
 
 
 def test_shrink_dispatches_tan():

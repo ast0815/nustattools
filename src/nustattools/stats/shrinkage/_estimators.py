@@ -211,13 +211,19 @@ def _tan_canonical(
         else:
             c_star_val += np.sum(d_sorted[nu:] ** 2)
 
-    # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . x^2))_+ * x_j
-    s_val = np.sum(a_star**2 * x**2, axis=-1)
+    # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . x^2))_+ * x_j.
+    # a_star is indexed by descending-importance sorted position, so x must be
+    # reordered to match before applying and then mapped back.
+    x_sorted = x[..., order]
+    s_val = np.sum(a_star**2 * x_sorted**2, axis=-1)
     c_actual = strength * c_star_val
     factor = 1.0 - c_actual * a_star / s_val[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
-    return cast(NDArray[Any], factor * x)
+    delta_sorted = cast(NDArray[Any], factor * x_sorted)
+    delta = np.empty_like(delta_sorted)
+    delta[..., order] = delta_sorted
+    return delta
 
 
 def tan(

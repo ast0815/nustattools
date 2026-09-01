@@ -67,6 +67,13 @@ and this project adheres to
   Mahalanobis distance of the true mean, and integer directions accept negative
   indices (e.g. -1 is the smallest variance).
 
+### Fixed
+
+- `stats.shrinkage.tan` no longer mis-applies the shrinkage weights to the wrong
+  coordinates when the covariance is not already sorted: the estimator now
+  reorders the data to match the Bayes-importance ordering before applying the
+  paper's coordinate-wise shrinkage (Tan, 2015).
+
 ## [0.8.0]
 
 ### Changed
