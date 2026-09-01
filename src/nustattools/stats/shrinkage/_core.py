@@ -117,8 +117,9 @@ def _dirs_projection(v: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
     """Covariance-metric projector onto the column space of ``v``.
 
     In canonical coordinates (diagonal covariance ``D = diag(d)``, identity
-    loss), returns ``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``, the projection
-    orthogonal in the precision metric ``D^{-1}``.  Such a projection makes
+    loss), returns ``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``, where ``V = v``
+    is the ``(p, k)`` spanning matrix, the projection orthogonal in the
+    precision metric ``D^{-1}``.  Such a projection makes
     ``P y`` and ``(I - P) y`` uncorrelated for ``y ~ (I, D)``, so their risks
     separate (see [Tan2016]_, Section 3.3).
 

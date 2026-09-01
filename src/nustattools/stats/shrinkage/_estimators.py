@@ -29,7 +29,9 @@ def _berger_canonical(
 ) -> NDArray[Any]:
     """Berger's minimax estimator in canonical form.
 
-    Implements [Tan2015]_, Equations (6): with :math:`S = x^T D^{-2} x`,
+    Implements [Tan2015]_, Equations (6), for the canonical problem where the
+    covariance is the diagonal matrix ``D = diag(d)`` and the loss is the
+    identity: with :math:`S = x^T D^{-2} x`,
 
     .. math:: \\delta_j = \\left(1 - \\frac{c}{d_j S}\\right)_+ x_j.
 
@@ -102,8 +104,10 @@ def berger(
 
     Notes
     -----
-    Coordinates with small variances are shrunk more strongly.  See
-    [Tan2015]_, Section 2.
+    The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless, and applies this direction
+    there.  Because it shrinks inversely proportional to variance, coordinates
+    with small variances are shrunk more strongly.  See [Tan2015]_, Section 2.
 
     Examples
     --------
@@ -155,13 +159,25 @@ def _tan_canonical(
     ``(p,)``.  ``strength`` scales the shrinkage constant ``c*``: the
     estimator is minimax for ``0 <= strength <= 2``.
 
-    ``gamma`` selects the prior:
+    The estimator belongs to the minimax class ``(I - lambda A) x``, where
+    ``A = diag(a_1, ..., a_p)`` is a nonnegative diagonal *shrinkage-direction*
+    matrix chosen, independently of the data, to approximately minimize the
+    Bayes risk (see [Tan2015]_, Theorem 2); ``A†`` denotes this optimal choice,
+    and ``A†_0`` / ``A†_∞`` its two extreme limits below.
 
-    - ``gamma = 0``: no prior (``A†_0``).  Bayes importance equals the
-      variance ``d_j``.  Low-importance coordinates receive equal shrinkage
-      weight.
-    - ``gamma = inf``: flat homoscedastic prior (``A†_∞``).  Bayes importance
-      is proportional to ``d_j²``.  Low-importance coordinates are shrunk
+    ``gamma`` selects the prior :math:`\\theta \\sim N(0, \\Gamma)` in the
+    Bayes-risk criterion of [Tan2015]_, Section 3.3.  The prior enters through
+    the Bayes importance :math:`d_j^* = d_j^2/(d_j + \\gamma_j)`.  Only the two
+    extreme priors are supported:
+
+    - ``gamma = 0`` (``A†_0``): the limit of a prior proportional to the
+      covariance, i.e. :math:`\\Gamma \\propto \\operatorname{diag}(d)_j`
+      in canonical form (so :math:`d_j^* \\propto d_j`).  Low-importance
+      coordinates receive equal shrinkage weight.
+    - ``gamma = inf`` (``A†_∞``): the flat homoscedastic prior
+      :math:`\\Gamma \\propto I`, which is uniform in the *canonical*
+      coordinate space, not the original variable space (so
+      :math:`d_j^* \\propto d_j^2`).  Low-importance coordinates are shrunk
       proportional to their variance.
 
     """
@@ -259,13 +275,24 @@ def tan(
         ``strength = 1`` the optimal minimax estimator, and ``strength = 2``
         the boundary of the minimax class.
     gamma : float, default=0.0
-        Prior specification controlling the Bayes importance segmentation.
-        Must be ``0`` or ``inf``:
+        Prior specification controlling the Bayes importance segmentation [Tan2015]_.
+        Must be ``0`` or ``inf``.  The estimator first transforms the problem
+        to *canonical form*, in which the covariance is the diagonal matrix
+        ``D = diag(d)`` and the loss is the identity, so ``d_j`` below is the
+        variance of the ``j``-th canonical coordinate (the transformed problem
+        has the same risk, so the transform is always lossless).
 
-        - ``gamma = 0``: no prior (``A†_0``).  Coordinates are ranked by
-          their variance ``d_j``.
-        - ``gamma = inf``: flat homoscedastic prior (``A†_∞``).  Coordinates
-          are ranked by ``d_j²``.
+        - ``gamma = 0`` (``A†_0``): the limit of a prior proportional to the
+          covariance (``Gamma ~ diag(d)``), so coordinates are ranked by their
+          variance ``d_j``.
+        - ``gamma = inf`` (``A†_∞``): the flat homoscedastic prior
+          (``Gamma ~ I``), uniform in the *canonical* coordinate space rather
+          than the original variable space, so coordinates are ranked by
+          ``d_j²``.
+
+        Here ``A†_0`` and ``A†_∞`` are the two extreme limits of the optimal
+        shrinkage-direction matrix ``A†`` (see the module docstring of
+        :mod:`nustattools.stats.shrinkage` and [Tan2015]_, Theorem 2).
 
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
@@ -285,13 +312,15 @@ def tan(
 
     Notes
     -----
-    The estimator automatically segments coordinates into two groups based on
-    Bayes "importance" [Tan2015]_.  High-importance coordinates are shrunk
-    inversely proportional to their variance (like Berger's estimator), while
-    low-importance coordinates are shrunk in the direction of the Bayes rule.
-    This yields both minimaxity and effective risk reduction, whereas Berger's
-    estimator shrinks low-variance coordinates too aggressively and the Bayes
-    rule is generally non-minimax.
+    The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless.  It then automatically
+    segments the coordinates into two groups based on Bayes "importance"
+    [Tan2015]_.  High-importance coordinates are shrunk inversely proportional
+    to their variance (like Berger's estimator), while low-importance
+    coordinates are shrunk in the direction of the Bayes rule (shrinkage
+    proportional to variance).  This yields both minimaxity and effective risk
+    reduction, whereas Berger's estimator shrinks low-variance coordinates too
+    aggressively and the Bayes rule is generally non-minimax.
 
     Examples
     --------
@@ -338,7 +367,10 @@ def shrink(
     """Shrink an observed multivariate normal mean towards an affine subspace.
 
     Convenience front-end that dispatches to a named shrinkage estimator after
-    transforming the problem to canonical form.
+    transforming the problem to canonical form (a lossless change of
+    coordinates that makes the covariance diagonal and the loss the identity,
+    so the estimator only has to shrink independent coordinates of varying
+    variance).
 
     Parameters
     ----------

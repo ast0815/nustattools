@@ -334,6 +334,11 @@ def estimate_risk_curve(
     ``(direction, distance, estimator)``, suitable for wrapping in
     ``pandas.DataFrame`` for e.g. a seaborn plot.
 
+    The *canonical space* is reached by the lossless change of coordinates that
+    diagonalizes the covariance to ``D = diag(d)`` and reduces the loss to the
+    identity; ``theta_star`` and ``u*`` below are the mean and direction in
+    those coordinates.
+
     Because the covariance is fixed across the sweep, the Monte Carlo noise is
     drawn *once* as ``N(0, cov)`` and translated to each sweep point.  All
     points therefore share the same draws (common random numbers): this avoids

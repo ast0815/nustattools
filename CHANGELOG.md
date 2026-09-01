@@ -16,10 +16,10 @@ and this project adheres to
 ### Changed
 
 - `estimate_risk` and `estimate_risk_curve` are faster: the quadratic loss is
-  evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws
-  the Monte Carlo noise once as `N(0, cov)` and translates it to each sweep
-  point (common random numbers) instead of re-drawing per point. Results are
-  unchanged for seeded calls.
+  evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws the
+  Monte Carlo noise once as `N(0, cov)` and translates it to each sweep point
+  (common random numbers) instead of re-drawing per point. Results are unchanged
+  for seeded calls.
 - Only the `shrink` front-end is now exported from the `nustattools.stats`
   package; the other shrinkage estimators (e.g. `berger` and `tan`) and helpers
   are available through the `nustattools.stats.shrinkage` submodule.
@@ -36,6 +36,14 @@ and this project adheres to
 - Berger's estimator renames its shrinkage-magnitude parameter `c` to
   `strength`, now expressed as a fraction of the optimal minimax value (0 =
   identity, 1 = optimal, 2 = boundary of the minimax class).
+- Clarified the documentation of the `tan` estimator's `gamma` parameter:
+  `gamma=0` corresponds to a prior proportional to the covariance and
+  `gamma=inf` to a flat prior uniform in the canonical coordinate space (per Tan
+  2015, Section 3.3), rather than literally "no prior".
+- Rewrote the shrinkage docstrings to be self-contained: they now define the
+  canonical-form change of coordinates, the canonical coordinate variances
+  `d_j`, and the shrinkage-direction matrix `A` (and the `A†_0`/`A†_∞` limits),
+  so they are readable without the reference papers.
 
 ### Added
 
