@@ -1190,3 +1190,228 @@ def test_shrink_dispatches_tan():
         s.shrink(x, np.eye(5), method="tan", gamma=float("inf")),
         _shrinkage.tan(x, gamma=float("inf")),
     )
+
+
+def _psd_q(rank, p, gen):
+    """Return a symmetric PSD ``(p, p)`` matrix of the given ``rank``."""
+    w = np.concatenate([np.linspace(0.5, 3.0, rank), np.zeros(p - rank)])
+    v, _ = np.linalg.qr(gen.normal(size=(p, p)))
+    q = (v * w) @ v.T
+    return (q + q.T) / 2
+
+
+def test_psd_Q_keeps_null_component_at_data():
+    # When Q is singular, the null space carries no loss, so the null-space
+    # component of the estimate must equal that of the data regardless of how
+    # much the range is shrunk.  Checked for every estimator.
+    gen = rng()
+    p = 7
+    q = _psd_q(5, p, gen)
+    cov = rng().normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    p_null = v[:, w < 1e-10] @ v[:, w < 1e-10].T
+    for est in (_shrinkage.berger, _shrinkage.tan, s.shrink):
+        kwargs = {"gamma": float("inf")} if est is _shrinkage.tan else {}
+        delta = est(x, cov=cov, Q=q, **kwargs)
+        np.testing.assert_allclose(p_null @ delta, p_null @ x, rtol=1e-10)
+
+
+def test_psd_Q_range_component_is_shrunk():
+    # A singular Q must still shrink the range component (where the loss is
+    # positive) towards the target, so the estimate moves off the full data.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)  # rank 4 -> Berger range dimension 4, c = 2 > 0
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    delta = _shrinkage.berger(x, cov=cov, Q=q, positive=False)
+    assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_psd_Q_reduction_matches_rotated_SPD_problem():
+    # The PSD path must agree with running the SAME estimator on the range-
+    # reduced SPD problem and keeping the null component at the data value.
+    # The reduced ``berger`` call below takes the normal (fully SPD) code path,
+    # so this independently verifies the rank-reduction in _estimate.
+    gen = rng()
+    p = 7
+    rank = 4
+    q = _psd_q(rank, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    u_r = v[:, w > 1e-10]
+    q_r = np.diag(w[w > 1e-10])
+    cov_r = u_r.T @ cov @ u_r
+    x_r = x @ u_r
+    for est in (_shrinkage.berger, _shrinkage.tan):
+        delta = est(x, cov=cov, Q=q)
+        reduced = est(x_r, cov=cov_r, Q=q_r)
+        expected = reduced @ u_r.T + (x - x @ (u_r @ u_r.T))
+        np.testing.assert_allclose(delta, expected, rtol=1e-9, atol=1e-10)
+
+
+def test_psd_Q_identity_strength_recovers_x():
+    # With strength 0 (no shrinkage) the estimate must be the input even for a
+    # singular Q.
+    gen = rng()
+    p = 6
+    q = _psd_q(3, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.berger(x, cov=cov, Q=q, strength=0.0), x, rtol=1e-9
+    )
+
+
+def test_psd_Q_dirs_in_null_are_dropped():
+    # dirs columns lying in null(Q) carry no loss and must be dropped, leaving
+    # the result identical to the no-dirs estimate.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    null_basis = v[:, w < 1e-10]
+    dirs_null = null_basis  # shape (p, 2)
+    plain = _shrinkage.berger(x, cov=cov, Q=q)
+    with_dirs = _shrinkage.berger(x, cov=cov, Q=q, dirs=dirs_null)
+    np.testing.assert_allclose(with_dirs, plain, rtol=1e-9, atol=1e-10)
+
+
+def test_psd_Q_dirs_mixed_range_and_null_keeps_range_columns():
+    # When dirs mixes range and null columns, the null columns are dropped and
+    # the range columns still drive the subspace shrinkage.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    range_basis = v[:, w > 1e-10]
+    null_basis = v[:, w < 1e-10]
+    # A range direction plus a null direction.
+    dirs = np.column_stack([range_basis[:, 0], null_basis[:, 0]])
+    delta = _shrinkage.berger(x, cov=cov, Q=q, dirs=dirs, positive=False)
+    # The estimator ran with the surviving range column: it must differ from
+    # both the no-dirs result and the raw data when the range permits shrinkage.
+    assert not np.allclose(delta, x, atol=1e-8)
+    assert delta.shape == (p,)
+
+
+def test_psd_Q_dirs_collapsing_on_range_falls_back_to_point():
+    # When the surviving dirs columns are linearly dependent on the range of Q
+    # (distinct columns collapsing onto the same range direction), they are all
+    # dropped and the estimate shrinks towards the point offset, exactly as for
+    # dirs=None.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    range_col = v[:, w > 1e-10][:, 0]
+    null_col = v[:, w < 1e-10][:, 0]
+    # Both columns project to the same direction on the range, so the projected
+    # set is rank-deficient and must be discarded.
+    dirs = np.column_stack([range_col, range_col + 10.0 * null_col])
+    point = _shrinkage.berger(x, cov=cov, Q=q, offset=offset)
+    with_dirs = _shrinkage.berger(x, cov=cov, Q=q, offset=offset, dirs=dirs)
+    np.testing.assert_allclose(with_dirs, point, rtol=1e-9, atol=1e-10)
+
+
+def test_psd_Q_range_subspace_component_is_kept():
+    # The part of the dirs subspace lying in the range of Q behaves exactly as
+    # in the SPD case: the covariance-metric
+    # projection of the estimate onto span(dirs_r) equals that of the data
+    # (P * delta == P * x), while the orthogonal residual is shrunk.  The null
+    # component is kept at the data value regardless.
+    gen = rng()
+    p = 7
+    q = _psd_q(5, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    for offset in (None, gen.normal(size=p)):
+        x = gen.normal(size=p)
+        w, v = np.linalg.eigh(q)
+        u_r = v[:, w > 1e-10]
+        null_basis = v[:, w < 1e-10]
+        # Two independent range columns plus a null column.
+        dirs = np.column_stack([u_r[:, :2], null_basis[:, 0]])
+        for est, kwargs in (
+            (_shrinkage.berger, {}),
+            (_shrinkage.tan, {"gamma": np.inf}),
+        ):
+            delta = est(x, cov=cov, Q=q, offset=offset, dirs=dirs, **kwargs)
+            dirs_r = u_r.T @ dirs
+            dirs_r = dirs_r[:, np.linalg.norm(dirs_r, axis=0) > 1e-12]
+            cov_r = u_r.T @ cov @ u_r
+            q_r = np.diag(w[w > 1e-10])
+            b_r, _, d_r = _shrinkage._canonicalize(cov_r, q_r)
+            p_mat = _shrinkage._dirs_projection(b_r @ dirs_r, d_r)
+            x_r = x @ u_r
+            delta_r = (delta - (x - x @ (u_r @ u_r.T))) @ u_r
+            np.testing.assert_allclose(
+                (delta_r @ b_r.T) @ p_mat.T,
+                (x_r @ b_r.T) @ p_mat.T,
+                rtol=1e-8,
+                atol=1e-10,
+            )
+
+
+def test_psd_Q_broadcasting_shapes():
+    p = 6
+    q = _psd_q(4, p, rng())
+    x = rng().normal(size=(3, p))
+    out = _shrinkage.berger(x, cov=np.eye(p), Q=q)
+    assert out.shape == (3, p)
+    for i in range(3):
+        np.testing.assert_allclose(
+            out[i], _shrinkage.berger(x[i], cov=np.eye(p), Q=q), rtol=1e-12
+        )
+
+
+def test_psd_Q_estimate_risk_matches_trace():
+    # The identity estimator's risk under a singular Q is trace(Q @ cov), and
+    # estimate_risk must accept a positive semi-definite Q.
+    gen = rng()
+    p = 5
+    theta = gen.normal(size=p)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    q = _psd_q(3, p, gen)
+    expected = float(np.trace(q @ cov))
+    res = _shrinkage.estimate_risk(
+        theta,
+        cov,
+        functools.partial(s.shrink, strength=0.0),
+        Q=q,
+        n_reps=20_000,
+        seed=0,
+    )
+    np.testing.assert_allclose(res[0], expected, rtol=0.03)
+
+
+def test_Q_not_psd_raises():
+    # An indefinite Q (a negative eigenvalue) must be rejected.
+    q = np.diag([1.0, -1.0])
+    with pytest.raises(ValueError, match="positive semi-definite"):
+        _shrinkage.berger(rng().normal(size=2), np.eye(2), Q=q)
+    with pytest.raises(ValueError, match="positive semi-definite"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=2), np.eye(2), s.shrink, Q=q, n_reps=100
+        )
+
+
+def test_Q_nonsymmetric_raises_on_psd_path():
+    # A non-symmetric Q is rejected by the positive semi-definite validator
+    # (the covariance's strict validator is exercised elsewhere).
+    q = np.array([[1.0, 0.0], [1.0, 0.0]])
+    with pytest.raises(ValueError, match="must be symmetric"):
+        _shrinkage.berger(rng().normal(size=2), np.eye(2), Q=q)

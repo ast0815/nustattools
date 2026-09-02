@@ -25,6 +25,11 @@ basis ``l2`` is taken orthonormal (eigenvectors of the symmetric residual
 covariance), the change of coordinates is an isometry of the squared-error
 loss, so the reduced shrinkage conserves the full loss exactly.
 
+The loss matrix ``Q`` may be positive *semi*-definite.  Its null space carries
+no loss, so that component of the estimate is kept at the observed data value
+and shrinkage is applied only on the range of ``Q``, where the restricted loss
+is positive definite.  Directions that lie in ``null(Q)`` are dropped.
+
 The implementation is split across three private modules,
 ``nustattools.stats.shrinkage._core`` (shared validation, canonicalization,
 the affine-subspace projector and the ``_estimate`` front-end),

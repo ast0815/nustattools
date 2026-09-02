@@ -19,6 +19,9 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+# np.finfo(float).eps trips a known pylint numpy false positive (E1101).
+_EPSILON: float = np.finfo(float).eps  # pylint: disable=no-member
+
 
 def _canonicalize(
     cov: NDArray[Any], q: NDArray[Any]
@@ -60,14 +63,36 @@ def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[
     return aa
 
 
+def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
+    """Validate that ``a`` is symmetric positive semi-definite with the given shape."""
+
+    aa = np.asarray(a)
+    if aa.shape != shape:
+        msg = f"{name} must have shape {shape}, got {aa.shape}."
+        raise ValueError(msg)
+    if not np.allclose(aa, aa.T):
+        msg = f"{name} must be symmetric."
+        raise ValueError(msg)
+    if shape[0] == 0:
+        return aa
+    w = np.linalg.eigvalsh(aa)
+    maxw = float(np.max(np.abs(w)))
+    tol = shape[0] * _EPSILON * max(maxw, 1.0)
+    if np.min(w) < -tol:
+        msg = f"{name} must be positive semi-definite (all eigenvalues >= 0)."
+        raise ValueError(msg)
+    return aa
+
+
 def _validate(
     x: ArrayLike, cov: ArrayLike | None, q: ArrayLike | None
 ) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], int]:
     """Validate and resolve the common estimator inputs.
 
-    Returns ``(x, cov, q, p)`` where ``x`` has shape ``(..., p)``, ``cov`` and
-    ``q`` are symmetric positive definite ``(p, p)`` matrices, and ``cov`` is
-    the identity if it was not given, as is ``q``.
+    Returns ``(x, cov, q, p)`` where ``x`` has shape ``(..., p)``, ``cov`` is a
+    symmetric positive definite ``(p, p)`` matrix and ``q`` is a symmetric
+    positive semi-definite ``(p, p)`` matrix; ``cov`` is the identity if it was
+    not given, as is ``q``.
 
     """
 
@@ -83,7 +108,7 @@ def _validate(
     if q is None:
         qa = np.eye(p)
     else:
-        qa = _validate_sympd(q, (p, p), "loss matrix Q")
+        qa = _validate_sympsd(q, (p, p), "loss matrix Q")
     return xa, cova, qa, p
 
 
@@ -196,9 +221,45 @@ def _estimate(
     identity loss) and is solved by recursing into ``_estimate`` with no
     subspace or offset, so the effective dimension becomes ``len(d_perp)``.
 
+    When the loss matrix ``q`` is only positive semi-definite (singular), its
+    null space carries zero loss.  The problem is reduced to the range of ``q``
+    (where the restricted loss is positive definite), the estimator is applied
+    there by recursing into :func:`_estimate` on the reduced problem, and the
+    null-space component of the estimate is kept at the observed data value
+    (where the loss cannot see it).  ``dirs`` columns lying in ``null(q)`` are
+    dropped, as they contribute nothing to the loss.  The remaining columns are
+    projected onto the range of ``q``; if this leaves no linearly independent
+    columns, the estimate shrinks towards the point ``offset`` (the behaviour
+    of ``dirs=None``).
+
     """
 
     xa, cova, qa, p = _validate(x, cov, q)
+    # If Q is singular, its null space carries no loss, so we peel that
+    # component off and keep it at the data value while solving the reduced,
+    # strictly positive-definite problem on the range of Q.
+    w, v = np.linalg.eigh(qa)
+    maxw = float(np.max(np.abs(w))) if w.size else 0.0
+    tol_q = p * _EPSILON * max(maxw, 1.0)
+    keep = w > tol_q
+    if not np.all(keep):
+        u_r: NDArray[Any] = v[:, keep]
+        q_r: NDArray[Any] = np.diag(w[keep])
+        cov_r: NDArray[Any] = u_r.T @ cova @ u_r
+        x_r = xa @ u_r
+        offset_r = None if offset is None else np.asarray(offset, dtype=float) @ u_r
+        dirs_r: NDArray[Any] | None = None
+        if dirs is not None:
+            dv: NDArray[Any] = u_r.T @ np.asarray(dirs, dtype=float)
+            dv = dv[:, np.linalg.norm(dv, axis=0) > tol_q]
+            if dv.shape[1] > 0 and np.linalg.matrix_rank(dv) == dv.shape[1]:
+                dirs_r = dv
+        delta_r = _estimate(
+            x_r, cov_r, q_r, canonical_estimator, offset=offset_r, dirs=dirs_r, **kwargs
+        )
+        x_null = xa - xa @ (u_r @ u_r.T)
+        return cast(NDArray[Any], delta_r @ u_r.T + x_null)
+
     b, binv, d = _canonicalize(cova, qa)
     x_star = xa @ b.T
     if offset is None:

@@ -76,8 +76,10 @@ def berger(
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
         symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity,
-        i.e. squared-error loss.
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite: its null space carries no loss and is kept at the data
+        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        identity, i.e. squared-error loss.
     positive : bool, default=True
         Use the positive-part estimator, which dominates the plain one.
     strength : float, default=1.0
@@ -96,6 +98,9 @@ def berger(
         and the residual ``(I - P) (x - offset)`` (with ``P`` the
         covariance-metric projector) is shrunk towards zero in the complement.
         If ``None``, the estimate shrinks towards the single point ``offset``.
+        When ``Q`` is singular, ``dirs`` acts only on the range of ``Q``:
+        columns lying in ``null(Q)`` are dropped, and if no independent columns
+        remain the estimate shrinks towards the point ``offset``.
 
     Returns
     -------
@@ -265,8 +270,10 @@ def tan(
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
         symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity,
-        i.e. squared-error loss.
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite: its null space carries no loss and is kept at the data
+        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        identity, i.e. squared-error loss.
     positive : bool, default=True
         Use the positive-part estimator, which dominates the plain one.
     strength : float, default=1.0
@@ -304,6 +311,9 @@ def tan(
         and the residual ``(I - P) (x - offset)`` (with ``P`` the
         covariance-metric projector) is shrunk towards zero in the complement.
         If ``None``, the estimate shrinks towards the single point ``offset``.
+        When ``Q`` is singular, ``dirs`` acts only on the range of ``Q``:
+        columns lying in ``null(Q)`` are dropped, and if no independent columns
+        remain the estimate shrinks towards the point ``offset``.
 
     Returns
     -------
@@ -381,7 +391,10 @@ def shrink(
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Defaults
         to the identity matrix.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite: its null space carries no loss and is kept at the data
+        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        identity.
     method : str, default="berger"
         Which estimator to use.  Available: ``"berger"`` and ``"tan"``.
     offset : array_like, default=None
@@ -389,7 +402,10 @@ def shrink(
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
         of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace ``offset + span(dirs)``.
+        subspace ``offset + span(dirs)``.  When ``Q`` is singular, ``dirs``
+        acts only on the range of ``Q``: columns lying in ``null(Q)`` are
+        dropped, and if no independent columns remain the estimate shrinks
+        towards the point ``offset``.
     **kwargs
         Additional keyword arguments passed to the estimator.
 
