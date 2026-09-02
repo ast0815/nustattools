@@ -40,6 +40,9 @@ and this project adheres to
   `gamma=0` corresponds to a prior proportional to the covariance and
   `gamma=inf` to a flat prior uniform in the canonical coordinate space (per Tan
   2015, Section 3.3), rather than literally "no prior".
+- The `stats.shrinkage.tan` estimator's `gamma` parameter now accepts any
+  non-negative value, not just `0` and `inf`; finite positive `gamma`
+  interpolates between the two extreme priors.
 - Rewrote the shrinkage docstrings to be self-contained: they now define the
   canonical-form change of coordinates, the canonical coordinate variances
   `d_j`, and the shrinkage-direction matrix `A` (and the `A†_0`/`A†_∞` limits),

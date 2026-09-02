@@ -31,21 +31,13 @@ def _berger_general_formula(x, cov, q, c):
 
 
 def _tan_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
-    """Direct implementation of Tan's estimator (Corollary 3) at gamma in {0, inf}.
+    """Direct implementation of Tan's estimator (Corollary 3) for any gamma >= 0.
 
     Independent of :func:`nustattools.stats.shrinkage.tan`: diagonalizes the
-    problem in the Q-metric and implements the paper's algorithm for the two
-    limit cases.
-
-    For ``gamma = 0`` (the ``A†_0`` estimator) the paper's finite-gamma
-    formulas are used verbatim.  For ``gamma = inf`` (the ``A†_∞`` estimator)
-    the finite-gamma formulas degenerate: as ``gamma -> inf`` each ``a†_j``
-    scales by ``gamma`` (``(nu-2)/(S d_j)`` with ``S = sum 1/d_j²`` for high
-    importance, ``d_j`` for low importance) and ``c*`` becomes
-    ``(nu-2)²/S + sum_{j>nu} d_j²``.  The estimator
-    ``(1 - c* a†_j / sum_k a†_k² X_k²) X_j`` is invariant under a common
-    rescaling of the ``a†``, so these limit values yield exactly the paper's
-    ``A†_∞`` estimate.
+    problem in the Q-metric and implements the paper's algorithm for arbitrary
+    non-negative ``gamma``.  The two limit cases ``gamma=0`` and ``gamma=inf``
+    use the special-cased formulas; finite positive ``gamma`` uses the general
+    finite-gamma formulas with Bayes importance ``d_j* = d_j**2/(d_j+gamma)``.
 
     See [Tan2015]_, Corollary 3 and the algorithm in Section 3.3.
 
@@ -64,10 +56,15 @@ def _tan_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
         d_star = d
         weight = 1.0 / d
         low_a = np.ones(p)
-    else:  # gamma == inf
+    elif not np.isfinite(gamma):
         d_star = d**2
         weight = 1.0 / d**2
         low_a = d
+    else:
+        d_plus_g = d + gamma
+        d_star = d**2 / d_plus_g
+        weight = d_plus_g / d**2
+        low_a = d / d_plus_g
     order = np.argsort(d_star)[::-1]
     d_sorted = d[order]
     d_star_sorted = d_star[order]
@@ -83,7 +80,10 @@ def _tan_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
     a[nu:] = low_a[order[nu:]]
     c_star = (nu - 2) ** 2 / s
     if nu < p:
-        c_star += np.sum(d_sorted[nu:] ** 2) if gamma != 0.0 else np.sum(d_sorted[nu:])
+        if not np.isfinite(gamma):
+            c_star += np.sum(d_sorted[nu:] ** 2)
+        else:
+            c_star += np.sum(d_star_sorted[nu:])
 
     x_sorted = x_star[..., order]
     s_val = np.sum(a**2 * x_sorted**2, axis=-1)
@@ -1119,6 +1119,7 @@ def test_tan_shape():
     x = rng().normal(size=p)
     assert _shrinkage.tan(x).shape == (p,)
     assert _shrinkage.tan(x, gamma=float("inf")).shape == (p,)
+    assert _shrinkage.tan(x, gamma=1.0).shape == (p,)
 
 
 def test_tan_broadcasting_shapes():
@@ -1137,6 +1138,7 @@ def test_tan_small_dim_is_identity():
     x = rng().normal(size=2)
     np.testing.assert_allclose(_shrinkage.tan(x), x, atol=1e-12)
     np.testing.assert_allclose(_shrinkage.tan(x, gamma=float("inf")), x, atol=1e-12)
+    np.testing.assert_allclose(_shrinkage.tan(x, gamma=1.0), x, atol=1e-12)
 
 
 def test_tan_positive_dominates_plain():
@@ -1160,7 +1162,7 @@ def test_tan_minimaxity():
     cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
     n = 200_000
     xs = rng().multivariate_normal(np.zeros(p), cov, size=n)
-    for gamma in (0.0, float("inf")):
+    for gamma in (0.0, 1.0, float("inf")):
         loss = np.sum(_shrinkage.tan(xs, cov=cov, gamma=gamma) ** 2, axis=1)
         assert np.mean(loss) <= np.trace(cov) + 0.05
 
@@ -1191,6 +1193,23 @@ def test_tan_gamma_two_special_cases_differ():
     assert not np.allclose(a, b, atol=1e-8)
 
 
+def test_tan_finite_gamma_shrinks_and_interpolates():
+    # A finite positive gamma must actually shrink (not return x) and, at a
+    # given x, lie between the gamma=0 and gamma=inf estimates interpolated
+    # through the gamma parameter.  Values of gamma approaching 0 (resp. inf)
+    # approach the corresponding limit estimate.
+    d = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    x = rng().normal(size=5)
+    est0 = _shrinkage.tan(x, cov=d, gamma=0.0)
+    esti = _shrinkage.tan(x, cov=d, gamma=float("inf"))
+    est_mid = _shrinkage.tan(x, cov=d, gamma=1.0)
+    # Finite gamma must differ from the input (i.e. actually shrink).
+    assert not np.allclose(est_mid, x, atol=1e-8)
+    # gamma->0 and gamma->inf limits agree with the special cases.
+    np.testing.assert_allclose(_shrinkage.tan(x, cov=d, gamma=1e-8), est0, rtol=1e-3)
+    np.testing.assert_allclose(_shrinkage.tan(x, cov=d, gamma=1e8), esti, rtol=1e-3)
+
+
 def test_tan_strength_validation():
     for bad in (-1.0, 3.0):
         with pytest.raises(ValueError, match="strength"):
@@ -1198,9 +1217,8 @@ def test_tan_strength_validation():
 
 
 def test_tan_gamma_validation():
-    for bad in (0.5, 1.0, -1.0):
-        with pytest.raises(ValueError, match="gamma"):
-            _shrinkage.tan(rng().normal(size=5), gamma=bad)
+    with pytest.raises(ValueError, match="gamma"):
+        _shrinkage.tan(rng().normal(size=5), gamma=-1.0)
 
 
 def test_tan_point_offset_equals_shift():
@@ -1302,6 +1320,24 @@ def test_tan_reference_broadcasts():
     got = _shrinkage.tan(xs, cov=cov, gamma=0.0)
     ref = _tan_general_formula(xs, cov, np.eye(4), 0.0, positive=True)
     np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8)
+
+
+def test_tan_general_gamma_matches_reference():
+    # tan(x, gamma=g) must equal the general-gamma reference for finite g > 0.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.diag([3.0, 0.5, 1.0, 4.0, 2.0])
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(5), cov, size=30)
+    for gamma in (0.1, 1.0, 10.0, 100.0):
+        for positive in (True, False):
+            for strength in (0.5, 1.0):
+                got = _shrinkage.tan(
+                    xs, cov=cov, gamma=gamma, positive=positive, strength=strength
+                )
+                ref = _tan_general_formula(
+                    xs, cov, np.eye(5), gamma, strength=strength, positive=positive
+                )
+                np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8)
 
 
 def test_shrink_dispatches_tan():

@@ -170,20 +170,28 @@ def _tan_canonical(
     Bayes risk (see [Tan2015]_, Theorem 2); ``A†`` denotes this optimal choice,
     and ``A†_0`` / ``A†_∞`` its two extreme limits below.
 
-    ``gamma`` selects the prior :math:`\\theta \\sim N(0, \\Gamma)` in the
-    Bayes-risk criterion of [Tan2015]_, Section 3.3.  The prior enters through
-    the Bayes importance :math:`d_j^* = d_j^2/(d_j + \\gamma_j)`.  Only the two
-    extreme priors are supported:
+    ``gamma`` selects the prior :math:`\\theta \\sim N(0, \\gamma I)` in the
+    Bayes-risk criterion of [Tan2015]_, Section 3.3, i.e. a homoscedastic prior
+    in the *canonical* coordinate space with scale ``gamma``.  The prior enters
+    through the Bayes importance :math:`d_j^* = d_j^2/(d_j + \\gamma)`.  Any
+    non-negative ``gamma`` is accepted:
 
     - ``gamma = 0`` (``A†_0``): the limit of a prior proportional to the
       covariance, i.e. :math:`\\Gamma \\propto \\operatorname{diag}(d)_j`
       in canonical form (so :math:`d_j^* \\propto d_j`).  Low-importance
       coordinates receive equal shrinkage weight.
+    - ``0 < gamma < inf``: a homoscedastic prior of scale ``gamma`` in the
+      canonical coordinates, ranking coordinates by :math:`d_j^2/(d_j + \\gamma)`.
+      Low-importance coordinates are shrunk in the Bayes-rule direction
+      :math:`d_j/(d_j + \\gamma)`.
     - ``gamma = inf`` (``A†_∞``): the flat homoscedastic prior
-      :math:`\\Gamma \\propto I`, which is uniform in the *canonical*
-      coordinate space, not the original variable space (so
-      :math:`d_j^* \\propto d_j^2`).  Low-importance coordinates are shrunk
-      proportional to their variance.
+      :math:`\\Gamma \\propto I`, uniform in the *canonical* coordinate space,
+      not the original variable space (so :math:`d_j^* \\propto d_j^2`).
+      Low-importance coordinates are shrunk proportional to their variance.
+
+    As ``gamma`` increases the relative importance ordering of the coordinates
+    ranges from ``d_j`` (``gamma = 0``) through :math:`d_j^2/(d_j + \\gamma)`
+    to ``d_j^2`` (``gamma = inf``).
 
     """
 
@@ -191,15 +199,21 @@ def _tan_canonical(
     if p_eff < 3:
         return x
 
-    # Bayes importance d* and per-coordinate weight (d_j + gamma_j)/d_j^2.
+    # Bayes importance d* = d^2/(d+gamma), weight (d+gamma)/d^2 and the
+    # low-importance Bayes-rule direction a = d/(d+gamma) (see Corollary 3).
     if gamma == 0.0:
         d_star = d
         weight = 1.0 / d
         low_a = np.ones(p_eff)
-    else:  # gamma == inf
+    elif not np.isfinite(gamma):
         d_star = d**2
         weight = 1.0 / d**2
         low_a = d.copy()
+    else:
+        d_plus_g = d + gamma
+        d_star = d**2 / d_plus_g
+        weight = d_plus_g / d**2
+        low_a = d / d_plus_g
 
     # Sort by decreasing Bayes importance.
     order = np.argsort(d_star)[::-1]
@@ -222,15 +236,18 @@ def _tan_canonical(
     a_star[:nu] = (nu - 2) / (S * d_sorted[:nu])
     a_star[nu:] = low_a[order[nu:]]
 
-    # c*(D, A†) = (nu-2)^2 / S + sum_{j>nu} d_j * low_a_j^2 * (d_j + gamma_j) / d_j
-    # For gamma=0: low_a=1, term = d_j
-    # For gamma=inf (scaled): low_a=d_j, term = d_j^2
+    # c*(D, A†) = M_nu = (nu-2)^2 / S + sum_{j>nu} d_j / (d_j + gamma_j) * d*_j.
+    # Low-importance term = sum d*_j (since a†_j * d*_j = d_j/(d_j+gamma_j) *
+    # d_j^2/(d_j+gamma_j), which is not 1 in general; the c* term is M_nu with
+    # the low-importance part sum_{j>nu} d_j^2/(d_j+gamma_j) = sum_{j>nu} d*_j
+    # for a diagonal A, per Corollary 3).  For gamma=inf (a rescaled limit),
+    # d*_j = d_j^2 so the term is sum d_j^2.
     c_star_val = (nu - 2) ** 2 / S
     if nu < p_eff:
-        if gamma == 0.0:
-            c_star_val += np.sum(d_sorted[nu:])
-        else:
+        if not np.isfinite(gamma):
             c_star_val += np.sum(d_sorted[nu:] ** 2)
+        else:
+            c_star_val += np.sum(d_star_sorted[nu:])
 
     # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . x^2))_+ * x_j.
     # a_star is indexed by descending-importance sorted position, so x must be
@@ -282,24 +299,23 @@ def tan(
         ``strength = 1`` the optimal minimax estimator, and ``strength = 2``
         the boundary of the minimax class.
     gamma : float, default=0.0
-        Prior specification controlling the Bayes importance segmentation [Tan2015]_.
-        Must be ``0`` or ``inf``.  The estimator first transforms the problem
-        to *canonical form*, in which the covariance is the diagonal matrix
-        ``D = diag(d)`` and the loss is the identity, so ``d_j`` below is the
-        variance of the ``j``-th canonical coordinate (the transformed problem
-        has the same risk, so the transform is always lossless).
+        Non-negative prior scale controlling the Bayes importance segmentation
+        [Tan2015]_.  Must be ``>= 0``.  The estimator first transforms the
+        problem to *canonical form*, in which the covariance is the diagonal
+        matrix ``D = diag(d)`` and the loss is the identity, so ``d_j`` below
+        is the variance of the ``j``-th canonical coordinate (the transformed
+        problem has the same risk, so the transform is always lossless).
 
-        - ``gamma = 0`` (``A†_0``): the limit of a prior proportional to the
-          covariance (``Gamma ~ diag(d)``), so coordinates are ranked by their
-          variance ``d_j``.
-        - ``gamma = inf`` (``A†_∞``): the flat homoscedastic prior
-          (``Gamma ~ I``), uniform in the *canonical* coordinate space rather
-          than the original variable space, so coordinates are ranked by
-          ``d_j²``.
+        The prior is homoscedastic in the canonical space, :math:`\\Gamma
+        \\propto \\gamma I`, entering through the Bayes importance
+        :math:`d_j^* = d_j^2/(d_j + \\gamma)`:
 
-        Here ``A†_0`` and ``A†_∞`` are the two extreme limits of the optimal
-        shrinkage-direction matrix ``A†`` (see the module docstring of
-        :mod:`nustattools.stats.shrinkage` and [Tan2015]_, Theorem 2).
+        - ``gamma = 0`` (``A†_0``): coordinates are ranked by their variance
+          ``d_j``.
+        - ``gamma = inf`` (``A†_∞``): coordinates are ranked by ``d_j²``.
+        - intermediate ``gamma``: coordinates are ranked by
+          ``d_j² / (d_j + gamma)``, so the importance ordering ranges
+          continuously between ``d_j`` and ``d_j²`` as ``gamma`` grows.
 
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
@@ -347,8 +363,8 @@ def tan(
     if strength < 0 or strength > 2:
         msg = "strength must be in [0, 2]."
         raise ValueError(msg)
-    if gamma not in (0.0, float("inf")):
-        msg = "gamma must be 0 or inf."
+    if gamma < 0:
+        msg = "gamma must be non-negative."
         raise ValueError(msg)
 
     return _estimate(
