@@ -219,6 +219,103 @@ def test_berger_out_of_range_strength_error():
             _shrinkage.berger(rng().normal(size=3), np.eye(3), strength=bad)
 
 
+def test_estimate_degenerate_empty_dimension():
+    # p = 0 is a degenerate but valid problem: the empty loss matrix passes PSD
+    # validation (zero-size guard) and the pipeline returns an empty estimate.
+    delta = _shrinkage._estimate(np.empty((2, 0)), None, np.eye(0), lambda xs, _dd: xs)
+    assert delta.shape == (2, 0)
+
+
+def test_range_reduce_identity_for_pd():
+    # For a strictly positive-definite Q the reduction is the identity: the
+    # original (validated) objects are returned along with u_r = eye(p).
+    gen = rng()
+    p = 4
+    x = gen.normal(size=(2, p))
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    b = gen.normal(size=(p, p))
+    q = b @ b.T + np.eye(p)
+    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _shrinkage._range_reduce(
+        x, cov, q, offset=None, dirs=None
+    )
+    np.testing.assert_array_equal(x_r, x)
+    np.testing.assert_array_equal(cov_r, cov)
+    np.testing.assert_array_equal(q_r, q)
+    assert offset_r is None
+    assert dirs_r is None
+    np.testing.assert_array_equal(u_r, np.eye(p))
+
+
+def test_range_reduce_projects_singular_problem():
+    # For a singular Q the reduction lives on range(Q): u_r is an orthonormal
+    # basis of the positive eigenspace, x_r = x @ u_r, cov_r = u_r.T cov u_r and
+    # q_r = diag(w[keep]).  The completion x_null = x - x @ (u_r @ u_r.T) lies in
+    # null(Q).
+    gen = rng()
+    p = 6
+    rank = 4
+    q = _psd_q(rank, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=(2, p))
+    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _shrinkage._range_reduce(
+        x, cov, q, offset=None, dirs=None
+    )
+    w, v = np.linalg.eigh(q)
+    keep = w > 1e-10
+    u_expected = v[:, keep]
+    np.testing.assert_allclose(u_r, u_expected, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(u_r.T @ u_r, np.eye(rank), rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(x_r, x @ u_r, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(cov_r, u_r.T @ cov @ u_r, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(q_r, np.diag(w[keep]), rtol=1e-9, atol=1e-12)
+    assert offset_r is None
+    assert dirs_r is None
+    x_null = x - x @ (u_r @ u_r.T)
+    np.testing.assert_allclose(x_null @ q, np.zeros_like(x_null), rtol=1e-9, atol=1e-12)
+
+
+def test_range_reduce_projects_offset_and_drops_null_dirs():
+    # offset is projected onto the range and dirs columns in null(Q) are
+    # dropped, so only the range columns survive.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    u_r = v[:, w > 1e-10]
+    null_col = v[:, w < 1e-10][:, 0]
+    dirs = np.column_stack([u_r[:, 0], null_col])
+    (_, _, _, offset_r, dirs_r, _) = _shrinkage._range_reduce(
+        x, cov, q, offset=offset, dirs=dirs
+    )
+    np.testing.assert_allclose(offset_r, offset @ u_r, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(dirs_r, (u_r.T @ dirs)[:, [0]], rtol=1e-9, atol=1e-12)
+
+
+def test_range_reduce_collapsing_dirs_falls_back_to_none():
+    # When the surviving dirs columns are rank-deficient on the range, they are
+    # all dropped (dirs_r is None, the dirs=None point behaviour).
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    cov = np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    range_col = v[:, w > 1e-10][:, 0]
+    # Two distinct columns collapsing onto the same range direction: the second
+    # is an exact scalar multiple of the first, so the projected set is exactly
+    # rank-deficient rather than just machine-noise dependent.
+    dirs = np.column_stack([range_col, 2.0 * range_col])
+    (_, _, _, _, dirs_r, _) = _shrinkage._range_reduce(
+        x, cov, q, offset=None, dirs=dirs
+    )
+    assert dirs_r is None
+
+
 def test_estimate_canonicalizes_and_decanonicalizes():
     # The shared _estimate wrapper must canonicalize the inputs, pass the
     # canonical data to the estimator, and transform the result back.  Use a
@@ -1317,10 +1414,10 @@ def test_psd_Q_dirs_collapsing_on_range_falls_back_to_point():
     offset = gen.normal(size=p)
     w, v = np.linalg.eigh(q)
     range_col = v[:, w > 1e-10][:, 0]
-    null_col = v[:, w < 1e-10][:, 0]
-    # Both columns project to the same direction on the range, so the projected
-    # set is rank-deficient and must be discarded.
-    dirs = np.column_stack([range_col, range_col + 10.0 * null_col])
+    # The two columns are linearly dependent on the range of Q (the second is
+    # an exact multiple of the first), so the projected set is exactly
+    # rank-deficient and must be discarded.
+    dirs = np.column_stack([range_col, 2.0 * range_col])
     point = _shrinkage.berger(x, cov=cov, Q=q, offset=offset)
     with_dirs = _shrinkage.berger(x, cov=cov, Q=q, offset=offset, dirs=dirs)
     np.testing.assert_allclose(with_dirs, point, rtol=1e-9, atol=1e-10)

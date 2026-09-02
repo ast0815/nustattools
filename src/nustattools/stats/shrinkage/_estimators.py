@@ -416,15 +416,24 @@ def shrink(
 
     """
 
-    try:
-        estimator = _METHODS[method]
-    except KeyError as e:
-        msg = f"Unknown shrinkage method '{method}'."
-        raise ValueError(msg) from e
-    return estimator(x, cov, Q=Q, offset=offset, dirs=dirs, **kwargs)
+    return _resolve_method(method)(x, cov, Q=Q, offset=offset, dirs=dirs, **kwargs)
 
 
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "berger": berger,
     "tan": tan,
 }
+
+
+def _resolve_method(name: str) -> Callable[..., NDArray[Any]]:
+    """Look up a shrinkage estimator by name.
+
+    Raises ``ValueError`` if *name* is not a registered method.
+
+    """
+
+    try:
+        return _METHODS[name]
+    except KeyError as e:
+        msg = f"Unknown shrinkage method '{name}'."
+        raise ValueError(msg) from e

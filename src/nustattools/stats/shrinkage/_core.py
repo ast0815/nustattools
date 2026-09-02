@@ -45,6 +45,65 @@ def _canonicalize(
     return b, binv, d
 
 
+def _range_reduce(
+    x: NDArray[Any],
+    cov: NDArray[Any],
+    q: NDArray[Any],
+    *,
+    offset: ArrayLike | None,
+    dirs: ArrayLike | None,
+) -> tuple[
+    NDArray[Any],
+    NDArray[Any],
+    NDArray[Any],
+    ArrayLike | None,
+    ArrayLike | None,
+    NDArray[Any],
+]:
+    """Reduce a (possibly singular) loss problem to the range of ``q``.
+
+    If ``q`` is strictly positive definite this is the identity reduction: its
+    inputs are returned unchanged together with ``u_r = eye(p)``.  If ``q`` is
+    singular, ``u_r`` holds the orthonormal eigenvectors of ``q`` for its
+    positive eigenvalues and ``(x_r, cov_r, q_r) = (x @ u_r, u_r.T @ cov @ u_r,
+    diag(w[keep]))`` is the reduced problem on ``range(q)``, where the
+    restricted loss is positive definite.  In both cases the composition
+    ``delta_r @ u_r.T + (x - x @ (u_r @ u_r.T))`` turns an estimate ``delta_r``
+    of the reduced problem back into an estimate of the original one; for a
+    singular ``q`` the null-space component of the estimate is kept at the
+    observed data value, where the loss cannot see it.
+
+    ``dirs`` columns lying in ``null(q)`` are dropped; if the surviving columns
+    are not linearly independent, ``dirs_r`` is ``None`` (the behaviour of
+    ``dirs=None``).  ``offset`` is projected onto the range.  The inputs must
+    already be validated (see :func:`_validate`).
+
+    """
+
+    p = q.shape[0]
+    w, v = np.linalg.eigh(q)
+    tol = _zero_eigenvalue_tolerance(w, p)
+    keep = w > tol
+    if np.all(keep):
+        return x, cov, q, offset, dirs, np.eye(p)
+    u_r = v[:, keep]
+    dirs_r: NDArray[Any] | None = None
+    if dirs is not None:
+        dv: NDArray[Any] = u_r.T @ np.asarray(dirs, dtype=float)
+        dv = dv[:, np.linalg.norm(dv, axis=0) > tol]
+        if dv.shape[1] > 0 and np.linalg.matrix_rank(dv) == dv.shape[1]:
+            dirs_r = dv
+    offset_r = None if offset is None else np.asarray(offset, dtype=float) @ u_r
+    return (
+        x @ u_r,
+        u_r.T @ cov @ u_r,
+        np.diag(w[keep]),
+        offset_r,
+        dirs_r,
+        u_r,
+    )
+
+
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive definite with the given shape."""
 
@@ -63,6 +122,19 @@ def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[
     return aa
 
 
+def _zero_eigenvalue_tolerance(w: NDArray[Any], p: int) -> float:
+    """Numerically-zero eigenvalue threshold for a size-``p`` symmetric matrix.
+
+    An eigenvalue of ``w`` is treated as zero when it lies below this tolerance,
+    which scales the machine epsilon by ``p`` so the threshold grows with the
+    matrix size.
+
+    """
+
+    maxw = float(np.max(np.abs(w))) if w.size else 0.0
+    return p * _EPSILON * max(maxw, 1.0)
+
+
 def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive semi-definite with the given shape."""
 
@@ -76,9 +148,7 @@ def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray
     if shape[0] == 0:
         return aa
     w = np.linalg.eigvalsh(aa)
-    maxw = float(np.max(np.abs(w)))
-    tol = shape[0] * _EPSILON * max(maxw, 1.0)
-    if np.min(w) < -tol:
+    if np.min(w) < -_zero_eigenvalue_tolerance(w, shape[0]):
         msg = f"{name} must be positive semi-definite (all eigenvalues >= 0)."
         raise ValueError(msg)
     return aa
@@ -192,74 +262,39 @@ def _subspace_reduce(
     return kept, eta, d_perp, l2
 
 
-def _estimate(
+def _estimate_pd(
     x: ArrayLike,
-    cov: ArrayLike | None,
-    q: ArrayLike | None,
+    cov: ArrayLike,
+    q: ArrayLike,
     canonical_estimator: Callable[..., NDArray[Any]],
     *,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
-    """Run a canonical-form estimator on the given problem.
+    """Apply a canonical-form estimator to a strictly positive-definite problem.
 
-    Validates and canonicalizes the common inputs, applies
-    ``canonical_estimator`` to the canonical data, and transforms the estimate
-    back to the original coordinates.  ``canonical_estimator`` must have the
-    signature ``canonical(x_star, d, **kwargs)``, where ``x_star`` has shape
-    ``(..., p)`` and ``d`` holds the coordinate variances ``(p,)``; it returns
-    the canonical-form estimate with shape ``(..., p)``.
+    ``q`` must be strictly positive definite (and ``cov`` symmetric positive
+    definite, ``x`` a row vector of shape ``(..., p)``), so the problem can be
+    canonicalized with :func:`_canonicalize` and ``canonical_estimator`` applied
+    directly.  The estimate shrinks towards the point ``offset`` (default zero)
+    or, when ``dirs`` (a matrix whose columns span the affine direction) is
+    given, towards the affine subspace ``offset + span(dirs)``.
 
-    The estimate shrinks towards the point ``offset`` (default zero) or, when
-    ``dirs`` (a matrix whose columns span the affine direction) is given,
-    towards the affine subspace ``offset + span(dirs)``.  In the latter case the
-    projection is built in the covariance (precision) metric so the fitted and
-    residual components are uncorrelated, and the residual
-    ``(I - P) (x - offset)`` is shrunk in the complement.  The residual problem
-    is itself a canonical normal problem (diagonal covariance ``d_perp``,
-    identity loss) and is solved by recursing into ``_estimate`` with no
-    subspace or offset, so the effective dimension becomes ``len(d_perp)``.
-
-    When the loss matrix ``q`` is only positive semi-definite (singular), its
-    null space carries zero loss.  The problem is reduced to the range of ``q``
-    (where the restricted loss is positive definite), the estimator is applied
-    there by recursing into :func:`_estimate` on the reduced problem, and the
-    null-space component of the estimate is kept at the observed data value
-    (where the loss cannot see it).  ``dirs`` columns lying in ``null(q)`` are
-    dropped, as they contribute nothing to the loss.  The remaining columns are
-    projected onto the range of ``q``; if this leaves no linearly independent
-    columns, the estimate shrinks towards the point ``offset`` (the behaviour
-    of ``dirs=None``).
+    In the latter case the projection is built in the covariance (precision)
+    metric (see :func:`_subspace_reduce`), so the fitted and residual components
+    are uncorrelated, and the residual ``(I - P) (x - offset)`` is shrunk in the
+    complement.  The residual problem is itself a canonical normal problem with
+    diagonal covariance ``d_perp`` and identity loss, so it is solved by
+    recursing into :func:`_estimate_pd`; the effective dimension of the
+    shrinkage problem becomes ``len(d_perp)``.
 
     """
 
-    xa, cova, qa, p = _validate(x, cov, q)
-    # If Q is singular, its null space carries no loss, so we peel that
-    # component off and keep it at the data value while solving the reduced,
-    # strictly positive-definite problem on the range of Q.
-    w, v = np.linalg.eigh(qa)
-    maxw = float(np.max(np.abs(w))) if w.size else 0.0
-    tol_q = p * _EPSILON * max(maxw, 1.0)
-    keep = w > tol_q
-    if not np.all(keep):
-        u_r: NDArray[Any] = v[:, keep]
-        q_r: NDArray[Any] = np.diag(w[keep])
-        cov_r: NDArray[Any] = u_r.T @ cova @ u_r
-        x_r = xa @ u_r
-        offset_r = None if offset is None else np.asarray(offset, dtype=float) @ u_r
-        dirs_r: NDArray[Any] | None = None
-        if dirs is not None:
-            dv: NDArray[Any] = u_r.T @ np.asarray(dirs, dtype=float)
-            dv = dv[:, np.linalg.norm(dv, axis=0) > tol_q]
-            if dv.shape[1] > 0 and np.linalg.matrix_rank(dv) == dv.shape[1]:
-                dirs_r = dv
-        delta_r = _estimate(
-            x_r, cov_r, q_r, canonical_estimator, offset=offset_r, dirs=dirs_r, **kwargs
-        )
-        x_null = xa - xa @ (u_r @ u_r.T)
-        return cast(NDArray[Any], delta_r @ u_r.T + x_null)
-
+    xa = np.asarray(x, dtype=float)
+    cova = np.asarray(cov, dtype=float)
+    qa = np.asarray(q, dtype=float)
+    p = qa.shape[0]
     b, binv, d = _canonicalize(cova, qa)
     x_star = xa @ b.T
     if offset is None:
@@ -278,8 +313,47 @@ def _estimate(
         kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
         # The residual (eta, diag(d_perp), identity loss) is itself a canonical
         # normal problem with no subspace and no offset; solve it recursively.
-        reduced = _estimate(
+        reduced = _estimate_pd(
             eta, np.diag(d_perp), np.eye(d_perp.shape[0]), canonical_estimator, **kwargs
         )
         delta_star = offset_star + kept + reduced @ l2.T
     return cast(NDArray[Any], delta_star @ binv.T)
+
+
+def _estimate(
+    x: ArrayLike,
+    cov: ArrayLike | None,
+    q: ArrayLike | None,
+    canonical_estimator: Callable[..., NDArray[Any]],
+    *,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+    **kwargs: Any,
+) -> NDArray[Any]:
+    """Run a canonical-form estimator on the given problem.
+
+    Validates the common inputs, reduces any singular-loss problem to the range
+    of ``q`` via :func:`_range_reduce` (keeping the loss-free null-space
+    component of the estimate at the observed data value), solves the strictly
+    positive-definite reduced problem with :func:`_estimate_pd`, and transforms
+    the estimate back to the original coordinates.  ``canonical_estimator``
+    must have the signature ``canonical(x_star, d, **kwargs)``, where
+    ``x_star`` has shape ``(..., p)`` and ``d`` holds the coordinate variances
+    ``(p,)``; it returns the canonical-form estimate with shape ``(..., p)``.
+
+    The estimate shrinks towards the point ``offset`` (default zero) or, when
+    ``dirs`` (a matrix whose columns span the affine direction) is given,
+    towards the affine subspace ``offset + span(dirs)``; for a singular ``q``,
+    ``dirs`` columns lying in ``null(q)`` are dropped.  See
+    :func:`_range_reduce` and :func:`_estimate_pd` for the details.
+
+    """
+
+    xa, cova, qa, _ = _validate(x, cov, q)
+    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _range_reduce(
+        xa, cova, qa, offset=offset, dirs=dirs
+    )
+    delta_r = _estimate_pd(
+        x_r, cov_r, q_r, canonical_estimator, offset=offset_r, dirs=dirs_r, **kwargs
+    )
+    return cast(NDArray[Any], delta_r @ u_r.T + (xa - xa @ (u_r @ u_r.T)))

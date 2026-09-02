@@ -17,25 +17,37 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ._core import _canonicalize, _validate_sympd, _validate_sympsd
-from ._estimators import _METHODS
+from ._estimators import _resolve_method
 
 _Estimator = Callable[..., NDArray[Any]] | str
 
 
 def _normalize_estimators(
     estimators: _Estimator | Sequence[_Estimator],
-) -> tuple[bool, list[_Estimator]]:
-    """Return ``(is_single, list)`` for an estimator spec.
+) -> tuple[bool, list[Callable[..., NDArray[Any]]]]:
+    """Return ``(is_single, list[callable])`` for an estimator spec.
 
-    A single callable or method name becomes ``(True, [estimators])``; a
-    sequence of them becomes ``(False, list(estimators))``.
+    A single callable or method name becomes ``(True, [callable])``; a
+    sequence of them becomes ``(False, list[callables])``.  String method
+    names are resolved to their registered callables via :func:`_resolve_method`.
 
     """
 
-    if isinstance(estimators, str) or callable(estimators):
+    if isinstance(estimators, str):
+        return True, [_resolve_method(estimators)]
+    if callable(estimators):
         return True, [estimators]
     if isinstance(estimators, (list, tuple)):
-        return False, list(estimators)
+        resolved: list[Callable[..., NDArray[Any]]] = []
+        for est in estimators:
+            if isinstance(est, str):
+                resolved.append(_resolve_method(est))
+            elif callable(est):
+                resolved.append(est)
+            else:
+                msg = "estimators must be a callable, a method name, or a sequence of these."
+                raise TypeError(msg)
+        return False, resolved
     msg = "estimators must be a callable, a method name, or a sequence of these."
     raise TypeError(msg)
 
@@ -146,7 +158,7 @@ def _risk_from_samples(
     theta: NDArray[Any],
     cova: NDArray[Any],
     qa: NDArray[Any],
-    est_list: list[_Estimator],
+    est_list: list[Callable[..., NDArray[Any]]],
     n_reps: int,
     **kwargs: Any,
 ) -> NDArray[Any]:
@@ -161,15 +173,7 @@ def _risk_from_samples(
     """
 
     results = []
-    for est in est_list:
-        if isinstance(est, str):
-            try:
-                fn = _METHODS[est]
-            except KeyError as e:
-                msg = f"Unknown shrinkage method '{est}'."
-                raise ValueError(msg) from e
-        else:
-            fn = est
+    for fn in est_list:
         delta = fn(x, cova, Q=qa, **kwargs)
         d = delta - theta
         loss = np.sum(d * (d @ qa), axis=1)
@@ -183,7 +187,7 @@ _Direction = str | int | np.integer | NDArray[Any]
 
 
 def _resolved_labels(
-    est_list: list[_Estimator],
+    est_list: list[Callable[..., NDArray[Any]]],
     estimator_labels: Sequence[str] | None,
 ) -> list[str]:
     """Return one display label per estimator.
@@ -201,15 +205,11 @@ def _resolved_labels(
         return labels
     labels = []
     for index, est in enumerate(est_list):
-        if isinstance(est, str):
-            labels.append(est)
-            continue
-        if callable(est):
-            name = getattr(est, "__name__", None)
-            if isinstance(name, str):
-                labels.append(name)
-                continue
-        labels.append(str(index))
+        name = getattr(est, "__name__", None)
+        if isinstance(name, str):
+            labels.append(name)
+        else:
+            labels.append(str(index))
     return labels
 
 

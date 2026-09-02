@@ -54,9 +54,14 @@ References
 from __future__ import annotations
 
 from ._core import (
-    _canonicalize,  # noqa: F401  (re-exported for tests/advanced use)
+    # The underscore-prefixed helpers are re-exported for internal use only
+    # (the test-suite exercises them directly).  They are NOT public API:
+    # names, signatures and behaviour may change without notice, so do not
+    # rely on them outside this package's tests.
+    _canonicalize,  # noqa: F401
     _dirs_projection,  # noqa: F401
     _estimate,  # noqa: F401
+    _range_reduce,  # noqa: F401
     _subspace_reduce,  # noqa: F401
 )
 from ._estimators import berger, shrink, tan
