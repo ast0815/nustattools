@@ -45,65 +45,6 @@ def _canonicalize(
     return b, binv, d
 
 
-def _range_reduce(
-    x: NDArray[Any],
-    cov: NDArray[Any],
-    q: NDArray[Any],
-    *,
-    offset: ArrayLike | None,
-    dirs: ArrayLike | None,
-) -> tuple[
-    NDArray[Any],
-    NDArray[Any],
-    NDArray[Any],
-    ArrayLike | None,
-    ArrayLike | None,
-    NDArray[Any],
-]:
-    """Reduce a (possibly singular) loss problem to the range of ``q``.
-
-    If ``q`` is strictly positive definite this is the identity reduction: its
-    inputs are returned unchanged together with ``u_r = eye(p)``.  If ``q`` is
-    singular, ``u_r`` holds the orthonormal eigenvectors of ``q`` for its
-    positive eigenvalues and ``(x_r, cov_r, q_r) = (x @ u_r, u_r.T @ cov @ u_r,
-    diag(w[keep]))`` is the reduced problem on ``range(q)``, where the
-    restricted loss is positive definite.  In both cases the composition
-    ``delta_r @ u_r.T + (x - x @ (u_r @ u_r.T))`` turns an estimate ``delta_r``
-    of the reduced problem back into an estimate of the original one; for a
-    singular ``q`` the null-space component of the estimate is kept at the
-    observed data value, where the loss cannot see it.
-
-    ``dirs`` columns lying in ``null(q)`` are dropped; if the surviving columns
-    are not linearly independent, ``dirs_r`` is ``None`` (the behaviour of
-    ``dirs=None``).  ``offset`` is projected onto the range.  The inputs must
-    already be validated (see :func:`_validate`).
-
-    """
-
-    p = q.shape[0]
-    w, v = np.linalg.eigh(q)
-    tol = _zero_eigenvalue_tolerance(w, p)
-    keep = w > tol
-    if np.all(keep):
-        return x, cov, q, offset, dirs, np.eye(p)
-    u_r = v[:, keep]
-    dirs_r: NDArray[Any] | None = None
-    if dirs is not None:
-        dv: NDArray[Any] = u_r.T @ np.asarray(dirs, dtype=float)
-        dv = dv[:, np.linalg.norm(dv, axis=0) > tol]
-        if dv.shape[1] > 0 and np.linalg.matrix_rank(dv) == dv.shape[1]:
-            dirs_r = dv
-    offset_r = None if offset is None else np.asarray(offset, dtype=float) @ u_r
-    return (
-        x @ u_r,
-        u_r.T @ cov @ u_r,
-        np.diag(w[keep]),
-        offset_r,
-        dirs_r,
-        u_r,
-    )
-
-
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive definite with the given shape."""
 
@@ -262,6 +203,90 @@ def _subspace_reduce(
     return kept, eta, d_perp, l2
 
 
+def _merge_dirs(dirs: ArrayLike | None, q: NDArray[Any], p: int) -> NDArray[Any]:
+    """Return a basis of ``span(dirs) union null(q)``.
+
+    The union of the user-supplied ``dirs`` columns and the null space of the
+    loss matrix ``q`` spans the full set of directions that must not be shrunk:
+    the user's directions are kept at their data value, and the null space of
+    ``q`` carries no loss, so both are left untouched.  Only the spanned space
+    matters, not the particular representative columns, so a (column-)orthonormal
+    independent basis of the union is returned.  ``dirs`` must already be
+    validated (see :func:`_validate_dirs`); this only widens its span with
+    ``null(q)``.
+
+    """
+
+    cols: list[NDArray[Any]] = []
+    if dirs is not None:
+        cols.append(np.asarray(dirs, dtype=float))
+    w, v = np.linalg.eigh(q)
+    tol = _zero_eigenvalue_tolerance(w, p)
+    cols.append(v[:, w <= tol])
+    if len(cols) == 1 and cols[0].shape[1] < 1:
+        return np.empty((p, 0))
+    stacked = np.concatenate(cols, axis=1)
+    u, s, _ = np.linalg.svd(stacked, full_matrices=False)
+    keep = s > _zero_eigenvalue_tolerance(s, max(s.size, 1))
+    return u[:, keep]
+
+
+def _estimate_split(
+    x: NDArray[Any],
+    cov: NDArray[Any],
+    q: NDArray[Any],
+    canonical_estimator: Callable[..., NDArray[Any]],
+    *,
+    offset: ArrayLike | None,
+    dirs: NDArray[Any],
+    **kwargs: Any,
+) -> NDArray[Any]:
+    """Estimate on a singular-loss problem by splitting before canonicalizing.
+
+    ``q`` is positive semi-definite but singular.  The directions ``dirs`` span
+    ``span(user dirs) + null(q)`` (see :func:`_merge_dirs`), so ``q`` is
+    strictly positive definite on the covariance-metric complement of
+    ``span(dirs)``: any residual there is :math:`\\Sigma^{-1}`-orthogonal to
+    ``null(q)`` and hence cannot itself lie in ``null(q)``.  This function
+    therefore splits the data into the part lying in ``span(dirs)`` (kept at
+    its covariance-metric data value) and the ``Sigma^{-1}``-orthogonal
+    residual, then solves the strictly-positive-definite residual problem with
+    :func:`_estimate_pd` and recombines.  The inputs must already be validated
+    (see :func:`_validate`); ``dirs`` must span the full no-shrink set.
+
+    """
+
+    p = cov.shape[0]
+    v_all = np.asarray(dirs, dtype=float)
+    cinv = np.linalg.inv(cov)
+    g = v_all.T @ cinv @ v_all
+    p_mat = v_all @ np.linalg.solve(g, v_all.T @ cinv)
+    if offset is None:
+        kept_off = np.zeros(p)
+        y = x
+    else:
+        o = np.asarray(offset, dtype=float)
+        if o.shape != (p,):
+            msg = f"offset must have shape {(p,)}, got {o.shape}."
+            raise ValueError(msg)
+        kept_off = o @ p_mat.T
+        y = x - o
+    kept = y @ p_mat.T
+    p_perp = np.eye(p) - p_mat
+    m = p_perp @ cov @ p_perp.T
+    lam, vecs = np.linalg.eigh(m)
+    tol = _zero_eigenvalue_tolerance(lam, p)
+    keep = lam > tol
+    l2 = vecs[:, keep]
+    d_perp = lam[keep]
+    q_comp = l2.T @ q @ l2
+    eta = (y - kept) @ l2
+    delta_comp = _estimate_pd(
+        eta, np.diag(d_perp), q_comp, canonical_estimator, **kwargs
+    )
+    return cast(NDArray[Any], kept_off + kept + delta_comp @ l2.T)
+
+
 def _estimate_pd(
     x: ArrayLike,
     cov: ArrayLike,
@@ -332,28 +357,42 @@ def _estimate(
 ) -> NDArray[Any]:
     """Run a canonical-form estimator on the given problem.
 
-    Validates the common inputs, reduces any singular-loss problem to the range
-    of ``q`` via :func:`_range_reduce` (keeping the loss-free null-space
-    component of the estimate at the observed data value), solves the strictly
-    positive-definite reduced problem with :func:`_estimate_pd`, and transforms
-    the estimate back to the original coordinates.  ``canonical_estimator``
-    must have the signature ``canonical(x_star, d, **kwargs)``, where
-    ``x_star`` has shape ``(..., p)`` and ``d`` holds the coordinate variances
-    ``(p,)``; it returns the canonical-form estimate with shape ``(..., p)``.
+    Validates the common inputs and dispatches to the appropriate solver.  If
+    ``q`` is strictly positive definite the problem is solved directly with
+    :func:`_estimate_pd`.  If ``q`` is singular (only positive semi-definite),
+    the loss-free null space of ``q`` is merged into the no-shrink directions
+    and :func:`_estimate_split` separates the problem along the covariance
+    metric before canonicalizing the (strictly positive-definite) residual.
+    ``canonical_estimator`` must have the signature
+    ``canonical(x_star, d, **kwargs)``, where ``x_star`` has shape ``(..., p)``
+    and ``d`` holds the coordinate variances ``(p,)``; it returns the
+    canonical-form estimate with shape ``(..., p)``.
 
     The estimate shrinks towards the point ``offset`` (default zero) or, when
     ``dirs`` (a matrix whose columns span the affine direction) is given,
-    towards the affine subspace ``offset + span(dirs)``; for a singular ``q``,
-    ``dirs`` columns lying in ``null(q)`` are dropped.  See
-    :func:`_range_reduce` and :func:`_estimate_pd` for the details.
+    towards the affine subspace ``offset + span(dirs)``.  For a singular ``q``
+    the null space of ``q`` is treated as an additional set of no-shrink
+    directions, so the covariance-metric projection of the estimate onto
+    ``span(dirs) + null(q)`` equals that of the data.  See :func:`_estimate_pd`
+    and :func:`_estimate_split`.
 
     """
 
     xa, cova, qa, _ = _validate(x, cov, q)
-    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _range_reduce(
-        xa, cova, qa, offset=offset, dirs=dirs
+    p = qa.shape[0]
+    w = np.linalg.eigvalsh(qa)
+    if np.all(w > _zero_eigenvalue_tolerance(w, p)):
+        return _estimate_pd(
+            xa, cova, qa, canonical_estimator, offset=offset, dirs=dirs, **kwargs
+        )
+    dirs_all = None if dirs is None else _validate_dirs(dirs, p)
+    dirs_full = _merge_dirs(dirs_all, qa, p)
+    return _estimate_split(
+        xa,
+        cova,
+        qa,
+        canonical_estimator,
+        offset=offset,
+        dirs=dirs_full,
+        **kwargs,
     )
-    delta_r = _estimate_pd(
-        x_r, cov_r, q_r, canonical_estimator, offset=offset_r, dirs=dirs_r, **kwargs
-    )
-    return cast(NDArray[Any], delta_r @ u_r.T + (xa - xa @ (u_r @ u_r.T)))

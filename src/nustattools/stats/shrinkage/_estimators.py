@@ -77,8 +77,8 @@ def berger(
         symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  May be positive
-        semi-definite: its null space carries no loss and is kept at the data
-        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
         identity, i.e. squared-error loss.
     positive : bool, default=True
         Use the positive-part estimator, which dominates the plain one.
@@ -98,9 +98,9 @@ def berger(
         and the residual ``(I - P) (x - offset)`` (with ``P`` the
         covariance-metric projector) is shrunk towards zero in the complement.
         If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, ``dirs`` acts only on the range of ``Q``:
-        columns lying in ``null(Q)`` are dropped, and if no independent columns
-        remain the estimate shrinks towards the point ``offset``.
+        When ``Q`` is singular, ``null(Q)`` is added to the no-shrink subspace;
+        see the :mod:`nustattools.stats.shrinkage` module docstring for the
+        details.
 
     Returns
     -------
@@ -271,8 +271,8 @@ def tan(
         symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  May be positive
-        semi-definite: its null space carries no loss and is kept at the data
-        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
         identity, i.e. squared-error loss.
     positive : bool, default=True
         Use the positive-part estimator, which dominates the plain one.
@@ -311,9 +311,9 @@ def tan(
         and the residual ``(I - P) (x - offset)`` (with ``P`` the
         covariance-metric projector) is shrunk towards zero in the complement.
         If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, ``dirs`` acts only on the range of ``Q``:
-        columns lying in ``null(Q)`` are dropped, and if no independent columns
-        remain the estimate shrinks towards the point ``offset``.
+        When ``Q`` is singular, ``null(Q)`` is added to the no-shrink subspace;
+        see the :mod:`nustattools.stats.shrinkage` module docstring for the
+        details.
 
     Returns
     -------
@@ -392,8 +392,8 @@ def shrink(
         to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  May be positive
-        semi-definite: its null space carries no loss and is kept at the data
-        value, while shrinkage acts on the range of ``Q``.  Defaults to the
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
         identity.
     method : str, default="berger"
         Which estimator to use.  Available: ``"berger"`` and ``"tan"``.
@@ -402,10 +402,9 @@ def shrink(
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
         of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace ``offset + span(dirs)``.  When ``Q`` is singular, ``dirs``
-        acts only on the range of ``Q``: columns lying in ``null(Q)`` are
-        dropped, and if no independent columns remain the estimate shrinks
-        towards the point ``offset``.
+        subspace ``offset + span(dirs)``.  When ``Q`` is singular, ``null(Q)``
+        is added to the no-shrink subspace; see the
+        :mod:`nustattools.stats.shrinkage` module docstring for the details.
     **kwargs
         Additional keyword arguments passed to the estimator.
 

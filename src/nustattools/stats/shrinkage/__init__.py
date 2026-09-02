@@ -26,9 +26,18 @@ covariance), the change of coordinates is an isometry of the squared-error
 loss, so the reduced shrinkage conserves the full loss exactly.
 
 The loss matrix ``Q`` may be positive *semi*-definite.  Its null space carries
-no loss, so that component of the estimate is kept at the observed data value
-and shrinkage is applied only on the range of ``Q``, where the restricted loss
-is positive definite.  Directions that lie in ``null(Q)`` are dropped.
+no loss, so it is treated as an *additional set of no-shrink directions*,
+exactly like the columns of ``dirs``: the null space of ``Q`` is added to the
+no-shrink subspace ``span(dirs)`` and the estimator acts only on the
+covariance-metric complement ``span(dirs) + null(Q)``, where the restricted
+loss is positive definite.  Concretely, the covariance-metric projection of the
+estimate onto ``span(dirs) + null(Q)`` equals that of the observed data (kept
+at its data value), and shrinkage is applied in the complement.  Because only
+the spanned space matters, whether a given direction comes from ``dirs`` or
+from ``null(Q)`` is irrelevant; specifying directions already lying in
+``null(Q)`` via ``dirs`` has no additional effect.  The risk on the full
+problem is unaffected by how the estimate is set in ``null(Q)``: the loss is
+blind to that component, so any choice there carries the same risk.
 
 The implementation is split across three private modules,
 ``nustattools.stats.shrinkage._core`` (shared validation, canonicalization,
@@ -61,7 +70,8 @@ from ._core import (
     _canonicalize,  # noqa: F401
     _dirs_projection,  # noqa: F401
     _estimate,  # noqa: F401
-    _range_reduce,  # noqa: F401
+    _estimate_split,  # noqa: F401
+    _merge_dirs,  # noqa: F401
     _subspace_reduce,  # noqa: F401
 )
 from ._estimators import berger, shrink, tan

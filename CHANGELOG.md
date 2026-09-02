@@ -49,8 +49,9 @@ and this project adheres to
 
 - The shrinkage estimators (`shrink`, `berger`, `tan`) and `estimate_risk` now
   accept a positive semi-definite loss matrix `Q`: the null space of `Q` (where
-  the loss is zero) is kept at the data value while shrinkage acts on the range
-  of `Q`. `dirs` columns lying in `null(Q)` are dropped.
+  the loss is zero) is treated as an additional set of no-shrink directions, so
+  its covariance-metric projection is kept at the data value while shrinkage
+  acts in the covariance-metric complement.
 - Support for Python 3.14.
 - Documented the `uv`-based development workflow (`uv sync`, `uv lock`) in the
   README and `AGENTS.md`.

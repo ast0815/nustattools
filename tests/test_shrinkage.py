@@ -226,94 +226,118 @@ def test_estimate_degenerate_empty_dimension():
     assert delta.shape == (2, 0)
 
 
-def test_range_reduce_identity_for_pd():
-    # For a strictly positive-definite Q the reduction is the identity: the
-    # original (validated) objects are returned along with u_r = eye(p).
-    gen = rng()
-    p = 4
-    x = gen.normal(size=(2, p))
-    a = gen.normal(size=(p, p))
-    cov = a @ a.T + np.eye(p)
-    b = gen.normal(size=(p, p))
-    q = b @ b.T + np.eye(p)
-    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _shrinkage._range_reduce(
-        x, cov, q, offset=None, dirs=None
-    )
-    np.testing.assert_array_equal(x_r, x)
-    np.testing.assert_array_equal(cov_r, cov)
-    np.testing.assert_array_equal(q_r, q)
-    assert offset_r is None
-    assert dirs_r is None
-    np.testing.assert_array_equal(u_r, np.eye(p))
-
-
-def test_range_reduce_projects_singular_problem():
-    # For a singular Q the reduction lives on range(Q): u_r is an orthonormal
-    # basis of the positive eigenspace, x_r = x @ u_r, cov_r = u_r.T cov u_r and
-    # q_r = diag(w[keep]).  The completion x_null = x - x @ (u_r @ u_r.T) lies in
-    # null(Q).
-    gen = rng()
-    p = 6
-    rank = 4
-    q = _psd_q(rank, p, gen)
-    cov = gen.normal(size=(p, p))
-    cov = cov @ cov.T + np.eye(p)
-    x = gen.normal(size=(2, p))
-    x_r, cov_r, q_r, offset_r, dirs_r, u_r = _shrinkage._range_reduce(
-        x, cov, q, offset=None, dirs=None
-    )
-    w, v = np.linalg.eigh(q)
-    keep = w > 1e-10
-    u_expected = v[:, keep]
-    np.testing.assert_allclose(u_r, u_expected, rtol=1e-9, atol=1e-12)
-    np.testing.assert_allclose(u_r.T @ u_r, np.eye(rank), rtol=1e-9, atol=1e-12)
-    np.testing.assert_allclose(x_r, x @ u_r, rtol=1e-9, atol=1e-12)
-    np.testing.assert_allclose(cov_r, u_r.T @ cov @ u_r, rtol=1e-9, atol=1e-12)
-    np.testing.assert_allclose(q_r, np.diag(w[keep]), rtol=1e-9, atol=1e-12)
-    assert offset_r is None
-    assert dirs_r is None
-    x_null = x - x @ (u_r @ u_r.T)
-    np.testing.assert_allclose(x_null @ q, np.zeros_like(x_null), rtol=1e-9, atol=1e-12)
-
-
-def test_range_reduce_projects_offset_and_drops_null_dirs():
-    # offset is projected onto the range and dirs columns in null(Q) are
-    # dropped, so only the range columns survive.
+def test_merge_dirs_union_of_user_dirs_and_null_q():
+    # _merge_dirs returns an orthonormal independent basis of span(dirs) +
+    # null(Q); only the spanned space matters, not the representative columns.
     gen = rng()
     p = 6
     q = _psd_q(4, p, gen)
-    cov = np.eye(p)
-    x = gen.normal(size=p)
-    offset = gen.normal(size=p)
     w, v = np.linalg.eigh(q)
     u_r = v[:, w > 1e-10]
+    null_basis = v[:, w < 1e-10]
+    range_col = u_r[:, 0]
+    null_col = null_basis[:, 0]
+    # A single range direction column plus a null direction column.
+    basis = _shrinkage._merge_dirs(np.column_stack([range_col, null_col]), q, p)
+    # Expected span: the two user columns plus the rest of null(Q).
+    expected = np.column_stack([range_col, null_basis])
+    # The basis spans the same space as 'expected' (full column rank projection).
+    assert basis.shape == (p, 3)
+    np.testing.assert_allclose(basis.T @ basis, np.eye(3), rtol=1e-9, atol=1e-10)
+    proj = basis @ np.linalg.solve(basis.T @ basis, basis.T)
+    exp_proj = expected @ np.linalg.solve(expected.T @ expected, expected.T)
+    np.testing.assert_allclose(proj @ exp_proj, exp_proj, rtol=1e-8, atol=1e-10)
+
+
+def test_merge_dirs_without_user_dirs_is_null_q_basis():
+    # With dirs=None, _merge_dirs spans exactly null(Q).
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    basis = _shrinkage._merge_dirs(None, q, p)
+    w, v = np.linalg.eigh(q)
+    null_basis = v[:, w < 1e-10]
+    assert basis.shape == (p, null_basis.shape[1])
+    # Every basis column lies in null(Q), i.e. Q annihilates it.
+    np.testing.assert_allclose(q @ basis, np.zeros_like(basis), rtol=1e-8, atol=1e-10)
+
+
+def test_merge_dirs_pd_q_with_no_dirs_is_empty():
+    # For a strictly positive-definite Q with no user dirs there is no null
+    # space, so the no-shrink span is empty (shape (p, 0)).
+    p = 4
+    q = np.eye(p)
+    basis = _shrinkage._merge_dirs(None, q, p)
+    assert basis.shape == (p, 0)
+
+
+def test_merge_dirs_redundant_user_dirs_are_deduplicated():
+    # User dirs columns that overlap null(Q) (or each other) are handled by the
+    # span basis: duplicate directions do not inflate the result.
+    gen = rng()
+    p = 6
+    q = _psd_q(4, p, gen)
+    w, v = np.linalg.eigh(q)
     null_col = v[:, w < 1e-10][:, 0]
-    dirs = np.column_stack([u_r[:, 0], null_col])
-    (_, _, _, offset_r, dirs_r, _) = _shrinkage._range_reduce(
-        x, cov, q, offset=offset, dirs=dirs
-    )
-    np.testing.assert_allclose(offset_r, offset @ u_r, rtol=1e-9, atol=1e-12)
-    np.testing.assert_allclose(dirs_r, (u_r.T @ dirs)[:, [0]], rtol=1e-9, atol=1e-12)
+    # Two identical user columns in null(Q); merged span must equal null(Q) alone.
+    dirs = np.column_stack([null_col, 2.0 * null_col])
+    basis = _shrinkage._merge_dirs(dirs, q, p)
+    null_only = _shrinkage._merge_dirs(None, q, p)
+    assert basis.shape == null_only.shape
 
 
-def test_range_reduce_collapsing_dirs_falls_back_to_none():
-    # When the surviving dirs columns are rank-deficient on the range, they are
-    # all dropped (dirs_r is None, the dirs=None point behaviour).
+def test_estimate_split_keeps_no_shrink_projection_and_recovers_data():
+    # _estimate_split keeps the covariance-metric projection of the data onto
+    # span(dirs) (= span(user dirs) + null(Q)) at its data value.  When the span
+    # covers the whole space there is nothing left to shrink, so the estimate
+    # equals the data -- a robust end-to-end check of the unified dirs handling.
+    gen = rng()
+    p = 7
+    q = _psd_q(5, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    u_r = v[:, w > 1e-10]
+    # dirs spanning u_r plus the null(Q) basis covers the whole space.
+    dirs = u_r
+    merge = _shrinkage._merge_dirs(dirs, q, p)
+    assert merge.shape == (p, p)
+    for scale in (0.0, 1.0):
+        delta = _shrinkage._estimate_split(
+            x,
+            cov,
+            q,
+            lambda xs, _dd, _s=scale: _s * xs,
+            offset=None,
+            dirs=merge,
+        )
+        np.testing.assert_allclose(delta, x, rtol=1e-8, atol=1e-10)
+
+
+def test_estimate_split_shrinks_only_complement_of_no_shrink_span():
+    # With dirs = null(Q) only, the estimator acts only on the range of Q: the
+    # covariance-metric projection onto null(Q) is kept at the data value while
+    # the range part is shrunk.  Checked via the shrink-towards scale.
     gen = rng()
     p = 6
     q = _psd_q(4, p, gen)
     cov = np.eye(p)
     x = gen.normal(size=p)
+    merge = _shrinkage._merge_dirs(None, q, p)
     w, v = np.linalg.eigh(q)
-    range_col = v[:, w > 1e-10][:, 0]
-    # Two distinct columns collapsing onto the same range direction: the second
-    # is an exact scalar multiple of the first, so the projected set is exactly
-    # rank-deficient rather than just machine-noise dependent.
-    dirs = np.column_stack([range_col, 2.0 * range_col])
-    (_, _, _, _, dirs_r, _) = _shrinkage._range_reduce(
-        x, cov, q, offset=None, dirs=dirs
+    null_basis = v[:, w < 1e-10]
+    null_proj = null_basis @ null_basis.T
+    delta = _shrinkage._estimate_split(
+        x, cov, q, lambda xs, _dd: 0.5 * xs, offset=None, dirs=merge
     )
-    assert dirs_r is None
+    # With cov = I the covariance metric is Euclidean, so the kept part is the
+    # Euclidean projection onto null(Q); the estimate keeps it at the data value.
+    np.testing.assert_allclose(null_proj @ delta, null_proj @ x, rtol=1e-8, atol=1e-10)
+    # The range (complement) part is shrunk by half.
+    range_part = (np.eye(p) - null_proj) @ delta
+    range_x = (np.eye(p) - null_proj) @ x
+    np.testing.assert_allclose(range_part, 0.5 * range_x, rtol=1e-8, atol=1e-10)
 
 
 def test_estimate_canonicalizes_and_decanonicalizes():
@@ -1298,9 +1322,11 @@ def _psd_q(rank, p, gen):
 
 
 def test_psd_Q_keeps_null_component_at_data():
-    # When Q is singular, the null space carries no loss, so the null-space
-    # component of the estimate must equal that of the data regardless of how
-    # much the range is shrunk.  Checked for every estimator.
+    # When Q is singular, the loss-blind null space is treated as a no-shrink
+    # direction: the covariance-metric projection of the estimate onto
+    # span(null(Q)) must equal that of the data regardless of how much the
+    # range is shrunk.  Checked for every estimator with a general cov (the
+    # covariance metric is then distinct from the Euclidean one).
     gen = rng()
     p = 7
     q = _psd_q(5, p, gen)
@@ -1308,11 +1334,14 @@ def test_psd_Q_keeps_null_component_at_data():
     cov = cov @ cov.T + np.eye(p)
     x = gen.normal(size=p)
     w, v = np.linalg.eigh(q)
-    p_null = v[:, w < 1e-10] @ v[:, w < 1e-10].T
+    null_basis = v[:, w < 1e-10]
+    cinv = np.linalg.inv(cov)
+    t = null_basis.T @ cinv @ null_basis
+    p_null = null_basis @ np.linalg.solve(t, null_basis.T @ cinv)
     for est in (_shrinkage.berger, _shrinkage.tan, s.shrink):
         kwargs = {"gamma": float("inf")} if est is _shrinkage.tan else {}
         delta = est(x, cov=cov, Q=q, **kwargs)
-        np.testing.assert_allclose(p_null @ delta, p_null @ x, rtol=1e-10)
+        np.testing.assert_allclose(delta @ p_null.T, x @ p_null.T, rtol=1e-6, atol=1e-8)
 
 
 def test_psd_Q_range_component_is_shrunk():
@@ -1327,28 +1356,22 @@ def test_psd_Q_range_component_is_shrunk():
     assert not np.allclose(delta, x, atol=1e-8)
 
 
-def test_psd_Q_reduction_matches_rotated_SPD_problem():
-    # The PSD path must agree with running the SAME estimator on the range-
-    # reduced SPD problem and keeping the null component at the data value.
-    # The reduced ``berger`` call below takes the normal (fully SPD) code path,
-    # so this independently verifies the rank-reduction in _estimate.
+def test_psd_Q_null_is_auto_included_in_no_shrink_span():
+    # null(Q) is automatically part of the no-shrink span, so explicitly adding
+    # it in dirs does not change the result (only the span matters).
     gen = rng()
     p = 7
-    rank = 4
-    q = _psd_q(rank, p, gen)
+    q = _psd_q(4, p, gen)
     cov = gen.normal(size=(p, p))
     cov = cov @ cov.T + np.eye(p)
     x = gen.normal(size=p)
     w, v = np.linalg.eigh(q)
-    u_r = v[:, w > 1e-10]
-    q_r = np.diag(w[w > 1e-10])
-    cov_r = u_r.T @ cov @ u_r
-    x_r = x @ u_r
+    null_basis = v[:, w < 1e-10]
     for est in (_shrinkage.berger, _shrinkage.tan):
-        delta = est(x, cov=cov, Q=q)
-        reduced = est(x_r, cov=cov_r, Q=q_r)
-        expected = reduced @ u_r.T + (x - x @ (u_r @ u_r.T))
-        np.testing.assert_allclose(delta, expected, rtol=1e-9, atol=1e-10)
+        kwargs = {"gamma": float("inf")} if est is _shrinkage.tan else {}
+        plain = est(x, cov=cov, Q=q, **kwargs)
+        with_null_dirs = est(x, cov=cov, Q=q, dirs=null_basis, **kwargs)
+        np.testing.assert_allclose(with_null_dirs, plain, rtol=1e-8, atol=1e-10)
 
 
 def test_psd_Q_identity_strength_recovers_x():
@@ -1401,26 +1424,18 @@ def test_psd_Q_dirs_mixed_range_and_null_keeps_range_columns():
     assert delta.shape == (p,)
 
 
-def test_psd_Q_dirs_collapsing_on_range_falls_back_to_point():
-    # When the surviving dirs columns are linearly dependent on the range of Q
-    # (distinct columns collapsing onto the same range direction), they are all
-    # dropped and the estimate shrinks towards the point offset, exactly as for
-    # dirs=None.
+def test_psd_Q_linearly_dependent_dirs_raise():
+    # User dirs columns are required to be linearly independent (full column
+    # rank), regardless of Q, so a dependent dirs set is rejected.
     gen = rng()
     p = 6
     q = _psd_q(4, p, gen)
     cov = np.eye(p)
     x = gen.normal(size=p)
-    offset = gen.normal(size=p)
-    w, v = np.linalg.eigh(q)
-    range_col = v[:, w > 1e-10][:, 0]
-    # The two columns are linearly dependent on the range of Q (the second is
-    # an exact multiple of the first), so the projected set is exactly
-    # rank-deficient and must be discarded.
+    range_col = gen.normal(size=p)
     dirs = np.column_stack([range_col, 2.0 * range_col])
-    point = _shrinkage.berger(x, cov=cov, Q=q, offset=offset)
-    with_dirs = _shrinkage.berger(x, cov=cov, Q=q, offset=offset, dirs=dirs)
-    np.testing.assert_allclose(with_dirs, point, rtol=1e-9, atol=1e-10)
+    with pytest.raises(ValueError, match="linearly independent"):
+        _shrinkage.berger(x, cov=cov, Q=q, dirs=dirs)
 
 
 def test_psd_Q_range_subspace_component_is_kept():

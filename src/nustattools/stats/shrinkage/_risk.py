@@ -90,9 +90,10 @@ def estimate_risk(
         with different parameters, pass callables, e.g.
         ``functools.partial(berger, strength=0.5)``.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  May be positive semi-definite:
-        its null space carries no loss and the estimators keep that component at
-        the data value.  Defaults to the identity.
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
+        identity.
     n_reps : int, default=10000
         Number of Monte Carlo draws.  Must be at least 2 so that the standard
         error is finite.
@@ -356,7 +357,9 @@ def estimate_risk_curve(
     estimators : callable or str, or sequence of these
         The estimator(s) to evaluate; see :func:`estimate_risk`.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring.  Defaults to the identity.
     directions : str, int, array_like, or sequence of these, default=\
 ('uniform', 'proportional', 'inverse')
         The directions along which to move the mean.  A name selects a built-in
