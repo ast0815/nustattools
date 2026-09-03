@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- New shrinkage estimator `bayes` (Bayes rule under the homoscedastic prior
+  Gamma = gamma I in canonical coordinates), a non-minimax estimator registered
+  in `shrink` and exported from `nustattools.stats.shrinkage`.
 - New shrinkage estimator `berger_mb` (Berger's 1982 `delta^MB`, Tan2015
   Equation 8) with a homoscedastic prior `Gamma = gamma I`, registered in
   `shrink` and exported from `nustattools.stats.shrinkage`.

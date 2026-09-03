@@ -1570,6 +1570,214 @@ def test_shrink_dispatches_berger_mb():
     )
 
 
+def _bayes_general_formula(x, cov, q, gamma):
+    """Closed-form Bayes rule in the general (non-canonical) form.
+
+    Under the prior theta ~ N(0, gamma I) in canonical coordinates, the Bayes
+    rule is delta_j = gamma / (d_j + gamma) * x_star_j.  Transform back to the
+    original space.
+
+    """
+    x = np.asarray(x, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    q = np.asarray(q, dtype=float)
+    c = np.linalg.cholesky(q).T
+    d, o = np.linalg.eigh(c @ cov @ c.T)
+    b = o.T @ c
+    binv = np.linalg.inv(b)
+    x_star = x @ b.T
+    factor = gamma / (d + gamma)
+    delta_star = factor * x_star
+    return delta_star @ binv.T
+
+
+def test_bayes_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(_shrinkage.bayes(x), _shrinkage.bayes(x, cov=np.eye(6)))
+    assert _shrinkage.bayes(x).shape == (6,)
+
+
+def test_bayes_gamma_zero_is_zero():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=np.eye(5), gamma=0.0), np.zeros(5)
+    )
+
+
+def test_bayes_gamma_inf_is_identity():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=np.eye(5), gamma=float("inf")), x, atol=1e-12
+    )
+
+
+def test_bayes_shape():
+    p = 5
+    x = rng().normal(size=p)
+    assert _shrinkage.bayes(x).shape == (p,)
+    assert _shrinkage.bayes(x, gamma=0.0).shape == (p,)
+    assert _shrinkage.bayes(x, gamma=float("inf")).shape == (p,)
+
+
+def test_bayes_broadcasting_shapes():
+    p = 5
+    x = rng().normal(size=(4, 3, p))
+    out = _shrinkage.bayes(x, cov=np.eye(p))
+    assert out.shape == (4, 3, p)
+    for idx in np.ndindex(4, 3):
+        np.testing.assert_allclose(
+            out[idx], _shrinkage.bayes(x[idx], cov=np.eye(p)), rtol=1e-12
+        )
+
+
+def test_bayes_general_matches_closed_form():
+    # The canonicalized computation must agree with the direct general-form
+    # Bayes rule for a non-trivial covariance and Q = I.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    x = rng().normal(size=5)
+    gamma = 2.5
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=cov, gamma=gamma),
+        _bayes_general_formula(x, cov, np.eye(5), gamma),
+    )
+
+
+def test_bayes_general_Q_matches_closed_form():
+    # Same with a non-trivial Q.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    b = rng().normal(size=(5, 5))
+    q = b @ b.T + np.eye(5)
+    x = rng().normal(size=5)
+    gamma = 3.0
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=cov, Q=q, gamma=gamma),
+        _bayes_general_formula(x, cov, q, gamma),
+    )
+
+
+def test_bayes_shrinks_and_preserves_sign():
+    # The Bayes rule factor gamma / (d_j + gamma) is always in (0, 1) for
+    # gamma > 0, so the estimate never flips sign.
+    x = rng().normal(size=5)
+    delta = _shrinkage.bayes(x, cov=np.eye(5), gamma=1.0)
+    assert np.all(delta * x >= -1e-12)
+    assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_bayes_gamma_interpolation():
+    # Intermediate gamma must lie between gamma=0 (zero) and gamma=inf
+    # (identity).
+    d = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    x = rng().normal(size=5)
+    est0 = _shrinkage.bayes(x, cov=d, gamma=0.0)
+    esti = _shrinkage.bayes(x, cov=d, gamma=float("inf"))
+    np.testing.assert_allclose(est0, np.zeros(5))
+    np.testing.assert_allclose(esti, x, atol=1e-12)
+    # gamma->0 and gamma->inf limits agree with the special cases.
+    np.testing.assert_allclose(_shrinkage.bayes(x, cov=d, gamma=1e-8), est0, atol=1e-6)
+    np.testing.assert_allclose(_shrinkage.bayes(x, cov=d, gamma=1e8), esti, rtol=1e-3)
+
+
+def test_bayes_low_variance_coordinates_are_shrunk_more():
+    # Under the loss-proportional prior, the shrinkage factor gamma/(d_j+gamma)
+    # decreases with d_j, so low-variance coordinates are shrunk more strongly.
+    d = np.array([0.1, 1.0, 10.0])
+    x = np.array([1.0, 1.0, 1.0])
+    delta = _shrinkage.bayes(x, cov=np.diag(d), gamma=1.0)
+    # factor = gamma/(d+gamma): 1/1.1 ~ 0.909, 1/2 = 0.5, 1/11 ~ 0.091
+    factors = 1.0 / (d + 1.0)
+    np.testing.assert_allclose(delta, factors * x, rtol=1e-12)
+    # Low variance (d=0.1) is shrunk least, high variance (d=10) shrunk most.
+    assert abs(delta[0]) > abs(delta[1]) > abs(delta[2])
+
+
+def test_bayes_gamma_validation():
+    with pytest.raises(ValueError, match="gamma"):
+        _shrinkage.bayes(rng().normal(size=5), gamma=-1.0)
+
+
+def test_bayes_point_offset_equals_shift():
+    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
+    # towards zero.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, offset=t), t + _shrinkage.bayes(x - t), rtol=1e-10
+    )
+
+
+def test_bayes_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of offset.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    np.testing.assert_allclose(_shrinkage.bayes(x, dirs=np.eye(p)), x, atol=1e-12)
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
+    )
+
+
+def test_bayes_dirs_small_complement_is_identity():
+    # When the orthogonal complement has dimension 0, there is nothing to
+    # shrink, so the estimate is the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 6))
+    np.testing.assert_allclose(_shrinkage.bayes(x, dirs=v), x, atol=1e-12)
+
+
+def test_bayes_subspace_keeps_projected_component():
+    # The component of the estimate along the projected direction must equal
+    # the projection of the data; only the orthogonal residual is shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.bayes(x, dirs=v)
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+    resid = (np.eye(p) - proj) @ delta
+    raw = (np.eye(p) - proj) @ x
+    # Residual is shrunk (norm doesn't grow).
+    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
+
+
+def test_bayes_shrink_dispatch():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="bayes"), _shrinkage.bayes(x)
+    )
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="bayes", gamma=2.0),
+        _shrinkage.bayes(x, gamma=2.0),
+    )
+
+
+def test_bayes_psd_Q_keeps_null_component_at_data():
+    # When Q is singular, the loss-blind null space is treated as a no-shrink
+    # direction.
+    gen = rng()
+    p = 7
+    q = _psd_q(5, p, gen)
+    cov = rng().normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    w, v = np.linalg.eigh(q)
+    null_basis = v[:, w < 1e-10]
+    cinv = np.linalg.inv(cov)
+    t = null_basis.T @ cinv @ null_basis
+    p_null = null_basis @ np.linalg.solve(t, null_basis.T @ cinv)
+    delta = _shrinkage.bayes(x, cov=cov, Q=q, gamma=1.0)
+    np.testing.assert_allclose(delta @ p_null.T, x @ p_null.T, rtol=1e-6, atol=1e-8)
+
+
 def _psd_q(rank, p, gen):
     """Return a symmetric PSD ``(p, p)`` matrix of the given ``rank``."""
     w = np.concatenate([np.linspace(0.5, 3.0, rank), np.zeros(p - rank)])
