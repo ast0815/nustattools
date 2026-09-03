@@ -160,3 +160,7 @@ Thumbs.db
 
 # VSCode
 .vscode/
+
+# Local tooling
+.codegraph/
+.opencode/
