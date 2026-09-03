@@ -1,13 +1,14 @@
+# pylint: disable=too-many-lines
 """Individual shrinkage estimators and the ``shrink`` front-end.
 
 This private module defines the concrete minimization estimators
-(:func:`berger`, :func:`tan`, :func:`berger_mb` and :func:`tan_bayes`), the
-non-minimax Bayes rule estimator (:func:`bayes`), their canonical-form
-implementations (:func:`_berger_canonical`, :func:`_tan_canonical`,
-:func:`_mb_canonical`, :func:`_tan_bayes_canonical` and
-:func:`_bayes_canonical`), the :func:`shrink` front-end that dispatches to a
-named estimator, and the ``_METHODS`` registry used by :func:`shrink` and the
-risk-estimation helpers.
+(:func:`berger`, :func:`tan`, :func:`berger_mb`, :func:`tan_bayes` and
+:func:`robust_bayes`), the non-minimax Bayes rule estimator (:func:`bayes`),
+their canonical-form implementations (:func:`_berger_canonical`,
+:func:`_tan_canonical`, :func:`_mb_canonical`, :func:`_tan_bayes_canonical`,
+:func:`_robust_bayes_canonical` and :func:`_bayes_canonical`), the
+:func:`shrink` front-end that dispatches to a named estimator, and the
+``_METHODS`` registry used by :func:`shrink` and the risk-estimation helpers.
 
 Each estimator only ever needs to shrink a vector towards zero with independent
 coordinates of varying variance (the canonical form); the shared machinery in
@@ -729,6 +730,181 @@ def tan_bayes(
     )
 
 
+def _robust_bayes_canonical(
+    x: NDArray[Any],
+    d: NDArray[Any],
+    *,
+    strength: float,
+    gamma: float,
+) -> NDArray[Any]:
+    """The robust generalised Bayes estimator ``delta^RB`` in canonical form.
+
+    Implements [Tan2015]_, Equation (7) (Berger, 1982) for the canonical
+    problem where the covariance is the diagonal matrix ``D = diag(d)`` and
+    the loss is the identity, under the homoscedastic prior
+    :math:`\\theta \\sim N(0, \\gamma I)`.
+
+    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``.  ``strength`` scales the shrinkage constant ``(k - 2)_+`` (with
+    ``k = len(d)``): ``strength = 1`` recovers Tan's version and ``strength = 2``
+    Berger's original ``2(k - 2)_+``.  ``gamma`` is the (finite, non-negative)
+    prior scale.
+
+    The estimator is *not* minimax: it is robust to misspecification of the
+    prior but may have greater risk than the identity estimator.  Unlike
+    :func:`berger_mb` (which uses the same Bayes-rule weight
+    ``w_j = d_j/(d_j + gamma)`` but with a coordinate-wise minimax magnitude),
+    here the shrinkage magnitude is the scalar ``m = min(1, strength*(k-2)_+/S)``
+    with ``S = sum_j x_j^2 / (d_j + gamma)``, applied uniformly::
+
+        delta_j = (1 - m * w_j) * x_j
+
+    Since ``m <= 1`` and ``w_j <= 1``, the factor ``1 - m*w_j`` is always
+    non-negative, so no positive-part truncation is needed.
+
+    """
+
+    p_eff = len(d)
+    if p_eff < 3:
+        return x
+    c_k = strength * (p_eff - 2)
+    if c_k <= 0:
+        return x
+
+    d_plus_g = d + gamma
+    weight = d / d_plus_g
+    s_val = np.sum(x**2 / d_plus_g, axis=-1)
+    # When s_val = 0 (e.g. x = 0) the ratio is infinite so m = 1; suppress the
+    # divide warning since the min() below maps it correctly.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = c_k / s_val
+    m_k = np.minimum(1.0, ratio)
+    factor = 1.0 - m_k[..., None] * weight
+    return cast(NDArray[Any], factor * x)
+
+
+def robust_bayes(
+    x: ArrayLike,
+    cov: ArrayLike | None = None,
+    *,
+    Q: ArrayLike | None = None,
+    strength: float = 1.0,
+    gamma: float = 1.0,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+) -> NDArray[Any]:
+    """The robust generalised Bayes estimator ``delta^RB``.
+
+    This is Berger's (1982) robust generalised Bayes estimator reviewed in
+    [Tan2015]_, Section 2, Equation (7), for a multivariate normal mean under
+    the homoscedastic prior :math:`\\theta \\sim N(0, \\gamma I)`.  It shrinks
+    the coordinates in the direction of the Bayes rule but caps the shrinkage
+    magnitude so the shrinkage ratio never exceeds one::
+
+        delta = (1 - min(1, strength*(k-2)_+ / S) * w) * x
+
+    where ``w_j = d_j/(d_j + gamma)`` is the Bayes-rule weight and
+    ``S = sum_j x_j^2 / (d_j + gamma)`` in canonical coordinates.  The
+    estimator is *non-minimax* (unlike :func:`berger_mb`): it is expected to
+    provide significant risk reduction over the identity when the prior is
+    well-specified but is robust to misspecification.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed data.  A single vector of shape ``(p,)`` or a stack of
+        observations of shape ``(..., p)``.  The estimator is applied to each
+        observation over the last axis.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
+        identity, i.e. squared-error loss.
+    strength : float, default=1.0
+        Shrinkage strength as a fraction of the critical value ``(k - 2)_+``.
+        ``strength = 0`` gives the identity estimator, ``strength = 1`` is Tan's
+        version (with the constant ``(k - 2)_+``) and ``strength = 2`` Berger's
+        original version (with ``2(k - 2)_+``).  Values outside ``[0, 2]`` are
+        accepted but push the estimator further from its recommended operating
+        range.
+    gamma : float, default=1.0
+        Non-negative prior scale in the homoscedastic prior
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
+        Must be ``>= 0``.  ``gamma = 0`` corresponds to the spherically
+        symmetric limiting form ``{1 - strength*(k-2)_+/(X^T D^{-1} X)}_+ x``
+        while larger ``gamma`` shrinks coordinates more strongly in the
+        direction of the Bayes rule.  Because the Bayes weight
+        ``d_j/(d_j + gamma)`` vanishes and ``S`` vanishes as ``gamma -> inf``,
+        the estimator reduces to the identity there, so no infinite-gamma
+        parameter is supported.
+    offset : array_like, default=None
+        A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
+        i.e. shrinking towards the origin.
+    dirs : array_like, default=None
+        A matrix of shape ``(p, k)`` whose columns span the affine direction
+        of shrinkage.  If given, the estimate shrinks towards the affine
+        subspace ``offset + span(dirs)``: the component in the subspace is kept
+        and the residual ``(I - P) (x - offset)`` (with ``P`` the
+        covariance-metric projector) is shrunk towards zero in the complement.
+        If ``None``, the estimate shrinks towards the single point ``offset``.
+        When ``Q`` is singular, ``null(Q)`` is added to the no-shrink subspace;
+        see the :mod:`nustattools.stats.shrinkage` module docstring for the
+        details.
+
+    Returns
+    -------
+    delta : numpy.ndarray
+        The shrinkage estimate of the mean, with the same shape as ``x``.
+
+    Notes
+    -----
+    The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless, and applies the direction
+    there.  In canonical coordinates the estimator is componentwise
+    ``delta_j = (1 - m * w_j) x_j`` where ``w_j = d_j/(d_j + gamma)`` is the
+    Bayes-rule weight and ``m = min(1, strength*(k-2)_+/S)`` is a scalar
+    shrinkage ratio with ``S = sum_j x_j^2 / (d_j + gamma)``.  Because ``m`` is
+    capped at one and ``w_j`` never exceeds one, the per-coordinate factor is
+    always non-negative, so the estimator needs no positive-part truncation
+    (unlike :func:`berger` and :func:`tan`).
+
+    The estimator is generally *not* minimax: its risk can exceed the minimax
+    risk ``trace(Q @ cov)`` when the true mean is far from the prior mean.
+    However, it is robust to misspecification of the prior and can have
+    substantially lower risk than any minimax estimator when the prior is
+    well-specified.
+
+    Examples
+    --------
+
+    >>> import numpy as np
+    >>> import nustattools.stats.shrinkage as sh
+    >>> rng = np.random.default_rng(0)
+    >>> x = rng.normal(size=5)
+    >>> sh.robust_bayes(x).shape
+    (5,)
+
+    """
+
+    if gamma < 0:
+        msg = "gamma must be non-negative."
+        raise ValueError(msg)
+
+    return _estimate(
+        x,
+        cov,
+        Q,
+        _robust_bayes_canonical,
+        strength=strength,
+        gamma=gamma,
+        offset=offset,
+        dirs=dirs,
+    )
+
+
 def _bayes_canonical(x: NDArray[Any], d: NDArray[Any], *, gamma: float) -> NDArray[Any]:
     """Bayes rule in canonical form under the homoscedastic prior Gamma = gamma I.
 
@@ -893,7 +1069,7 @@ def shrink(
         identity.
     method : str, default="berger"
         Which estimator to use.  Available: ``"berger"``, ``"tan"``,
-        ``"berger_mb"``, ``"tan_bayes"`` and ``"bayes"``.
+        ``"berger_mb"``, ``"tan_bayes"``, ``"robust_bayes"`` and ``"bayes"``.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
     dirs : array_like, default=None
@@ -920,6 +1096,7 @@ _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "tan": tan,
     "berger_mb": berger_mb,
     "tan_bayes": tan_bayes,
+    "robust_bayes": robust_bayes,
     "bayes": bayes,
 }
 

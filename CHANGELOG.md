@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- New shrinkage estimator `robust_bayes` (Berger's 1982 `delta^RB`, Tan2015
+  Equation 7) with a homoscedastic prior `Gamma = gamma I`, a non-minimax
+  robust-to-prior-misspecification estimator, registered in `shrink` and
+  exported from `nustattools.stats.shrinkage`.
 - New shrinkage estimator `tan_bayes` (delta_{A,c} from Tan2015, Section 3, with
   the Bayes-rule shrinkage direction A = D(D + gamma I)^{-1}), registered in
   `shrink` and exported from `nustattools.stats.shrinkage`.

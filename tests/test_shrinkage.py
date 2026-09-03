@@ -2260,3 +2260,233 @@ def test_tan_bayes_general_Q_matches_closed_form_broadcast():
             _tan_bayes_general_formula(x[i], cov, q, gamma),
             rtol=1e-10,
         )
+
+
+# ---------------------------------------------------------------------------
+# robust_bayes: delta^RB (Tan2015 Equation 7)
+# ---------------------------------------------------------------------------
+
+
+def _robust_bayes_general_formula(x, cov, q, gamma, strength=1.0):
+    """Closed-form delta^RB in the general (non-canonical) form.
+
+    From [Tan2015]_, Equation (7): delta^RB = (I - m D(D+gamma I)^{-1}) X with
+    m = min(1, strength*(p-2)_+ / (X^T (D+gamma I)^{-1} X)), in canonical
+    coordinates.  Transform back to the original space.
+
+    """
+    x = np.asarray(x, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    q = np.asarray(q, dtype=float)
+    c = np.linalg.cholesky(q).T
+    d, o = np.linalg.eigh(c @ cov @ c.T)
+    b = o.T @ c
+    binv = np.linalg.inv(b)
+    x_star = x @ b.T
+
+    p = len(d)
+    if p < 3:
+        return x
+    d_plus_g = d + gamma
+    weight = d / d_plus_g
+    s_val = np.sum(x_star**2 / d_plus_g, axis=-1)
+    ratio = strength * (p - 2) / s_val
+    m_k = np.minimum(1.0, ratio)
+    delta_star = (1.0 - m_k * weight) * x_star
+    return delta_star @ binv.T
+
+
+def test_robust_bayes_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x), _shrinkage.robust_bayes(x, cov=np.eye(6))
+    )
+    assert _shrinkage.robust_bayes(x).shape == (6,)
+
+
+def test_robust_bayes_gamma_zero_spherical():
+    # gamma=0 -> w = d/d = 1, S = X^T D^{-1} X, so delta = (1 - min(1, S_0/S)) x
+    # with S_0 = strength*(p-2).  Pick d homogeneous enough that S_0/S < 1 so
+    # the ratio is unsaturated.
+    d = np.array([1.0, 1.0, 1.0, 0.5, 0.5])
+    x = rng().normal(size=5)
+    delta = _shrinkage.robust_bayes(x, cov=np.diag(d), gamma=0.0)
+    s_val = float(np.sum(x**2 / d))
+    m_k = min(1.0, (5 - 2) / s_val)
+    np.testing.assert_allclose(delta, (1.0 - m_k) * x, rtol=1e-10)
+
+
+def test_robust_bayes_gamma_inf_is_identity():
+    # gamma=inf -> w -> 0 and S -> 0, so delta -> x.
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=np.eye(5), gamma=1e12), x, atol=1e-6
+    )
+
+
+def test_robust_bayes_shape():
+    p = 5
+    x = rng().normal(size=p)
+    assert _shrinkage.robust_bayes(x).shape == (p,)
+    assert _shrinkage.robust_bayes(x, gamma=0.0).shape == (p,)
+
+
+def test_robust_bayes_broadcasting_shapes():
+    p = 5
+    x = rng().normal(size=(4, 3, p))
+    out = _shrinkage.robust_bayes(x, cov=np.eye(p))
+    assert out.shape == (4, 3, p)
+    for idx in np.ndindex(4, 3):
+        np.testing.assert_allclose(
+            out[idx], _shrinkage.robust_bayes(x[idx], cov=np.eye(p)), rtol=1e-12
+        )
+
+
+def test_robust_bayes_general_matches_closed_form():
+    # The canonicalized computation must agree with the direct general-form
+    # formula for a non-trivial covariance and Q = I.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    x = rng().normal(size=5)
+    for gamma in (0.0, 1.0, 5.0):
+        for strength in (0.5, 1.0, 2.0):
+            np.testing.assert_allclose(
+                _shrinkage.robust_bayes(x, cov=cov, gamma=gamma, strength=strength),
+                _robust_bayes_general_formula(x, cov, np.eye(5), gamma, strength),
+            )
+
+
+def test_robust_bayes_general_Q_matches_closed_form():
+    # Same with a non-trivial Q.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    b = rng().normal(size=(5, 5))
+    q = b @ b.T + np.eye(5)
+    x = rng().normal(size=5)
+    gamma = 3.0
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=cov, Q=q, gamma=gamma),
+        _robust_bayes_general_formula(x, cov, q, gamma),
+    )
+
+
+def test_robust_bayes_strength_zero_is_identity():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=np.eye(5), strength=0.0), x
+    )
+
+
+def test_robust_bayes_strength_two_matches_direct():
+    # strength=2 -> m = min(1, 2*(p-2)/S); compare the shrinkage magnitude
+    # against the strength=1 case directly.
+    d = np.array([1.0, 1.0, 1.0, 0.5, 0.5])
+    x = rng().normal(size=5)
+    s_val = float(np.sum(x**2 / (d + 1.0)))
+    w = d / (d + 1.0)
+    m1 = min(1.0, (5 - 2) / s_val)
+    m2 = min(1.0, 2 * (5 - 2) / s_val)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=np.diag(d), gamma=1.0, strength=1.0),
+        (1 - m1 * w) * x,
+        rtol=1e-10,
+    )
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=np.diag(d), gamma=1.0, strength=2.0),
+        (1 - m2 * w) * x,
+        rtol=1e-10,
+    )
+
+
+def test_robust_bayes_shrinks_and_preserves_sign():
+    # The factor 1 - m*w with m <= 1 and w <= 1 is always in [0, 1), so the
+    # estimate shrinks towards zero without ever flipping sign.
+    x = rng().normal(size=5)
+    delta = _shrinkage.robust_bayes(x, cov=np.eye(5), gamma=1.0)
+    assert np.all(delta * x >= -1e-12)
+    assert np.all(np.abs(delta) <= np.abs(x) + 1e-12)
+
+
+def test_robust_bayes_shrink_dispatch():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="robust_bayes"), _shrinkage.robust_bayes(x)
+    )
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="robust_bayes", gamma=2.0),
+        _shrinkage.robust_bayes(x, gamma=2.0),
+    )
+
+
+def test_robust_bayes_gamma_validation():
+    with pytest.raises(ValueError, match="gamma"):
+        _shrinkage.robust_bayes(rng().normal(size=5), gamma=-1.0)
+
+
+def test_robust_bayes_point_offset_equals_shift():
+    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
+    # towards zero.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, offset=t),
+        t + _shrinkage.robust_bayes(x - t),
+        rtol=1e-10,
+    )
+
+
+def test_robust_bayes_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of offset.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, dirs=np.eye(p)), x, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
+    )
+
+
+def test_robust_bayes_dirs_small_complement_is_identity():
+    # When the orthogonal complement has dimension 0, there is nothing to
+    # shrink, so the estimate is the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 6))
+    np.testing.assert_allclose(_shrinkage.robust_bayes(x, dirs=v), x, atol=1e-12)
+
+
+def test_robust_bayes_subspace_keeps_projected_component():
+    # The component of the estimate along the projected direction must equal
+    # the projection of the data; only the orthogonal residual is shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.robust_bayes(x, dirs=v)
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+    resid = (np.eye(p) - proj) @ delta
+    raw = (np.eye(p) - proj) @ x
+    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
+
+
+def test_robust_bayes_zero_x_returns_zero():
+    # S = 0 when x = 0: the ratio strength*(p-2)/S -> inf so m = 1 and the
+    # estimate is 0 (a finite value, not a division by zero).
+    x = np.zeros(5)
+    np.testing.assert_allclose(
+        _shrinkage.robust_bayes(x, cov=np.eye(5), gamma=1.0), x, atol=1e-12
+    )
+
+
+def test_robust_bayes_two_dimensions_is_identity():
+    # With p = 2, (p-2)_+ = 0 so there is no shrinkage.
+    x = rng().normal(size=2)
+    np.testing.assert_allclose(_shrinkage.robust_bayes(x, cov=np.eye(2)), x, atol=1e-12)
