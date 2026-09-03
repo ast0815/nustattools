@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- New shrinkage estimator `tan_bayes` (delta_{A,c} from Tan2015, Section 3, with
+  the Bayes-rule shrinkage direction A = D(D + gamma I)^{-1}), registered in
+  `shrink` and exported from `nustattools.stats.shrinkage`.
 - New shrinkage estimator `bayes` (Bayes rule under the homoscedastic prior
   Gamma = gamma I in canonical coordinates), a non-minimax estimator registered
   in `shrink` and exported from `nustattools.stats.shrinkage`.

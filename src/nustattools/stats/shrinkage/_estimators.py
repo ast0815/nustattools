@@ -1,9 +1,10 @@
 """Individual shrinkage estimators and the ``shrink`` front-end.
 
 This private module defines the concrete minimization estimators
-(:func:`berger`, :func:`tan` and :func:`berger_mb`), the non-minimax Bayes rule
-estimator (:func:`bayes`), their canonical-form implementations
-(:func:`_berger_canonical`, :func:`_tan_canonical`, :func:`_mb_canonical`,
+(:func:`berger`, :func:`tan`, :func:`berger_mb` and :func:`tan_bayes`), the
+non-minimax Bayes rule estimator (:func:`bayes`), their canonical-form
+implementations (:func:`_berger_canonical`, :func:`_tan_canonical`,
+:func:`_mb_canonical`, :func:`_tan_bayes_canonical` and
 :func:`_bayes_canonical`), the :func:`shrink` front-end that dispatches to a
 named estimator, and the ``_METHODS`` registry used by :func:`shrink` and the
 risk-estimation helpers.
@@ -556,6 +557,178 @@ def berger_mb(
     )
 
 
+def _tan_bayes_canonical(
+    x: NDArray[Any],
+    d: NDArray[Any],
+    *,
+    positive: bool,
+    strength: float,
+    gamma: float,
+) -> NDArray[Any]:
+    """``delta_{A,c}`` in canonical form with the Bayes-rule shrinkage direction.
+
+    Implements [Tan2015]_, Section 3, Equation (9): the estimator
+    ``delta_{A,c} = (I - c A / (x^T A^2 x)) x`` where ``A = diag(a)`` is the
+    Bayes-rule shrinkage direction with ``a_j = d_j / (d_j + gamma)``.
+
+    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``.  ``strength`` scales the minimax constant
+    ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``: the estimator is minimax for
+    ``0 <= strength <= 2``.
+
+    The Bayes-rule direction ``a_j = d_j/(d_j + gamma)`` is proportional to
+    variance: high-variance coordinates are shrunk more (like Berger's
+    estimator), while low-variance coordinates are shrunk less.  As ``gamma``
+    varies:
+
+    - ``gamma = 0``: ``a_j = 1`` (A = I), reducing to the Berger direction with
+      ``c* = tr(D) - 2 max(d)``.
+    - ``gamma = inf``: ``a_j = 0`` (A = 0), no shrinkage (identity estimator).
+
+    """
+
+    p_eff = len(d)
+    if p_eff < 3:
+        return x
+
+    a = d / (d + gamma)
+    da = d * a
+    c_star_val = float(np.sum(da) - 2.0 * np.max(da))
+    if c_star_val <= 0.0:
+        return x
+
+    s_val = np.sum(a**2 * x**2, axis=-1)
+    c_actual = strength * c_star_val
+    factor = 1.0 - c_actual * a / s_val[..., None]
+    if positive:
+        factor = np.maximum(factor, 0.0)
+    return cast(NDArray[Any], factor * x)
+
+
+def tan_bayes(
+    x: ArrayLike,
+    cov: ArrayLike | None = None,
+    *,
+    Q: ArrayLike | None = None,
+    positive: bool = True,
+    strength: float = 1.0,
+    gamma: float = 1.0,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+) -> NDArray[Any]:
+    """Shrinkage estimator ``delta_{A,c}`` with the Bayes-rule direction.
+
+    Applies [Tan2015]_, Section 3, Equation (9) — the class of minimax
+    estimators ``delta_{A,c} = (I - c A / (x^T A^T Q A x)) x`` — with the
+    shrinkage-direction matrix ``A`` fixed to the Bayes rule under the
+    homoscedastic prior :math:`\\theta \\sim N(0, \\gamma I)` in canonical
+    coordinates.  In canonical form (diagonal covariance ``D = diag(d)``,
+    identity loss), ``A = diag(a)`` with ``a_j = d_j / (d_j + gamma)``.
+
+    Unlike :func:`tan` (which optimises ``A`` by approximately minimising the
+    Bayes risk among all minimax estimators), this estimator uses the
+    Bayes-rule direction directly.  The shrinkage magnitude is controlled by
+    ``strength * c*(D, A)`` where ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``.
+    The estimator is minimax for ``0 <= strength <= 2``.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed data.  A single vector of shape ``(p,)`` or a stack of
+        observations of shape ``(..., p)``.  The estimator is applied to each
+        observation over the last axis.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
+        identity, i.e. squared-error loss.
+    positive : bool, default=True
+        Use the positive-part estimator, which dominates the plain one.
+    strength : float, default=1.0
+        Shrinkage strength as a fraction of the minimax constant
+        ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``.  ``strength = 0`` gives the
+        identity estimator, ``strength = 1`` the optimal minimax value, and
+        ``strength = 2`` the boundary of the minimax class.  Values outside
+        ``[0, 2]`` are accepted but the estimator is no longer guaranteed
+        minimax.
+    gamma : float, default=1.0
+        Non-negative prior scale in the homoscedastic prior
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
+        Must be ``>= 0``.  Controls the Bayes-rule shrinkage direction
+        ``a_j = d_j / (d_j + gamma)``:
+
+        - ``gamma = 0``: ``a_j = 1`` (A = I), the Berger direction with
+          ``c* = tr(D) - 2 max(d)``.
+        - ``gamma = inf``: ``a_j = 0`` (A = 0), no shrinkage (identity).
+        - intermediate ``gamma``: coordinates with larger variance ``d_j`` are
+          shrunk more (proportional to ``d_j/(d_j + gamma)``).
+
+    offset : array_like, default=None
+        A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
+        i.e. shrinking towards the origin.
+    dirs : array_like, default=None
+        A matrix of shape ``(p, k)`` whose columns span the affine direction
+        of shrinkage.  If given, the estimate shrinks towards the affine
+        subspace ``offset + span(dirs)``: the component in the subspace is kept
+        and the residual ``(I - P) (x - offset)`` (with ``P`` the
+        covariance-metric projector) is shrunk towards zero in the complement.
+        If ``None``, the estimate shrinks towards the single point ``offset``.
+        When ``Q`` is singular, ``null(Q)`` is added to the no-shrink subspace;
+        see the :mod:`nustattools.stats.shrinkage` module docstring for the
+        details.
+
+    Returns
+    -------
+    delta : numpy.ndarray
+        The shrinkage estimate of the mean, with the same shape as ``x``.
+
+    Notes
+    -----
+    The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless, and applies the direction
+    there.  The Bayes-rule direction ``a_j = d_j/(d_j + gamma)`` is
+    proportional to variance: high-variance coordinates are shrunk more,
+    unlike Berger's estimator (which shrinks inversely proportional to
+    variance).  The minimax constant ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``
+    ensures that the risk never exceeds ``tr(D)`` for ``0 <= strength <= 2``.
+
+    When ``gamma = 0``, the direction reduces to ``A = I`` and the estimator
+    becomes a Berger-type estimator with ``c* = tr(D) - 2 max(d)``.  For
+    finite ``gamma``, the direction interpolates between this and the identity
+    (no shrinkage) as ``gamma`` increases.
+
+    Examples
+    --------
+
+    >>> import numpy as np
+    >>> import nustattools.stats.shrinkage as sh
+    >>> rng = np.random.default_rng(0)
+    >>> x = rng.normal(size=5)
+    >>> sh.tan_bayes(x).shape
+    (5,)
+
+    """
+
+    if gamma < 0:
+        msg = "gamma must be non-negative."
+        raise ValueError(msg)
+
+    return _estimate(
+        x,
+        cov,
+        Q,
+        _tan_bayes_canonical,
+        strength=strength,
+        gamma=gamma,
+        positive=positive,
+        offset=offset,
+        dirs=dirs,
+    )
+
+
 def _bayes_canonical(x: NDArray[Any], d: NDArray[Any], *, gamma: float) -> NDArray[Any]:
     """Bayes rule in canonical form under the homoscedastic prior Gamma = gamma I.
 
@@ -720,7 +893,7 @@ def shrink(
         identity.
     method : str, default="berger"
         Which estimator to use.  Available: ``"berger"``, ``"tan"``,
-        ``"berger_mb"`` and ``"bayes"``.
+        ``"berger_mb"``, ``"tan_bayes"`` and ``"bayes"``.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
     dirs : array_like, default=None
@@ -746,6 +919,7 @@ _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "berger": berger,
     "tan": tan,
     "berger_mb": berger_mb,
+    "tan_bayes": tan_bayes,
     "bayes": bayes,
 }
 

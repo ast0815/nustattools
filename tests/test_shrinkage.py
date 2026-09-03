@@ -1993,3 +1993,270 @@ def test_Q_nonsymmetric_raises_on_psd_path():
     q = np.array([[1.0, 0.0], [1.0, 0.0]])
     with pytest.raises(ValueError, match="must be symmetric"):
         _shrinkage.berger(rng().normal(size=2), np.eye(2), Q=q)
+
+
+# ---------------------------------------------------------------------------
+# tan_bayes: delta_{A,c} with the Bayes-rule shrinkage direction
+# ---------------------------------------------------------------------------
+
+
+def _tan_bayes_general_formula(x, cov, q, gamma, strength=1.0):
+    """Closed-form delta_{A,c} with A = D(D+gamma I)^{-1} in general form.
+
+    From [Tan2015]_, Section 3, Equation (9): delta_{A,c} =
+    (I - c A / (x^T A^T Q A x)) x, with A = diag(a) where a_j =
+    d_j / (d_j + gamma) in canonical form and c = strength * c*(D, A).
+
+    """
+    x = np.asarray(x, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    q = np.asarray(q, dtype=float)
+    c = np.linalg.cholesky(q).T
+    d, o = np.linalg.eigh(c @ cov @ c.T)
+    b = o.T @ c
+    binv = np.linalg.inv(b)
+    x_star = x @ b.T
+
+    a = d / (d + gamma)
+    da = d * a
+    c_star = float(np.sum(da) - 2.0 * np.max(da))
+    if c_star <= 0.0:
+        return x
+    s_val = np.sum(a**2 * x_star**2, axis=-1)
+    factor = 1.0 - strength * c_star * a / s_val
+    delta_star = factor * x_star
+    return delta_star @ binv.T
+
+
+def test_tan_bayes_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x), _shrinkage.tan_bayes(x, cov=np.eye(6))
+    )
+    assert _shrinkage.tan_bayes(x).shape == (6,)
+
+
+def test_tan_bayes_gamma_zero_is_berger_like():
+    # gamma=0 -> a=1 (A=I), c* = sum(d) - 2*max(d), which is the Berger-like
+    # direction with uniform shrinkage weight.  Pick d with sum(d) > 2*max(d)
+    # so that c* > 0 and shrinkage actually occurs.
+    d = np.array([1.0, 1.0, 1.0, 0.5])
+    x = rng().normal(size=4)
+    delta = _shrinkage.tan_bayes(x, cov=np.diag(d), gamma=0.0, positive=False)
+    c_star = float(np.sum(d) - 2.0 * np.max(d))
+    s_val = float(np.sum(x**2))
+    factor = 1.0 - c_star / s_val
+    np.testing.assert_allclose(delta, factor * x, rtol=1e-10)
+
+
+def test_tan_bayes_gamma_inf_is_identity():
+    # gamma=inf -> a=0 (A=0) -> c*=0 -> identity.
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=np.eye(5), gamma=float("inf")),
+        x,
+        atol=1e-12,
+    )
+
+
+def test_tan_bayes_shape():
+    p = 5
+    x = rng().normal(size=p)
+    assert _shrinkage.tan_bayes(x).shape == (p,)
+    assert _shrinkage.tan_bayes(x, gamma=0.0).shape == (p,)
+    assert _shrinkage.tan_bayes(x, gamma=float("inf")).shape == (p,)
+
+
+def test_tan_bayes_broadcasting_shapes():
+    p = 5
+    x = rng().normal(size=(4, 3, p))
+    out = _shrinkage.tan_bayes(x, cov=np.eye(p))
+    assert out.shape == (4, 3, p)
+    for idx in np.ndindex(4, 3):
+        np.testing.assert_allclose(
+            out[idx], _shrinkage.tan_bayes(x[idx], cov=np.eye(p)), rtol=1e-12
+        )
+
+
+def test_tan_bayes_general_matches_closed_form():
+    # The canonicalized computation must agree with the direct general-form
+    # formula for a non-trivial covariance and Q = I.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    x = rng().normal(size=5)
+    gamma = 2.5
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=cov, gamma=gamma, positive=False),
+        _tan_bayes_general_formula(x, cov, np.eye(5), gamma),
+    )
+
+
+def test_tan_bayes_general_Q_matches_closed_form():
+    # Same with a non-trivial Q.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    b = rng().normal(size=(5, 5))
+    q = b @ b.T + np.eye(5)
+    x = rng().normal(size=5)
+    gamma = 3.0
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=cov, Q=q, gamma=gamma, positive=False),
+        _tan_bayes_general_formula(x, cov, q, gamma),
+    )
+
+
+def test_tan_bayes_minimaxity():
+    # tan_bayes with strength=1 is minimax: its risk never exceeds tr(cov).
+    p = 5
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    n = 200_000
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(p), cov, size=n)
+    for gamma in (0.0, 1.0, 5.0):
+        loss = np.sum(
+            _shrinkage.tan_bayes(xs, cov=cov, gamma=gamma, positive=False) ** 2,
+            axis=1,
+        )
+        assert np.mean(loss) <= np.trace(cov) + 0.05, (
+            f"gamma={gamma}: risk {np.mean(loss):.4f} > tr(cov)={np.trace(cov):.4f}"
+        )
+
+
+def test_tan_bayes_positive_part_dominates():
+    # The positive-part version has lower or equal risk.
+    p = 5
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    n = 200_000
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(p), cov, size=n)
+    for gamma in (0.0, 1.0, 5.0):
+        loss_plain = np.sum(
+            _shrinkage.tan_bayes(xs, cov=cov, gamma=gamma, positive=False) ** 2,
+            axis=1,
+        )
+        loss_pos = np.sum(
+            _shrinkage.tan_bayes(xs, cov=cov, gamma=gamma, positive=True) ** 2,
+            axis=1,
+        )
+        assert np.mean(loss_pos) <= np.mean(loss_plain) + 0.02, (
+            f"gamma={gamma}: positive-part risk {np.mean(loss_pos):.4f} "
+            f"> plain risk {np.mean(loss_plain):.4f}"
+        )
+
+
+def test_tan_bayes_strength_zero_is_identity():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(_shrinkage.tan_bayes(x, cov=np.eye(5), strength=0.0), x)
+
+
+def test_tan_bayes_shrinks_and_preserves_sign():
+    # The factor 1 - c*a/(a^2.x^2) is always <= 1, so the estimate is shrunk.
+    x = rng().normal(size=5)
+    delta = _shrinkage.tan_bayes(x, cov=np.eye(5), gamma=1.0)
+    assert np.all(delta * x >= -1e-12)
+    assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_tan_bayes_shrink_dispatch():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="tan_bayes"), _shrinkage.tan_bayes(x)
+    )
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="tan_bayes", gamma=2.0),
+        _shrinkage.tan_bayes(x, gamma=2.0),
+    )
+
+
+def test_tan_bayes_gamma_validation():
+    with pytest.raises(ValueError, match="gamma"):
+        _shrinkage.tan_bayes(rng().normal(size=5), gamma=-1.0)
+
+
+def test_tan_bayes_point_offset_equals_shift():
+    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
+    # towards zero.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, offset=t),
+        t + _shrinkage.tan_bayes(x - t),
+        rtol=1e-10,
+    )
+
+
+def test_tan_bayes_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of offset.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    np.testing.assert_allclose(_shrinkage.tan_bayes(x, dirs=np.eye(p)), x, atol=1e-12)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
+    )
+
+
+def test_tan_bayes_dirs_small_complement_is_identity():
+    # When the orthogonal complement has dimension 0, there is nothing to
+    # shrink, so the estimate is the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 6))
+    np.testing.assert_allclose(_shrinkage.tan_bayes(x, dirs=v), x, atol=1e-12)
+
+
+def test_tan_bayes_subspace_keeps_projected_component():
+    # The component of the estimate along the projected direction must equal
+    # the projection of the data; only the orthogonal residual is shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.tan_bayes(x, dirs=v)
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+    resid = (np.eye(p) - proj) @ delta
+    raw = (np.eye(p) - proj) @ x
+    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
+
+
+def test_tan_bayes_known_values():
+    # Hand-computed case.  d = [0.2, 0.5, 1.0, 1.5, 2.0], gamma=1.0 ->
+    # a = [1/6, 1/3, 1/2, 3/5, 2/3].  c* = sum(da) - 2*max(da) = 0.266... > 0.
+    d = np.array([0.2, 0.5, 1.0, 1.5, 2.0])
+    gamma = 1.0
+    a = d / (d + gamma)
+    da = d * a
+    c_star = float(np.sum(da) - 2.0 * np.max(da))
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    s_val = float(np.sum(a**2 * x**2))
+    factor = 1.0 - c_star * a / s_val
+    expected = factor * x
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=np.diag(d), gamma=gamma, positive=False),
+        expected,
+        rtol=1e-10,
+    )
+
+
+def test_tan_bayes_general_Q_matches_closed_form_broadcast():
+    # Same as test_tan_bayes_general_Q_matches_closed_form but with stacked
+    # inputs, exercising the broadcasting logic.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.eye(5)
+    b_mat = rng().normal(size=(5, 5))
+    q = b_mat @ b_mat.T + np.eye(5)
+    x = rng().normal(size=(3, 5))
+    gamma = 2.0
+    got = _shrinkage.tan_bayes(x, cov=cov, Q=q, gamma=gamma, positive=False)
+    for i in range(3):
+        np.testing.assert_allclose(
+            got[i],
+            _tan_bayes_general_formula(x[i], cov, q, gamma),
+            rtol=1e-10,
+        )

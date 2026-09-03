@@ -43,8 +43,8 @@ The implementation is split across three private modules,
 ``nustattools.stats.shrinkage._core`` (shared validation, canonicalization,
 the affine-subspace projector and the ``_estimate`` front-end),
 ``nustattools.stats.shrinkage._estimators`` (the concrete estimators
-``berger``, ``tan``, ``berger_mb`` and ``bayes``, the ``shrink`` front-end and
-the ``_METHODS`` registry)
+``berger``, ``tan``, ``berger_mb``, ``tan_bayes`` and ``bayes``, the ``shrink``
+front-end and the ``_METHODS`` registry)
 and ``nustattools.stats.shrinkage._risk`` (the Monte-Carlo risk-estimation
 helpers ``estimate_risk`` and ``estimate_risk_curve``).
 
@@ -75,7 +75,7 @@ from ._core import (
     _merge_dirs,  # noqa: F401
     _subspace_reduce,  # noqa: F401
 )
-from ._estimators import bayes, berger, berger_mb, shrink, tan
+from ._estimators import bayes, berger, berger_mb, shrink, tan, tan_bayes
 from ._risk import estimate_risk, estimate_risk_curve
 
 __all__ = [
@@ -86,4 +86,5 @@ __all__ = [
     "estimate_risk_curve",
     "shrink",
     "tan",
+    "tan_bayes",
 ]
