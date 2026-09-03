@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- New shrinkage estimator `berger_mb` (Berger's 1982 `delta^MB`, Tan2015
+  Equation 8) with a homoscedastic prior `Gamma = gamma I`, registered in
+  `shrink` and exported from `nustattools.stats.shrinkage`.
+
 ### Removed
 
 - Dropped support for Python 3.8 and 3.9. The minimum required Python version is

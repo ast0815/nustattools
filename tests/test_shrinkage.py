@@ -96,6 +96,49 @@ def _tan_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
     return delta_star @ binv.T
 
 
+def _mb_general_formula(x, cov, q, gamma, strength=1.0, positive=False):
+    """Direct implementation of Berger's delta^MB estimator for any gamma >= 0.
+
+    Independent of :func:`nustattools.stats.shrinkage.berger_mb`: diagonalizes
+    the problem in the Q-metric and implements [Tan2015]_, Equation (8) under
+    the homoscedastic prior ``Gamma = gamma I`` (so ``gamma_j = gamma``).  The
+    shrinkage constant is ``strength * (k - 2)_+``.
+
+    """
+    x = np.asarray(x, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    q = np.asarray(q, dtype=float)
+    c = np.linalg.cholesky(q).T
+    d, o = np.linalg.eigh(c @ cov @ c.T)
+    b = o.T @ c
+    binv = np.linalg.inv(b)
+    x_star = x @ b.T
+
+    p = len(d)
+    d_plus_g = d + gamma
+    d_star = d**2 / d_plus_g
+    weight = d / d_plus_g
+    order = np.argsort(d_star)[::-1]
+    d_star_sorted = d_star[order]
+    weight_sorted = weight[order]
+    x_sorted = x_star[..., order]
+
+    s_cum = np.cumsum(x_sorted**2 / d_plus_g[order], axis=-1)
+    c_k = strength * np.maximum(np.arange(p) - 1, 0.0)
+    m_k = np.minimum(1.0, c_k / s_cum)
+    d_next = np.concatenate((d_star_sorted[1:], np.zeros(1)))
+    t_k = (d_star_sorted - d_next) * m_k
+    bracket = np.cumsum(t_k[..., ::-1], axis=-1)[..., ::-1] / d_star_sorted
+
+    factor = 1.0 - weight_sorted * bracket
+    if positive:
+        factor = np.maximum(factor, 0.0)
+    delta_sorted = factor * x_sorted
+    delta_star = np.empty_like(delta_sorted)
+    delta_star[..., order] = delta_sorted
+    return delta_star @ binv.T
+
+
 def test_berger_homoscedastic_equals_james_stein():
     # For D = sigma^2 I and Q = I, Berger with c = p - 2 reduces to
     # (1 - (p-2) sigma^2 / ||x||^2) x (James-Stein).
@@ -1349,6 +1392,184 @@ def test_shrink_dispatches_tan():
     )
 
 
+def test_berger_mb_default_cov_is_identity():
+    x = rng().normal(size=6)
+    np.testing.assert_allclose(
+        _shrinkage.berger_mb(x), _shrinkage.berger_mb(x, cov=np.eye(6))
+    )
+    assert _shrinkage.berger_mb(x).shape == (6,)
+
+
+def test_berger_mb_zero_strength_is_identity():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(_shrinkage.berger_mb(x, strength=0.0), x, atol=1e-12)
+
+
+def test_berger_mb_shape():
+    p = 5
+    x = rng().normal(size=p)
+    assert _shrinkage.berger_mb(x).shape == (p,)
+    assert _shrinkage.berger_mb(x, gamma=1.0).shape == (p,)
+
+
+def test_berger_mb_broadcasting_shapes():
+    p = 5
+    x = rng().normal(size=(4, 3, p))
+    out = _shrinkage.berger_mb(x, cov=np.eye(p))
+    assert out.shape == (4, 3, p)
+    for idx in np.ndindex(4, 3):
+        np.testing.assert_allclose(
+            out[idx], _shrinkage.berger_mb(x[idx], cov=np.eye(p)), rtol=1e-12
+        )
+
+
+def test_berger_mb_matches_reference():
+    # berger_mb must equal the independently implemented Eq. (8) for a
+    # deliberately non-monotonic covariance (non-trivial permutation), any
+    # gamma >= 0, several strengths and both positive/plain versions.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + np.diag([3.0, 0.5, 1.0, 4.0, 2.0])
+    gen = rng()
+    xs = gen.multivariate_normal(np.zeros(5), cov, size=30)
+    for gamma in (0.0, 0.1, 1.0, 10.0):
+        for strength in (0.5, 1.0, 2.0):
+            for positive in (True, False):
+                got = _shrinkage.berger_mb(
+                    xs, cov=cov, gamma=gamma, strength=strength, positive=positive
+                )
+                ref = _mb_general_formula(
+                    xs, cov, np.eye(5), gamma, strength=strength, positive=positive
+                )
+                np.testing.assert_allclose(got, ref, rtol=1e-8, atol=1e-10)
+
+
+def test_berger_mb_reference_broadcasts():
+    # The elementwise reference must agree across stacked (broadcast) inputs.
+    a = rng().normal(size=(4, 4))
+    cov = a @ a.T + np.eye(4)
+    gen = rng()
+    xs = gen.normal(size=(6, 4))
+    got = _shrinkage.berger_mb(xs, cov=cov, gamma=1.0)
+    ref = _mb_general_formula(xs, cov, np.eye(4), 1.0)
+    np.testing.assert_allclose(got, ref, rtol=1e-8, atol=1e-10)
+
+
+def test_berger_mb_small_dim_is_identity():
+    # For p < 3 the constant (k-2)_+ vanishes for all k, so there is no
+    # shrinkage and the estimate is the input.
+    x = rng().normal(size=2)
+    np.testing.assert_allclose(_shrinkage.berger_mb(x), x, atol=1e-12)
+    np.testing.assert_allclose(_shrinkage.berger_mb(x, gamma=1.0), x, atol=1e-12)
+
+
+def test_berger_mb_positive_dominates_plain():
+    # The positive-part estimator must have lower (or equal) risk than the
+    # plain one.
+    rngg = rng()
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    theta = np.array([0.0, 0.0, 0.0, 2.0, 2.0])
+    xs = rngg.multivariate_normal(theta, cov, size=100_000)
+    plain_loss = np.sum(
+        (_shrinkage.berger_mb(xs, cov=cov, positive=False) - theta) ** 2, axis=1
+    )
+    pos_loss = np.sum(
+        (_shrinkage.berger_mb(xs, cov=cov, positive=True) - theta) ** 2, axis=1
+    )
+    assert np.mean(pos_loss) <= np.mean(plain_loss) + 0.05
+
+
+def test_berger_mb_minimaxity():
+    # Berger's delta^MB is minimax: its risk is never greater than tr(cov), for
+    # any true mean.  Evaluate at theta = 0 where the signal is strongest.
+    p = 5
+    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    n = 200_000
+    xs = rng().multivariate_normal(np.zeros(p), cov, size=n)
+    for gamma in (0.0, 1.0, 10.0):
+        for strength in (0.5, 1.0, 2.0):
+            loss = np.sum(
+                _shrinkage.berger_mb(xs, cov=cov, gamma=gamma, strength=strength) ** 2,
+                axis=1,
+            )
+            assert np.mean(loss) <= np.trace(cov) + 0.05
+
+
+def test_berger_mb_strength_validation():
+    for bad in (-1.0, 3.0):
+        with pytest.raises(ValueError, match="strength"):
+            _shrinkage.berger_mb(rng().normal(size=5), strength=bad)
+
+
+def test_berger_mb_gamma_validation():
+    with pytest.raises(ValueError, match="gamma"):
+        _shrinkage.berger_mb(rng().normal(size=5), gamma=-1.0)
+
+
+def test_berger_mb_point_offset_equals_shift():
+    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
+    # towards zero.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.berger_mb(x, offset=t), t + _shrinkage.berger_mb(x - t), rtol=1e-10
+    )
+
+
+def test_berger_mb_full_dirs_is_identity():
+    # dirs spanning the whole space leave nothing to shrink, so the result is
+    # the input regardless of offset.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(_shrinkage.berger_mb(x, dirs=np.eye(p)), x, atol=1e-12)
+
+
+def test_berger_mb_dirs_small_complement_is_identity():
+    # When the orthogonal complement has dimension < 3 there is no shrinkage
+    # in the complement, so the estimate is the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 4))  # complement dimension 2
+    np.testing.assert_allclose(_shrinkage.berger_mb(x, dirs=v), x, atol=1e-12)
+
+
+def test_berger_mb_subspace_keeps_projected_component():
+    # The component of the estimate along the projected direction must equal
+    # the projection of the data; only the orthogonal residual is shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    proj = _projection(v)
+    delta = _shrinkage.berger_mb(x, dirs=v)
+    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
+
+
+def test_berger_mb_small_complement_survives_general_gamma():
+    # A small complement with a moderate gamma still produces shrinkage in the
+    # low-Bayes-importance coordinates, so the result differs from the input.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 3))  # complement dimension 3
+    delta = _shrinkage.berger_mb(x, dirs=v, gamma=1.0, positive=False)
+    assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_shrink_dispatches_berger_mb():
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="berger_mb"), _shrinkage.berger_mb(x)
+    )
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method="berger_mb", gamma=1.0),
+        _shrinkage.berger_mb(x, gamma=1.0),
+    )
+
+
 def _psd_q(rank, p, gen):
     """Return a symmetric PSD ``(p, p)`` matrix of the given ``rank``."""
     w = np.concatenate([np.linspace(0.5, 3.0, rank), np.zeros(p - rank)])
@@ -1374,7 +1595,7 @@ def test_psd_Q_keeps_null_component_at_data():
     cinv = np.linalg.inv(cov)
     t = null_basis.T @ cinv @ null_basis
     p_null = null_basis @ np.linalg.solve(t, null_basis.T @ cinv)
-    for est in (_shrinkage.berger, _shrinkage.tan, s.shrink):
+    for est in (_shrinkage.berger, _shrinkage.tan, _shrinkage.berger_mb):
         kwargs = {"gamma": float("inf")} if est is _shrinkage.tan else {}
         delta = est(x, cov=cov, Q=q, **kwargs)
         np.testing.assert_allclose(delta @ p_null.T, x @ p_null.T, rtol=1e-6, atol=1e-8)
@@ -1403,7 +1624,7 @@ def test_psd_Q_null_is_auto_included_in_no_shrink_span():
     x = gen.normal(size=p)
     w, v = np.linalg.eigh(q)
     null_basis = v[:, w < 1e-10]
-    for est in (_shrinkage.berger, _shrinkage.tan):
+    for est in (_shrinkage.berger, _shrinkage.tan, _shrinkage.berger_mb):
         kwargs = {"gamma": float("inf")} if est is _shrinkage.tan else {}
         plain = est(x, cov=cov, Q=q, **kwargs)
         with_null_dirs = est(x, cov=cov, Q=q, dirs=null_basis, **kwargs)
@@ -1495,6 +1716,7 @@ def test_psd_Q_range_subspace_component_is_kept():
         for est, kwargs in (
             (_shrinkage.berger, {}),
             (_shrinkage.tan, {"gamma": np.inf}),
+            (_shrinkage.berger_mb, {}),
         ):
             delta = est(x, cov=cov, Q=q, offset=offset, dirs=dirs, **kwargs)
             dirs_r = u_r.T @ dirs

@@ -1,8 +1,9 @@
 """Individual shrinkage estimators and the ``shrink`` front-end.
 
 This private module defines the concrete minimization estimators
-(:func:`berger` and :func:`tan`), their canonical-form implementations
-(:func:`_berger_canonical`, :func:`_tan_canonical`), the :func:`shrink`
+(:func:`berger`, :func:`tan` and :func:`berger_mb`), their canonical-form
+implementations (:func:`_berger_canonical`, :func:`_tan_canonical`,
+:func:`_mb_canonical`), the :func:`shrink`
 front-end that dispatches to a named estimator, and the ``_METHODS`` registry
 used by :func:`shrink` and the risk-estimation helpers.
 
@@ -380,6 +381,180 @@ def tan(
     )
 
 
+def _mb_canonical(
+    x: NDArray[Any],
+    d: NDArray[Any],
+    *,
+    positive: bool,
+    strength: float,
+    gamma: float,
+) -> NDArray[Any]:
+    """Berger's improved minimax estimator ``delta^MB`` in canonical form.
+
+    Implements [Tan2015]_, Equation (8) (Berger's (1982) estimator, reviewed in
+    Tan2015, Section 2) for the canonical problem where the covariance is the
+    diagonal matrix ``D = diag(d)`` and the loss is the identity, under the
+    homoscedastic prior :math:`\\theta \\sim N(0, \\gamma I)`.
+
+    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``.  ``strength`` scales the shrinkage constant ``(k - 2)_+``:
+    ``strength = 1`` recovers Tan's version and ``strength = 2`` Berger's
+    original ``2(k - 2)_+``; minimaxity holds for ``0 <= strength <= 2``.
+    ``gamma`` is the (finite, non-negative) prior scale.
+
+    """
+
+    p_eff = len(d)
+    if p_eff < 3:
+        return x
+
+    # Bayes importance d* = d^2/(d+gamma), Bayes-rule weight w = d/(d+gamma)
+    # and the cumulative shrinkage statistic S_k = sum_{l<=k} x_l^2/(d_l+gamma).
+    # For gamma >= 0 these are all well-defined, with gamma=0 the Bhattacharya
+    # limit (d* = d, w = 1).  As gamma -> inf, w -> 0 and the estimator reduces
+    # to the identity (delta = X), so no separate limit is needed.
+    d_plus_g = d + gamma
+    d_star = d**2 / d_plus_g
+    weight = d / d_plus_g
+
+    # Sort by decreasing Bayes importance and reorder x to match.
+    order = np.argsort(d_star)[::-1]
+    d_star_sorted = d_star[order]
+    weight_sorted = weight[order]
+    x_sorted = x[..., order]
+
+    # S_k = sum_{l<=k} x_l^2 / (d_l + gamma), an increasing cumulative sum.
+    s_cum = np.cumsum(x_sorted**2 / d_plus_g[order], axis=-1)
+
+    # m_k = min{1, strength*(k-2)_+ / S_k}; recall k is 1-based in the paper, so
+    # at 0-based index i the term is strength * max(0, i-1).  m_0 = m_1 = 0, so
+    # the k=1,2 coordinates contribute nothing, as expected from (k-2)_+.
+    c_k = strength * np.maximum(np.arange(p_eff) - 1, 0.0)
+    m_k = np.minimum(1.0, c_k / s_cum)
+
+    # t_k = (d*_k - d*_{k+1}) * m_k, with d*_{p+1} = 0.  The bracket in Eq. (8)
+    # is B_j = (1/d*_j) * sum_{k>=j} t_k, a reverse cumulative sum.
+    d_next = np.concatenate((d_star_sorted[1:], np.zeros(1)))
+    t_k = (d_star_sorted - d_next) * m_k
+    bracket = np.cumsum(t_k[..., ::-1], axis=-1)[..., ::-1] / d_star_sorted
+
+    # delta_j = x_j * (1 - w_j * B_j), with the optional positive part.
+    factor = 1.0 - weight_sorted * bracket
+    if positive:
+        factor = np.maximum(factor, 0.0)
+    delta_sorted = cast(NDArray[Any], factor * x_sorted)
+    delta = np.empty_like(delta_sorted)
+    delta[..., order] = delta_sorted
+    return delta
+
+
+def berger_mb(
+    x: ArrayLike,
+    cov: ArrayLike | None = None,
+    *,
+    Q: ArrayLike | None = None,
+    positive: bool = True,
+    strength: float = 1.0,
+    gamma: float = 0.0,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+) -> NDArray[Any]:
+    """Berger's improved minimax shrinkage estimator ``delta^MB``.
+
+    This is Berger's (1982) estimator reviewed in [Tan2015]_, Section 2,
+    Equation (8), for a multivariate normal mean under a homoscedastic prior
+    :math:`\\theta \\sim N(0, \\gamma I)`.  It combines the Bayes rule (shrinkage
+    proportional to variance) with a minimax shrinkage magnitude that keeps the
+    estimator minimax over the whole parameter space.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed data.  A single vector of shape ``(p,)`` or a stack of
+        observations of shape ``(..., p)``.  The estimator is applied to each
+        observation over the last axis.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
+        docstring for how the loss-free null space is handled.  Defaults to the
+        identity, i.e. squared-error loss.
+    positive : bool, default=True
+        Use the positive-part estimator, which dominates the plain one.
+    strength : float, default=1.0
+        Shrinkage strength as a fraction of the critical value.  ``strength = 0``
+        gives the identity estimator, ``strength = 1`` is Tan's version (with
+        the constant ``(k - 2)_+``) and ``strength = 2`` Berger's original
+        version (with ``2(k - 2)_+``).  Must be in ``[0, 2]``.
+    gamma : float, default=0.0
+        Non-negative prior scale in the homoscedastic prior
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
+        Must be ``>= 0``.  ``gamma = 0`` corresponds to the limiting
+        Bhattacharya estimator; larger ``gamma`` shrinks coordinates more
+        strongly in the direction of the Bayes rule.  Because the Bayes weight
+        ``d_j/(d_j + gamma)`` vanishes as ``gamma -> inf``, the estimator reduces
+        to the identity there, so no infinite-gamma parameter is supported.
+    offset : array_like, default=None
+        A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
+        i.e. shrinking towards the origin.
+    dirs : array_like, default=None
+        A matrix of shape ``(p, k)`` whose columns span the affine direction
+        of shrinkage.  If given, the estimate shrinks towards the affine
+        subspace ``offset + span(dirs)``: the component in the subspace is kept
+        and the residual ``(I - P) (x - offset)`` (with ``P`` the
+        covariance-metric projector) is shrunk towards zero in the complement.
+        If ``None``, the estimate shrinks towards the single point ``offset``.
+        When ``Q`` is singular, ``null(Q)`` is added to the no-shrink subspace;
+        see the :mod:`nustattools.stats.shrinkage` module docstring for the
+        details.
+
+    Returns
+    -------
+    delta : numpy.ndarray
+        The shrinkage estimate of the mean, with the same shape as ``x``.
+
+    Notes
+    -----
+    The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless, and applies the direction
+    there.  Unlike :func:`tan`, which approximates the minimax optimal
+    shrinkage direction, this estimator uses Berger's explicit minimax
+    magnitude in the direction of the Bayes rule [Tan2015]_, Section 2.
+
+    Examples
+    --------
+
+    >>> import numpy as np
+    >>> import nustattools.stats.shrinkage as sh
+    >>> rng = np.random.default_rng(0)
+    >>> x = rng.normal(size=5)
+    >>> sh.berger_mb(x).shape
+    (5,)
+
+    """
+
+    if strength < 0 or strength > 2:
+        msg = "strength must be in [0, 2]."
+        raise ValueError(msg)
+    if gamma < 0:
+        msg = "gamma must be non-negative."
+        raise ValueError(msg)
+
+    return _estimate(
+        x,
+        cov,
+        Q,
+        _mb_canonical,
+        strength=strength,
+        gamma=gamma,
+        positive=positive,
+        offset=offset,
+        dirs=dirs,
+    )
+
+
 def shrink(
     x: ArrayLike,
     cov: ArrayLike | None = None,
@@ -412,7 +587,8 @@ def shrink(
         docstring for how the loss-free null space is handled.  Defaults to the
         identity.
     method : str, default="berger"
-        Which estimator to use.  Available: ``"berger"`` and ``"tan"``.
+        Which estimator to use.  Available: ``"berger"``, ``"tan"`` and
+        ``"berger_mb"``.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
     dirs : array_like, default=None
@@ -437,6 +613,7 @@ def shrink(
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "berger": berger,
     "tan": tan,
+    "berger_mb": berger_mb,
 }
 
 
