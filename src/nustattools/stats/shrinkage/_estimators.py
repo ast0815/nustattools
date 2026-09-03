@@ -2,10 +2,10 @@
 """Individual shrinkage estimators and the ``shrink`` front-end.
 
 This private module defines the concrete minimization estimators
-(:func:`berger`, :func:`tan`, :func:`berger_mb`, :func:`tan_bayes` and
+(:func:`berger`, :func:`tan`, :func:`minimax_bayes`, :func:`tan_bayes` and
 :func:`robust_bayes`), the non-minimax Bayes rule estimator (:func:`bayes`),
 their canonical-form implementations (:func:`_berger_canonical`,
-:func:`_tan_canonical`, :func:`_mb_canonical`, :func:`_tan_bayes_canonical`,
+:func:`_tan_canonical`, :func:`_minimax_bayes_canonical`, :func:`_tan_bayes_canonical`,
 :func:`_robust_bayes_canonical` and :func:`_bayes_canonical`), the
 :func:`shrink` front-end that dispatches to a named estimator, and the
 ``_METHODS`` registry used by :func:`shrink` and the risk-estimation helpers.
@@ -384,7 +384,7 @@ def tan(
     )
 
 
-def _mb_canonical(
+def _minimax_bayes_canonical(
     x: NDArray[Any],
     d: NDArray[Any],
     *,
@@ -451,7 +451,7 @@ def _mb_canonical(
     return delta
 
 
-def berger_mb(
+def minimax_bayes(
     x: ArrayLike,
     cov: ArrayLike | None = None,
     *,
@@ -533,7 +533,7 @@ def berger_mb(
     >>> import nustattools.stats.shrinkage as sh
     >>> rng = np.random.default_rng(0)
     >>> x = rng.normal(size=5)
-    >>> sh.berger_mb(x).shape
+    >>> sh.minimax_bayes(x).shape
     (5,)
 
     """
@@ -549,7 +549,7 @@ def berger_mb(
         x,
         cov,
         Q,
-        _mb_canonical,
+        _minimax_bayes_canonical,
         strength=strength,
         gamma=gamma,
         positive=positive,
@@ -752,7 +752,7 @@ def _robust_bayes_canonical(
 
     The estimator is *not* minimax: it is robust to misspecification of the
     prior but may have greater risk than the identity estimator.  Unlike
-    :func:`berger_mb` (which uses the same Bayes-rule weight
+    :func:`minimax_bayes` (which uses the same Bayes-rule weight
     ``w_j = d_j/(d_j + gamma)`` but with a coordinate-wise minimax magnitude),
     here the shrinkage magnitude is the scalar ``m = min(1, strength*(k-2)_+/S)``
     with ``S = sum_j x_j^2 / (d_j + gamma)``, applied uniformly::
@@ -805,7 +805,7 @@ def robust_bayes(
 
     where ``w_j = d_j/(d_j + gamma)`` is the Bayes-rule weight and
     ``S = sum_j x_j^2 / (d_j + gamma)`` in canonical coordinates.  The
-    estimator is *non-minimax* (unlike :func:`berger_mb`): it is expected to
+    estimator is *non-minimax* (unlike :func:`minimax_bayes`): it is expected to
     provide significant risk reduction over the identity when the prior is
     well-specified but is robust to misspecification.
 
@@ -1069,7 +1069,7 @@ def shrink(
         identity.
     method : str, default="berger"
         Which estimator to use.  Available: ``"berger"``, ``"tan"``,
-        ``"berger_mb"``, ``"tan_bayes"``, ``"robust_bayes"`` and ``"bayes"``.
+        ``"minimax_bayes"``, ``"tan_bayes"``, ``"robust_bayes"`` and ``"bayes"``.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
     dirs : array_like, default=None
@@ -1094,7 +1094,7 @@ def shrink(
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "berger": berger,
     "tan": tan,
-    "berger_mb": berger_mb,
+    "minimax_bayes": minimax_bayes,
     "tan_bayes": tan_bayes,
     "robust_bayes": robust_bayes,
     "bayes": bayes,
