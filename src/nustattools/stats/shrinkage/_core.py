@@ -372,32 +372,19 @@ def _estimate_pd(
     recursing into :func:`_estimate_pd`; the effective dimension of the
     shrinkage problem becomes ``len(d_perp)``.
 
-    When ``gamma`` is a named preset (currently only ``"empirical"``) present in
-    ``**kwargs``, the prior scale is resolved from the canonical data actually
-    shrunk, *per observation*, via the registered :data:`_EMPIRICAL_GAMMA_PRESETS`
-    function ``f(d, y)``; for ``"empirical"`` this is
-
-    ``gamma = ||y||^2 / p_eff``
-
-    where ``p_eff = len(d)`` and ``y`` is the centered data in canonical
-    coordinates.  A ``gamma`` that is itself a callable ``f(d, y)`` is used
-    directly in the same way: it must return a real-valued, non-negative array
-    whose shape equals ``y.shape[:-1]`` (one prior scale per observation; a
-    scalar is only accepted when ``y`` is a single vector, for which the batch
-    shape is empty).  Each observation therefore receives its own scale, so a
-    batched ``x`` (e.g. the draws of a risk sweep) yields one gamma per draw.
-    The per-observation gamma is passed to the canonical estimator as an array
-    (broadcast against the batch dims of ``x``); the supported estimators
-    vectorize, so no per-observation Python loop is needed.
-
-    When the problem is subspace-split (``dirs`` given) the residual
-    ``(eta, diag(d_perp))`` is solved by a recursive :func:`_estimate_pd` in
-    which the preset name or callable is left unresolved, so the per-observation
-    scale is derived from the reduced residual ``eta`` with effective dimension
-    ``len(d_perp)`` (rather than the full data).  The same holds when this
-    function is entered from :func:`_estimate_split` (singular loss): ``x`` is
-    already the loss-free complement residual, so the preset scale reflects
-    that reduced problem.
+    When ``gamma`` is a named preset (currently only ``"empirical"``, inferred
+    per observation as ``||y||^2 / p_eff``) or a callable ``f(d, y)``, it is
+    resolved from the canonical data actually shrunk, per observation; see the
+    :mod:`nustattools.stats.shrinkage` module docstring for the accepted forms
+    and the per-observation shape contract.  When the problem is
+    subspace-split (``dirs`` given) the residual ``(eta, diag(d_perp))`` is
+    solved by a recursive :func:`_estimate_pd` in which the preset name or
+    callable is left unresolved, so the per-observation scale is derived from
+    the reduced residual ``eta`` with effective dimension ``len(d_perp)``
+    (rather than the full data).  The same holds when this function is entered
+    from :func:`_estimate_split` (singular loss): ``x`` is already the
+    loss-free complement residual, so the preset scale reflects that reduced
+    problem.
 
     """
 

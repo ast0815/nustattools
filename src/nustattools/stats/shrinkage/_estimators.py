@@ -27,9 +27,8 @@ from numpy.typing import ArrayLike, NDArray
 
 from ._core import _estimate
 
-#: A callable prior-scale function ``f(d, y)`` mapping canonical coordinate
-#: variances ``d`` and centered canonical data ``y`` to a non-negative array of
-#: prior scales matching ``y.shape[:-1]``.
+#: Alias for a gamma prior-scale callable ``f(d, y)``; see the
+#: :mod:`nustattools.stats.shrinkage` module docstring for the contract.
 GammaCallable = Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]]
 
 
@@ -678,18 +677,10 @@ def tan_bayes(
         ``[0, 2]`` are accepted but the estimator is no longer guaranteed
         minimax.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
-        Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
-        the string ``"empirical"`` to infer it from the data as
-        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
-        prior scale per observation (its shape must match the leading batch
-        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
-        prior scales from the canonical coordinate variances ``d`` and the
-        centered canonical data ``y`` and must return a real-valued,
-        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
-        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
-        numeric.
-        Controls the Bayes-rule shrinkage direction
+        Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
+        module docstring for the accepted forms (scalar, ``"empirical"``,
+        per-observation array, or callable) and the per-observation shape
+        contract.  Controls the Bayes-rule shrinkage direction
         ``a_j = d_j / (d_j + gamma)``:
 
         - ``gamma = 0``: ``a_j = 1`` (A = I), the Berger direction with
@@ -878,18 +869,10 @@ def robust_bayes(
         accepted but push the estimator further from its recommended operating
         range.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
-        Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
-        the string ``"empirical"`` to infer it from the data as
-        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
-        prior scale per observation (its shape must match the leading batch
-        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
-        prior scales from the canonical coordinate variances ``d`` and the
-        centered canonical data ``y`` and must return a real-valued,
-        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
-        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
-        numeric.
-        ``gamma = 0`` corresponds to the spherically
+        Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
+        module docstring for the accepted forms (scalar, ``"empirical"``,
+        per-observation array, or callable) and the per-observation shape
+        contract.  ``gamma = 0`` corresponds to the spherically
         symmetric limiting form ``{1 - strength*(k-2)_+/(X^T D^{-1} X)}_+ x``
         while larger ``gamma`` shrinks coordinates more strongly in the
         direction of the Bayes rule.  Because the Bayes weight
@@ -1035,18 +1018,10 @@ def bayes(
         docstring for how the loss-free null space is handled.  Defaults to the
         identity, i.e. squared-error loss.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
-        Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
-        the string ``"empirical"`` to infer it from the data as
-        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
-        prior scale per observation (its shape must match the leading batch
-        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
-        prior scales from the canonical coordinate variances ``d`` and the
-        centered canonical data ``y`` and must return a real-valued,
-        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
-        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
-        numeric.
-        ``gamma = 0`` gives the degenerate estimate
+        Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
+        module docstring for the accepted forms (scalar, ``"empirical"``,
+        per-observation array, or callable) and the per-observation shape
+        contract.  ``gamma = 0`` gives the degenerate estimate
         ``delta = 0``; ``gamma = inf`` gives the identity estimate
         ``delta = x``; intermediate values interpolate between the two.
     offset : array_like, default=None
@@ -1161,7 +1136,10 @@ def shrink(
         is added to the no-shrink subspace; see the
         :mod:`nustattools.stats.shrinkage` module docstring for the details.
     **kwargs
-        Additional keyword arguments passed to the estimator.
+        Additional keyword arguments passed to the estimator, e.g.
+        ``strength``, ``positive``, or ``gamma`` (for the Bayes-rule
+        estimators).  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for the accepted forms of ``gamma``.
 
     Returns
     -------

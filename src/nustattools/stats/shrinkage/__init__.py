@@ -25,6 +25,36 @@ basis ``l2`` is taken orthonormal (eigenvectors of the symmetric residual
 covariance), the change of coordinates is an isometry of the squared-error
 loss, so the reduced shrinkage conserves the full loss exactly.
 
+The *prior scale* ``gamma`` of the Bayes-rule estimators — :func:`bayes`,
+:func:`robust_bayes` and :func:`tan_bayes` — selects a homoscedastic prior
+:math:`\\theta \\sim N(0, \\gamma I)` in the canonical coordinates.  It can be
+given in any of four forms:
+
+- a non-negative ``float`` giving a single prior scale shared by every
+  coordinate and observation;
+- the string ``"empirical"`` to infer the scale per observation from the data
+  as ``gamma = ||y||^2 / p_eff``, where ``y`` is the centered data in canonical
+  coordinates and ``p_eff`` is the effective dimension (one scale per
+  observation, so a batched ``x`` — e.g. the draws of a risk sweep — yields one
+  gamma per draw);
+- a one-dimensional ``numpy.ndarray`` giving an explicit prior scale per
+  observation; its shape must match the leading batch dimensions of ``x``
+  (``()`` for a single vector);
+- a callable ``f(d, y)`` that computes the prior scales from the canonical
+  coordinate variances ``d`` and the centered canonical data ``y``.  It must
+  return a real-valued, non-negative array whose shape equals ``y.shape[:-1]``
+  (one prior scale per observation; a scalar is only accepted when ``y`` is a
+  single vector).  Any error from the callable is reported as a
+  :class:`TypeError`, and a shape mismatch or negative return as a
+  :class:`ValueError`.
+
+Every form resolves to one prior scale per observation, which is passed to the
+estimator as an array broadcast against the batch dims of ``x``; the supported
+estimators vectorize, so the whole batch is solved with no per-observation
+Python loop.  The :func:`tan` and :func:`minimax_bayes` estimators, whose
+gamma-dependent coordinate ranking or segmentation does not (yet) admit a
+per-observation scale, accept only a non-negative ``float``.
+
 The loss matrix ``Q`` may be positive *semi*-definite.  Its null space carries
 no loss, so it is treated as an *additional set of no-shrink directions*,
 exactly like the columns of ``dirs``: the null space of ``Q`` is added to the
