@@ -27,6 +27,11 @@ from numpy.typing import ArrayLike, NDArray
 
 from ._core import _estimate
 
+#: A callable prior-scale function ``f(d, y)`` mapping canonical coordinate
+#: variances ``d`` and centered canonical data ``y`` to a non-negative array of
+#: prior scales matching ``y.shape[:-1]``.
+GammaCallable = Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]]
+
 
 def _berger_canonical(
     x: NDArray[Any], d: NDArray[Any], positive: bool, strength: float = 1.0
@@ -304,11 +309,12 @@ def tan(
         the boundary of the minimax class.
     gamma : float, default=0.0
         Non-negative prior scale controlling the Bayes importance segmentation
-        [Tan2015]_.  Must be ``>= 0``.  The estimator first transforms the
-        problem to *canonical form*, in which the covariance is the diagonal
-        matrix ``D = diag(d)`` and the loss is the identity, so ``d_j`` below
-        is the variance of the ``j``-th canonical coordinate (the transformed
-        problem has the same risk, so the transform is always lossless).
+        [Tan2015]_.  Must be ``>= 0``.  The estimator first
+        transforms the problem to *canonical form*, in which the covariance is
+        the diagonal matrix ``D = diag(d)`` and the loss is the identity, so
+        ``d_j`` below is the variance of the ``j``-th canonical coordinate (the
+        transformed problem has the same risk, so the transform is always
+        lossless).
 
         The prior is homoscedastic in the canonical space, :math:`\\Gamma
         \\propto \\gamma I`, entering through the Bayes importance
@@ -494,11 +500,12 @@ def minimax_bayes(
     gamma : float, default=0.0
         Non-negative prior scale in the homoscedastic prior
         :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
-        Must be ``>= 0``.  ``gamma = 0`` corresponds to the limiting
-        Bhattacharya estimator; larger ``gamma`` shrinks coordinates more
-        strongly in the direction of the Bayes rule.  Because the Bayes weight
-        ``d_j/(d_j + gamma)`` vanishes as ``gamma -> inf``, the estimator reduces
-        to the identity there, so no infinite-gamma parameter is supported.
+        Must be ``>= 0``.  ``gamma = 0`` corresponds to the
+        limiting Bhattacharya estimator; larger ``gamma`` shrinks coordinates
+        more strongly in the direction of the Bayes rule.  Because the Bayes
+        weight ``d_j/(d_j + gamma)`` vanishes as ``gamma -> inf``, the
+        estimator reduces to the identity there, so no infinite-gamma parameter
+        is supported.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
@@ -564,7 +571,7 @@ def _tan_bayes_canonical(
     *,
     positive: bool,
     strength: float,
-    gamma: float,
+    gamma: float | NDArray[Any],
 ) -> NDArray[Any]:
     """``delta_{A,c}`` in canonical form with the Bayes-rule shrinkage direction.
 
@@ -575,7 +582,9 @@ def _tan_bayes_canonical(
     ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
     ``(p,)``.  ``strength`` scales the minimax constant
     ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``: the estimator is minimax for
-    ``0 <= strength <= 2``.
+    ``0 <= strength <= 2``.  ``gamma`` is the prior scale, either a scalar
+    (shared across observations) or an array matching the batch dims of ``x``
+    (one prior scale per observation).
 
     The Bayes-rule direction ``a_j = d_j/(d_j + gamma)`` is proportional to
     variance: high-variance coordinates are shrunk more (like Berger's
@@ -592,18 +601,31 @@ def _tan_bayes_canonical(
     if p_eff < 3:
         return x
 
+    if np.ndim(gamma) > 0:
+        g = np.asarray(gamma, dtype=float)[..., None]
+        a = d / (d + g)
+        da = d * a
+        c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
+        bad = c_star_val <= 0.0
+        s_val = np.sum(a**2 * x**2, axis=-1)
+        c_actual = strength * c_star_val
+        factor = 1.0 - c_actual[..., None] * a / s_val[..., None]
+        if positive:
+            factor = np.maximum(factor, 0.0)
+        return np.where(bad[..., None], x, factor * x)
+
     a = d / (d + gamma)
     da = d * a
-    c_star_val = float(np.sum(da) - 2.0 * np.max(da))
-    if c_star_val <= 0.0:
+    c_star_scalar = float(np.sum(da) - 2.0 * np.max(da))
+    if c_star_scalar <= 0.0:
         return x
 
-    s_val = np.sum(a**2 * x**2, axis=-1)
-    c_actual = strength * c_star_val
-    factor = 1.0 - c_actual * a / s_val[..., None]
+    s_val_scalar = np.sum(a**2 * x**2, axis=-1)
+    c_actual_scalar = strength * c_star_scalar
+    factor_scalar = 1.0 - c_actual_scalar * a / s_val_scalar[..., None]
     if positive:
-        factor = np.maximum(factor, 0.0)
-    return cast(NDArray[Any], factor * x)
+        factor_scalar = np.maximum(factor_scalar, 0.0)
+    return cast(NDArray[Any], factor_scalar * x)
 
 
 def tan_bayes(
@@ -613,7 +635,7 @@ def tan_bayes(
     Q: ArrayLike | None = None,
     positive: bool = True,
     strength: float = 1.0,
-    gamma: float = 1.0,
+    gamma: float | str | GammaCallable | NDArray[Any] = 1.0,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
 ) -> NDArray[Any]:
@@ -655,10 +677,19 @@ def tan_bayes(
         ``strength = 2`` the boundary of the minimax class.  Values outside
         ``[0, 2]`` are accepted but the estimator is no longer guaranteed
         minimax.
-    gamma : float, default=1.0
+    gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
-        Must be ``>= 0``.  Controls the Bayes-rule shrinkage direction
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
+        the string ``"empirical"`` to infer it from the data as
+        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
+        prior scale per observation (its shape must match the leading batch
+        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
+        prior scales from the canonical coordinate variances ``d`` and the
+        centered canonical data ``y`` and must return a real-valued,
+        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
+        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
+        numeric.
+        Controls the Bayes-rule shrinkage direction
         ``a_j = d_j / (d_j + gamma)``:
 
         - ``gamma = 0``: ``a_j = 1`` (A = I), the Berger direction with
@@ -713,7 +744,11 @@ def tan_bayes(
 
     """
 
-    if gamma < 0:
+    if (
+        not isinstance(gamma, str)
+        and not callable(gamma)
+        and np.any(np.asarray(gamma) < 0)
+    ):
         msg = "gamma must be non-negative."
         raise ValueError(msg)
 
@@ -735,7 +770,7 @@ def _robust_bayes_canonical(
     d: NDArray[Any],
     *,
     strength: float,
-    gamma: float,
+    gamma: float | NDArray[Any],
 ) -> NDArray[Any]:
     """The robust generalised Bayes estimator ``delta^RB`` in canonical form.
 
@@ -748,7 +783,8 @@ def _robust_bayes_canonical(
     ``(p,)``.  ``strength`` scales the shrinkage constant ``(k - 2)_+`` (with
     ``k = len(d)``): ``strength = 1`` recovers Tan's version and ``strength = 2``
     Berger's original ``2(k - 2)_+``.  ``gamma`` is the (finite, non-negative)
-    prior scale.
+    prior scale, either a scalar (shared across observations) or an array
+    matching the batch dims of ``x`` (one prior scale per observation).
 
     The estimator is *not* minimax: it is robust to misspecification of the
     prior but may have greater risk than the identity estimator.  Unlike
@@ -771,6 +807,17 @@ def _robust_bayes_canonical(
     if c_k <= 0:
         return x
 
+    if np.ndim(gamma) > 0:
+        g = np.asarray(gamma, dtype=float)[..., None]
+        d_plus_g = d + g
+        weight = d / d_plus_g
+        s_val = np.sum(x**2 / d_plus_g, axis=-1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = c_k / s_val
+        m_k = np.minimum(1.0, ratio)
+        factor = 1.0 - m_k[..., None] * weight
+        return cast(NDArray[Any], factor * x)
+
     d_plus_g = d + gamma
     weight = d / d_plus_g
     s_val = np.sum(x**2 / d_plus_g, axis=-1)
@@ -789,7 +836,7 @@ def robust_bayes(
     *,
     Q: ArrayLike | None = None,
     strength: float = 1.0,
-    gamma: float = 1.0,
+    gamma: float | str | GammaCallable | NDArray[Any] = 1.0,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
 ) -> NDArray[Any]:
@@ -830,10 +877,19 @@ def robust_bayes(
         original version (with ``2(k - 2)_+``).  Values outside ``[0, 2]`` are
         accepted but push the estimator further from its recommended operating
         range.
-    gamma : float, default=1.0
+    gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
-        Must be ``>= 0``.  ``gamma = 0`` corresponds to the spherically
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
+        the string ``"empirical"`` to infer it from the data as
+        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
+        prior scale per observation (its shape must match the leading batch
+        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
+        prior scales from the canonical coordinate variances ``d`` and the
+        centered canonical data ``y`` and must return a real-valued,
+        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
+        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
+        numeric.
+        ``gamma = 0`` corresponds to the spherically
         symmetric limiting form ``{1 - strength*(k-2)_+/(X^T D^{-1} X)}_+ x``
         while larger ``gamma`` shrinks coordinates more strongly in the
         direction of the Bayes rule.  Because the Bayes weight
@@ -889,7 +945,11 @@ def robust_bayes(
 
     """
 
-    if gamma < 0:
+    if (
+        not isinstance(gamma, str)
+        and not callable(gamma)
+        and np.any(np.asarray(gamma) < 0)
+    ):
         msg = "gamma must be non-negative."
         raise ValueError(msg)
 
@@ -905,7 +965,9 @@ def robust_bayes(
     )
 
 
-def _bayes_canonical(x: NDArray[Any], d: NDArray[Any], *, gamma: float) -> NDArray[Any]:
+def _bayes_canonical(
+    x: NDArray[Any], d: NDArray[Any], *, gamma: float | NDArray[Any]
+) -> NDArray[Any]:
     """Bayes rule in canonical form under the homoscedastic prior Gamma = gamma I.
 
     The canonical problem has diagonal covariance ``D = diag(d)`` and identity
@@ -915,7 +977,9 @@ def _bayes_canonical(x: NDArray[Any], d: NDArray[Any], *, gamma: float) -> NDArr
     .. math:: \\delta_j = \\frac{\\gamma}{d_j + \\gamma} \\, x_j^*.
 
     ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
-    ``(p,)``.  ``gamma >= 0`` is the prior scale:
+    ``(p,)``.  ``gamma >= 0`` is the prior scale, either a scalar (shared across
+    observations) or an array matching the batch dims of ``x`` (one prior scale
+    per observation):
 
     - ``gamma = 0``: degenerate prior (point mass at zero); the estimate is zero.
     - ``gamma = inf``: flat prior; the estimate is the identity ``delta = x``.
@@ -925,11 +989,16 @@ def _bayes_canonical(x: NDArray[Any], d: NDArray[Any], *, gamma: float) -> NDArr
 
     """
 
-    if gamma == 0.0:
-        return np.zeros_like(x)
-    if not np.isfinite(gamma):
-        return x
-    factor = gamma / (d + gamma)
+    if np.ndim(gamma) == 0:
+        if gamma == 0.0:
+            return np.zeros_like(x)
+        if not np.isfinite(gamma):
+            return x
+        factor = gamma / (d + gamma)
+        return cast(NDArray[Any], factor * x)
+
+    g = np.asarray(gamma, dtype=float)[..., None]
+    factor = np.where(np.isfinite(g), g / (d + g), 1.0)
     return cast(NDArray[Any], factor * x)
 
 
@@ -938,7 +1007,7 @@ def bayes(
     cov: ArrayLike | None = None,
     *,
     Q: ArrayLike | None = None,
-    gamma: float = 1.0,
+    gamma: float | str | GammaCallable | NDArray[Any] = 1.0,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
 ) -> NDArray[Any]:
@@ -965,10 +1034,19 @@ def bayes(
         semi-definite; see the :mod:`nustattools.stats.shrinkage` module
         docstring for how the loss-free null space is handled.  Defaults to the
         identity, i.e. squared-error loss.
-    gamma : float, default=1.0
+    gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
-        Must be ``>= 0``.  ``gamma = 0`` gives the degenerate estimate
+        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates),
+        the string ``"empirical"`` to infer it from the data as
+        ``||y||² / p_eff``, a one-dimensional ``numpy.ndarray`` giving one
+        prior scale per observation (its shape must match the leading batch
+        dimensions of ``x``), or a callable ``f(d, y)`` that computes the
+        prior scales from the canonical coordinate variances ``d`` and the
+        centered canonical data ``y`` and must return a real-valued,
+        non-negative array of shape ``y.shape[:-1]`` (a scalar is only
+        accepted when ``y`` is a single vector).  Must be ``>= 0`` when
+        numeric.
+        ``gamma = 0`` gives the degenerate estimate
         ``delta = 0``; ``gamma = inf`` gives the identity estimate
         ``delta = x``; intermediate values interpolate between the two.
     offset : array_like, default=None
@@ -1021,7 +1099,11 @@ def bayes(
 
     """
 
-    if gamma < 0:
+    if (
+        not isinstance(gamma, str)
+        and not callable(gamma)
+        and np.any(np.asarray(gamma) < 0)
+    ):
         msg = "gamma must be non-negative."
         raise ValueError(msg)
 

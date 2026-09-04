@@ -23,6 +23,64 @@ from numpy.typing import ArrayLike, NDArray
 _EPSILON: float = np.finfo(float).eps  # pylint: disable=no-member
 
 
+def _empirical_gamma(d: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
+    """Return the per-observation empirical prior scale ``||y||^2 / p_eff``.
+
+    ``y`` has shape ``(..., p_eff)`` (the centered canonical data).  The result
+    has shape ``(...,)``: one prior scale for each observation, computed from
+    the squared norm over the trailing (coordinate) axis only.
+
+    """
+
+    p_eff = len(d)
+    norm2 = np.sum(y**2, axis=-1)
+    return cast(NDArray[Any], norm2 / p_eff)
+
+
+_EMPIRICAL_GAMMA_PRESETS: dict[
+    str, Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]]
+] = {
+    "empirical": _empirical_gamma,
+}
+
+
+def _resolve_data_gamma(
+    f: Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]],
+    d: NDArray[Any],
+    y: NDArray[Any],
+) -> NDArray[Any]:
+    """Call a data-to-scale function ``f(d, y)`` and validate its output shape.
+
+    The callable must return a real-valued array whose shape equals ``y.shape[:-1]``
+    (one prior scale per observation, i.e. exactly the leading batch dimensions of
+    the canonical data ``y``).  When ``y`` is a single vector of shape ``(p_eff,)``
+    the matching shape is ``()``, so a scalar is accepted; for batched ``y`` the
+    return must carry one scale per observation and a whole-batch reduction (that
+    would collapse independent observations) is rejected.  The returned value must
+    be non-negative.  The validated prior scales are returned as a ``float`` array
+    (a 0-d array when the batch is empty).
+
+    """
+
+    try:
+        out = np.asarray(f(d, y), dtype=float)
+    except Exception as e:
+        msg = "gamma callable must return a real-valued array of prior scales."
+        raise TypeError(msg) from e
+    if out.shape != y.shape[:-1]:
+        msg = (
+            f"gamma callable must return an array of shape {y.shape[:-1]} matching "
+            f"the batch dimensions of the data, got {out.shape}."
+        )
+        raise ValueError(msg)
+    if np.any(out < 0):
+        msg = (
+            "gamma callable returned negative prior scales; gamma must be non-negative."
+        )
+        raise ValueError(msg)
+    return out
+
+
 def _canonicalize(
     cov: NDArray[Any], q: NDArray[Any]
 ) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any]]:
@@ -314,6 +372,33 @@ def _estimate_pd(
     recursing into :func:`_estimate_pd`; the effective dimension of the
     shrinkage problem becomes ``len(d_perp)``.
 
+    When ``gamma`` is a named preset (currently only ``"empirical"``) present in
+    ``**kwargs``, the prior scale is resolved from the canonical data actually
+    shrunk, *per observation*, via the registered :data:`_EMPIRICAL_GAMMA_PRESETS`
+    function ``f(d, y)``; for ``"empirical"`` this is
+
+    ``gamma = ||y||^2 / p_eff``
+
+    where ``p_eff = len(d)`` and ``y`` is the centered data in canonical
+    coordinates.  A ``gamma`` that is itself a callable ``f(d, y)`` is used
+    directly in the same way: it must return a real-valued, non-negative array
+    whose shape equals ``y.shape[:-1]`` (one prior scale per observation; a
+    scalar is only accepted when ``y`` is a single vector, for which the batch
+    shape is empty).  Each observation therefore receives its own scale, so a
+    batched ``x`` (e.g. the draws of a risk sweep) yields one gamma per draw.
+    The per-observation gamma is passed to the canonical estimator as an array
+    (broadcast against the batch dims of ``x``); the supported estimators
+    vectorize, so no per-observation Python loop is needed.
+
+    When the problem is subspace-split (``dirs`` given) the residual
+    ``(eta, diag(d_perp))`` is solved by a recursive :func:`_estimate_pd` in
+    which the preset name or callable is left unresolved, so the per-observation
+    scale is derived from the reduced residual ``eta`` with effective dimension
+    ``len(d_perp)`` (rather than the full data).  The same holds when this
+    function is entered from :func:`_estimate_split` (singular loss): ``x`` is
+    already the loss-free complement residual, so the preset scale reflects
+    that reduced problem.
+
     """
 
     xa = np.asarray(x, dtype=float)
@@ -331,13 +416,38 @@ def _estimate_pd(
             raise ValueError(msg)
         offset_star = o @ b.T
     y = x_star - offset_star
+    if (
+        "gamma" in kwargs
+        and isinstance(kwargs["gamma"], str)
+        and kwargs["gamma"] not in _EMPIRICAL_GAMMA_PRESETS
+    ):
+        names = ", ".join(_EMPIRICAL_GAMMA_PRESETS)
+        msg = f"Unknown gamma specification '{kwargs['gamma']}'; use a number or one of: {names}."
+        raise ValueError(msg)
+    # A named preset or callable prior scale is resolved per observation: each
+    # draw gets its own scale (e.g. ||y_i||^2 / p_eff).  In the plain (no-dirs)
+    # path it is resolved here and passed to the canonical estimator as an array,
+    # which vectorizes over the batch.  In the dirs path below the preset name /
+    # callable is left unresolved so the recursive solve derives it from the
+    # reduced residual actually shrunk (eta, len(d_perp)).
     if dirs is None:
+        g = kwargs.get("gamma")
+        if isinstance(g, str):
+            resolved = _EMPIRICAL_GAMMA_PRESETS[g](d, y)
+        elif callable(g):
+            resolved = _resolve_data_gamma(g, d, y)
+        else:
+            resolved = None
+        if resolved is not None:
+            kwargs["gamma"] = float(resolved) if resolved.ndim == 0 else resolved
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
         v = b @ _validate_dirs(dirs, p)
         kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
         # The residual (eta, diag(d_perp), identity loss) is itself a canonical
         # normal problem with no subspace and no offset; solve it recursively.
+        # gamma="empirical" is intentionally left unresolved so the recursive
+        # solve derives it from the residual actually shrunk (eta, len(d_perp)).
         reduced = _estimate_pd(
             eta, np.diag(d_perp), np.eye(d_perp.shape[0]), canonical_estimator, **kwargs
         )

@@ -31,6 +31,27 @@ and this project adheres to
 
 ### Changed
 
+- The `gamma` parameter of the `bayes`, `robust_bayes` and `tan_bayes`
+  estimators accepts a numeric `float`, a one-dimensional `numpy.ndarray` with
+  one prior scale per observation (its shape must match the leading batch
+  dimensions of `x`), or the string `"empirical"` to infer the per-observation
+  scale from the data as `||y||^2 / p` where `y` is the centered data in
+  canonical coordinates and `p` is the effective dimension. The per-observation
+  scale — whether supplied explicitly or inferred via `"empirical"` — is passed
+  to the estimators as a broadcast array, so the whole batch is solved
+  vectorized with no per-observation Python loop. The `tan` and `minimax_bayes`
+  estimators' `gamma` parameter is now strictly a non-negative `float` (no
+  string, no per-observation scale): their gamma-dependent coordinate ranking or
+  segmentation does not (yet) admit a per-observation scale.
+- The `gamma="empirical"` prior scale is now dispatched through an internal
+  registry of named presets (only `"empirical"` is currently registered), which
+  lays the groundwork for future presets and callable prior scales.
+- The `gamma` parameter of the `bayes`, `robust_bayes` and `tan_bayes`
+  estimators may also be a callable `f(d, y)`, where `d` are the canonical
+  coordinate variances and `y` the centered canonical data; it must return a
+  real-valued, non-negative array of prior scales whose shape matches the batch
+  dimensions of `y`. The `tan` and `minimax_bayes` estimators remain strictly
+  `float` only.
 - `estimate_risk` and `estimate_risk_curve` are faster: the quadratic loss is
   evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws the
   Monte Carlo noise once as `N(0, cov)` and translates it to each sweep point

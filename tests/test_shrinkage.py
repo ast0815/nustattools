@@ -7,6 +7,7 @@ import pytest
 
 import nustattools.stats as s
 from nustattools.stats import shrinkage as _shrinkage
+from nustattools.stats.shrinkage._core import _empirical_gamma as _core_empirical_gamma
 
 
 def rng():
@@ -774,6 +775,32 @@ def test_estimate_risk_berger_beats_identity():
         seed=0,
     )
     assert shrinker[0] < identity[0]
+
+
+def test_estimate_risk_empirical_gamma_shrinks_near_zero():
+    # Regression: a batched risk sweep must resolve the empirical prior scale
+    # per observation.  Previously the scale was summed over the whole batch,
+    # giving gamma proportional to n_reps, so every estimator collapsed to (near)
+    # the identity and the risk at theta=0 was ~ p.  With per-observation gamma
+    # the empirical bayes estimate must shrink meaningfully near the origin.
+    p = 6
+    theta = np.zeros(p)
+    identity = _shrinkage.estimate_risk(
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=0.0),
+        n_reps=20_000,
+        seed=0,
+    )
+    empirical = _shrinkage.estimate_risk(
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, method="bayes", gamma="empirical"),
+        n_reps=20_000,
+        seed=0,
+    )
+    # Shrinking a zero mean must cut the risk well below the identity baseline.
+    assert empirical[0] < identity[0] - 1.0
 
 
 def test_estimate_risk_shares_samples():
@@ -2495,3 +2522,418 @@ def test_robust_bayes_two_dimensions_is_identity():
     # With p = 2, (p-2)_+ = 0 so there is no shrinkage.
     x = rng().normal(size=2)
     np.testing.assert_allclose(_shrinkage.robust_bayes(x, cov=np.eye(2)), x, atol=1e-12)
+
+
+_EMPIRICAL_METHODS = [
+    "bayes",
+    "robust_bayes",
+    "tan_bayes",
+]
+_FLOAT_ONLY_METHODS = [
+    "tan",
+    "minimax_bayes",
+]
+
+
+def _empirical_gamma(x, p, offset=None):
+    y = np.asarray(x, dtype=float) - (0.0 if offset is None else offset)
+    return float(np.sum(y**2)) / p
+
+
+@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
+def test_empirical_gamma_matches_explicit_identity(method):
+    # With identity covariance and loss, canonical space is the raw space, so
+    # empirical gamma = ||x||^2 / p.  The estimator must give the same
+    # result as passing that value explicitly.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    fn = getattr(_shrinkage, method)
+    gamma_exp = _empirical_gamma(x, p)
+    np.testing.assert_allclose(
+        fn(x, gamma="empirical"), fn(x, gamma=gamma_exp), rtol=1e-12
+    )
+
+
+@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
+def test_empirical_gamma_matches_explicit_offset(method):
+    # The empirical gamma is computed from the centered data x - offset, so a
+    # non-zero offset must be subtracted before taking the norm.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    t = gen.normal(size=p)
+    fn = getattr(_shrinkage, method)
+    gamma_exp = _empirical_gamma(x, p, offset=t)
+    np.testing.assert_allclose(
+        fn(x, offset=t, gamma="empirical"),
+        fn(x, offset=t, gamma=gamma_exp),
+        rtol=1e-12,
+    )
+
+
+@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
+def test_empirical_gamma_matches_explicit_general_cov(method):
+    # Under a general covariance the data must be canonicalized first; resolve
+    # the empirical gamma in canonical coordinates and compare against the
+    # explicit value.
+    gen = rng()
+    p = 5
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + p * np.eye(p)
+    x = gen.normal(size=p)
+    fn = getattr(_shrinkage, method)
+    _, v = np.linalg.eigh(cov)
+    b = v.T  # cov = B^T D B with B = V^T, so x_star = x @ B^T = x @ V
+    x_star = x @ b.T
+    gamma_exp = _empirical_gamma(x_star, p)
+    np.testing.assert_allclose(
+        fn(x, cov=cov, gamma="empirical"), fn(x, cov=cov, gamma=gamma_exp), rtol=1e-10
+    )
+
+
+def test_empirical_gamma_batched_matches_per_row():
+    # Empirical gamma is per observation, so a batched call must equal stacking
+    # the single-vector (gamma="empirical") results row by row.  This guards
+    # against the prior scale being inflated by summing over the whole batch
+    # (which made batched/risk-sweep results wrong, risk ~ 1 even at theta=0).
+    gen = rng()
+    x = gen.normal(size=(4, 7))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, gamma="empirical")
+        assert batched.shape == x.shape
+        per_row = np.stack([fn(row, gamma="empirical") for row in x])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-12)
+        # The batched result must also equal per-row explicit gamma values.
+        explicit = np.stack([fn(row, gamma=_empirical_gamma(row, p=7)) for row in x])
+        np.testing.assert_allclose(batched, explicit, rtol=1e-12, atol=1e-12)
+
+
+def test_empirical_gamma_per_observation_vector():
+    # The internal prior-scale resolver must return one value per observation
+    # (the norm over the trailing coordinate axis only).  This is the
+    # per-observation array that the vectorized estimators broadcast, so it
+    # must not sum over the batch.  There is no small-dimension clamp: the
+    # scale is always ||y||^2 / p_eff.
+    gen = rng()
+    p = 6
+    n = 5
+    d = np.linspace(0.5, 2.0, p)
+    y = gen.normal(size=(n, p))
+    g = _core_empirical_gamma(d, y)
+    assert g.shape == (n,)
+    for i in range(n):
+        expected = float(np.sum(y[i] ** 2)) / p
+        np.testing.assert_allclose(g[i], expected, rtol=1e-12, atol=1e-12)
+
+    small_input = gen.normal(size=(n, 2))
+    small = _core_empirical_gamma(np.array([0.5, 1.0]), small_input)
+    assert small.shape == (n,)
+    for i in range(n):
+        np.testing.assert_allclose(
+            small[i], float(np.sum(small_input[i] ** 2)) / 2.0, rtol=1e-12, atol=1e-12
+        )
+
+    single = _core_empirical_gamma(d, gen.normal(size=p))
+    assert single.ndim == 0
+
+
+def test_empirical_gamma_batched_with_dirs_matches_per_row():
+    # With a subspace split the per-observation scale is resolved from each
+    # row's reduced residual, so a batched dirs call must equal stacking the
+    # single-vector results.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=(5, p))
+    v = gen.normal(size=(p, 2))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, dirs=v, gamma="empirical")
+        per_row = np.stack([fn(row, dirs=v, gamma="empirical") for row in x])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-12)
+
+
+def test_empirical_gamma_small_dim_uses_plain_scale():
+    # The empirical prior scale has no small-dimension clamp: for p < 3 it is
+    # still ||y||^2 / p, so "empirical" must match passing that value explicitly
+    # rather than forcing gamma = 0.
+    gen = rng()
+    for p in (1, 2):
+        x = gen.normal(size=p)
+        for method in _EMPIRICAL_METHODS:
+            fn = getattr(_shrinkage, method)
+            gamma_exp = _empirical_gamma(x, p)
+            np.testing.assert_allclose(
+                fn(x, gamma="empirical"),
+                fn(x, gamma=gamma_exp),
+                rtol=1e-12,
+                atol=1e-12,
+            )
+
+
+def test_empirical_gamma_unknown_string_raises():
+    gen = rng()
+    x = gen.normal(size=5)
+    for method in _EMPIRICAL_METHODS:
+        with pytest.raises(ValueError, match="empirical"):
+            getattr(_shrinkage, method)(x, gamma="bogus")
+
+
+def test_float_only_methods_reject_string_gamma():
+    # tan and minimax_bayes only accept a numeric gamma; per-observation
+    # (vector) gammas and the "empirical" string are not supported because
+    # their gamma-dependent coordinate ranking/segmentation is not (yet)
+    # broadcast-friendly.  Passing a string is a type error, not a ValueError,
+    # so users get a clear hint that the parameter type is wrong.
+    gen = rng()
+    x = gen.normal(size=6)
+    v = gen.normal(size=(6, 2))
+    for method in _FLOAT_ONLY_METHODS:
+        fn = getattr(_shrinkage, method)
+        with pytest.raises(TypeError):
+            fn(x, gamma="empirical")
+        with pytest.raises(TypeError):
+            fn(x, dirs=v, gamma="empirical")
+        with pytest.raises(TypeError):
+            fn(gen.normal(size=(4, 6)), gamma="empirical")
+
+
+def test_empirical_gamma_with_dirs_matches_explicit():
+    # Empirical gamma is resolved from the residual actually shrunk: in a
+    # subspace-split problem the top level defers resolution into the recursive
+    # solve, which uses the reduced residual norm and effective dimension
+    # len(d_perp).  With identity covariance the covariance-metric projector is
+    # the Euclidean one, so the residual is (I - P) x with P = v (v^T v)^{-1} v^T
+    # and len(d_perp) = p - k.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    p_mat = v @ np.linalg.solve(v.T @ v, v.T)
+    resid = (np.eye(p) - p_mat) @ x
+    p_eff = p - v.shape[1]
+    gamma_exp = _empirical_gamma(resid, p_eff)
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, dirs=v, gamma="empirical"),
+            fn(x, dirs=v, gamma=gamma_exp),
+            rtol=1e-12,
+        )
+
+
+def test_empirical_gamma_dirs_differs_from_full_data():
+    # The subspace-split empirical gamma differs from the no-shrink full-data
+    # one: the recursive solve derives it from the residual, not the whole
+    # vector, so the kept component's norm must not inflate the prior scale.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    fn = _shrinkage.bayes
+    full_gamma = _empirical_gamma(x, p)
+    assert not np.allclose(
+        fn(x, dirs=v, gamma="empirical"), fn(x, dirs=v, gamma=full_gamma), rtol=1e-8
+    )
+
+
+def test_empirical_gamma_with_psd_Q_matches_explicit():
+    # With singular Q the null space of Q is merged into the no-shrink
+    # directions and the residual complement problem has reduced dimension;
+    # empirical gamma is resolved from that residual.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    q = np.diag([1.0, 1.0, 1.0, 1.0, 0.0, 0.0])
+    fn = _shrinkage.bayes
+    sed = np.zeros(p)
+    sed[:4] = 1.0
+    p_eff = int(np.sum(sed))
+    eta = x[sed == 1.0]
+    gamma_exp = _empirical_gamma(eta, p_eff)
+    np.testing.assert_allclose(
+        fn(x, Q=q, gamma="empirical"), fn(x, Q=q, gamma=gamma_exp), rtol=1e-12
+    )
+
+
+def test_explicit_vector_gamma_matches_per_row():
+    # The 3 elementwise estimators (bayes, robust_bayes, tan_bayes) accept an
+    # explicit vector gamma of shape (...,) — one prior scale per observation
+    # — and produce the same result as stacking per-row calls.  This is the
+    # new contract; "empirical" resolves internally to the same shape.
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    g = gen.uniform(0.0, 3.0, size=n)
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, gamma=g)
+        per_row = np.stack([fn(x[i], gamma=g[i]) for i in range(n)])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-14)
+
+
+def test_explicit_vector_gamma_with_dirs():
+    # The vector gamma also flows correctly through a subspace split: the
+    # recursive solve sees the same per-observation scales, since the residual
+    # preserves the leading batch dimensions.
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    g = gen.uniform(0.0, 3.0, size=n)
+    v = gen.normal(size=(p, 2))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, dirs=v, gamma=g)
+        per_row = np.stack([fn(x[i], dirs=v, gamma=g[i]) for i in range(n)])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-14)
+
+
+def test_vector_gamma_rejects_negative():
+    # A vector gamma with any negative entry is rejected.
+    gen = rng()
+    x = gen.normal(size=(3, 4))
+    g_bad = np.array([1.0, -0.1, 2.0])
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        with pytest.raises(ValueError, match="non-negative"):
+            fn(x, gamma=g_bad)
+
+
+def test_callable_gamma_matches_explicit_per_obs():
+    # A gamma callable f(d, y) is resolved per observation: for a batched x it
+    # must return shape (n,) and the result must equal passing that per-obs
+    # array explicitly.
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        g = gen.uniform(0.0, 3.0, size=n)
+        np.testing.assert_allclose(
+            fn(x, gamma=lambda _d, y, g=g: np.full(y.shape[:-1], g)),
+            fn(x, gamma=g.astype(float)),
+            rtol=1e-12,
+            atol=1e-14,
+        )
+
+
+def test_callable_gamma_single_vector_scalar():
+    # For a single vector (batch shape ()) a callable may return a scalar, which
+    # is the matching shape; it must equal passing that value explicitly.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+
+    def f(_d, y):
+        return np.sum(y**2) / p
+
+    fn = _shrinkage.bayes
+    np.testing.assert_allclose(
+        fn(x, gamma=f), fn(x, gamma=float(np.sum(x**2) / p)), rtol=1e-12, atol=1e-14
+    )
+
+
+def test_callable_gamma_batched_rejects_scalar():
+    # For a batched x the runtime batch shape is non-empty, so a callable that
+    # returns a scalar (a whole-batch reduction) does not match the required
+    # shape and is rejected.
+    gen = rng()
+    x = gen.normal(size=(4, 6))
+
+    def f(_d, y):
+        return np.sum(y**2)
+
+    with pytest.raises(ValueError, match="matching"):
+        _shrinkage.bayes(x, gamma=f)
+
+
+def test_callable_gamma_with_dirs_matches_per_row():
+    # A callable flows through the subspace-split recursion: the top level
+    # defers resolution and the recursive solve derives the scale from the
+    # reduced residual, so batched dirs must equal stacking per-row calls.
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    v = gen.normal(size=(p, 2))
+
+    def f(d, y):
+        return np.sum(y**2, axis=-1) / len(d)
+
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, dirs=v, gamma=f)
+        per_row = np.stack([fn(x[i], dirs=v, gamma=f) for i in range(n)])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-14)
+
+
+def test_callable_gamma_via_shrink_frontend():
+    # The shrink() front-end forwards the callable to the resolved estimator.
+    gen = rng()
+    x = gen.normal(size=6)
+
+    def f(d, y):
+        return np.sum(y**2, axis=-1) / len(d)
+
+    np.testing.assert_allclose(
+        s.shrink(x, method="bayes", gamma=f),
+        _shrinkage.bayes(x, gamma=f),
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_callable_gamma_rejects_negative():
+    # A callable returning negative prior scales is rejected.
+    gen = rng()
+    x = gen.normal(size=(3, 4))
+
+    def f(_d, y):
+        return -np.ones(y.shape[:-1])
+
+    with pytest.raises(ValueError, match="non-negative"):
+        _shrinkage.bayes(x, gamma=f)
+
+
+def test_callable_gamma_rejects_bad_shape():
+    # A callable returning the full coordinate shape (..., p) or any shape other
+    # than the batch dims is rejected.
+    gen = rng()
+    x = gen.normal(size=(3, 4))
+
+    def f(_d, y):
+        return np.ones(y.shape)
+
+    with pytest.raises(ValueError, match="matching"):
+        _shrinkage.bayes(x, gamma=f)
+
+
+def test_callable_gamma_rejects_non_numeric():
+    # A callable returning a non-numeric / non-array value is rejected.
+    gen = rng()
+    x = gen.normal(size=(3, 4))
+
+    def f(_d, _y):
+        return "not a gamma"
+
+    with pytest.raises(TypeError):
+        _shrinkage.bayes(x, gamma=f)
+
+
+def test_float_only_methods_reject_callable_gamma():
+    # tan and minimax_bayes only accept a numeric gamma; a callable prior scale
+    # is rejected just like a string or vector gamma.
+    gen = rng()
+    x = gen.normal(size=6)
+
+    def f(_d, y):
+        return np.full(y.shape[:-1], 1.0)
+
+    for method in _FLOAT_ONLY_METHODS:
+        fn = getattr(_shrinkage, method)
+        with pytest.raises(TypeError):
+            fn(x, gamma=f)
