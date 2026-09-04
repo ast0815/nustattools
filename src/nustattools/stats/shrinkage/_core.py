@@ -51,14 +51,14 @@ def _resolve_data_gamma(
 ) -> NDArray[Any]:
     """Call a data-to-scale function ``f(d, y)`` and validate its output shape.
 
-    The callable must return a real-valued array whose shape equals ``y.shape[:-1]``
-    (one prior scale per observation, i.e. exactly the leading batch dimensions of
-    the canonical data ``y``).  When ``y`` is a single vector of shape ``(p_eff,)``
-    the matching shape is ``()``, so a scalar is accepted; for batched ``y`` the
-    return must carry one scale per observation and a whole-batch reduction (that
-    would collapse independent observations) is rejected.  The returned value must
-    be non-negative.  The validated prior scales are returned as a ``float`` array
-    (a 0-d array when the batch is empty).
+    The callable must return a real-valued array of prior scales that is either
+    a singular scalar (a single scale shared by every observation, natural when
+    it is computed only from ``d`` and not the data ``y``) or an array whose
+    shape equals ``y.shape[:-1]`` (one prior scale per observation, i.e.
+    exactly the leading batch dimensions of the canonical data ``y``).  Any
+    other shape would collapse independent observations and is rejected.  The
+    returned value must be non-negative.  The validated prior scales are
+    returned as a ``float`` array (a 0-d array for a scalar).
 
     """
 
@@ -67,10 +67,11 @@ def _resolve_data_gamma(
     except Exception as e:
         msg = "gamma callable must return a real-valued array of prior scales."
         raise TypeError(msg) from e
-    if out.shape != y.shape[:-1]:
+    if out.ndim != 0 and out.shape != y.shape[:-1]:
         msg = (
-            f"gamma callable must return an array of shape {y.shape[:-1]} matching "
-            f"the batch dimensions of the data, got {out.shape}."
+            f"gamma callable must return a scalar or an array of shape "
+            f"{y.shape[:-1]} matching the batch dimensions of the data, got "
+            f"shape {out.shape}."
         )
         raise ValueError(msg)
     if np.any(out < 0):

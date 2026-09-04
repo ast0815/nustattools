@@ -41,10 +41,11 @@ given in any of four forms:
   observation; its shape must match the leading batch dimensions of ``x``
   (``()`` for a single vector);
 - a callable ``f(d, y)`` that computes the prior scales from the canonical
-  coordinate variances ``d`` and the centered canonical data ``y``.  It must
-  return a real-valued, non-negative array whose shape equals ``y.shape[:-1]``
-  (one prior scale per observation; a scalar is only accepted when ``y`` is a
-  single vector).  Any error from the callable is reported as a
+  coordinate variances ``d`` and the centered canonical data ``y``.  It may
+  return either a singular scalar (a single scale shared by every observation,
+  e.g. when the scale is inferred only from ``d`` and not the data) or a
+  real-valued, non-negative array whose shape equals ``y.shape[:-1]`` (one
+  prior scale per observation).  Any error from the callable is reported as a
   :class:`TypeError`, and a shape mismatch or negative return as a
   :class:`ValueError`.
 

@@ -49,9 +49,10 @@ and this project adheres to
 - The `gamma` parameter of the `bayes`, `robust_bayes` and `tan_bayes`
   estimators may also be a callable `f(d, y)`, where `d` are the canonical
   coordinate variances and `y` the centered canonical data; it must return a
-  real-valued, non-negative array of prior scales whose shape matches the batch
-  dimensions of `y`. The `tan` and `minimax_bayes` estimators remain strictly
-  `float` only.
+  real-valued, non-negative array of prior scales, either a singular scalar (one
+  scale shared by every observation, e.g. inferred only from `d`) or an array
+  whose shape matches the batch dimensions of `y`. The `tan` and `minimax_bayes`
+  estimators remain strictly `float` only.
 - `estimate_risk` and `estimate_risk_curve` are faster: the quadratic loss is
   evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws the
   Monte Carlo noise once as `N(0, cov)` and translates it to each sweep point

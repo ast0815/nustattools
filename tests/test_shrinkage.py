@@ -2837,18 +2837,67 @@ def test_callable_gamma_single_vector_scalar():
     )
 
 
-def test_callable_gamma_batched_rejects_scalar():
-    # For a batched x the runtime batch shape is non-empty, so a callable that
-    # returns a scalar (a whole-batch reduction) does not match the required
-    # shape and is rejected.
+def test_callable_gamma_scalar_shared_across_batch():
+    # A callable may return a singular scalar, giving one scale shared by every
+    # observation in the batch (natural when the scale is computed only from d,
+    # e.g. a d-only callable).  It must equal passing that scalar explicitly.
     gen = rng()
-    x = gen.normal(size=(4, 6))
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    g = float(np.mean(np.linspace(0.5, 2.0, p)))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, gamma=lambda _d, _y: g),
+            fn(x, gamma=g),
+            rtol=1e-12,
+            atol=1e-14,
+        )
 
-    def f(_d, y):
-        return np.sum(y**2)
 
-    with pytest.raises(ValueError, match="matching"):
-        _shrinkage.bayes(x, gamma=f)
+def test_callable_gamma_d_only_scalar():
+    # A callable that infers the scale only from the coordinate variances d
+    # (ignoring the data y) returns a scalar shared across the batch, and must
+    # equal passing that scalar explicitly.
+    gen = rng()
+    p = 6
+    n = 3
+    x = gen.normal(size=(n, p))
+    d = np.linspace(0.5, 2.0, p)
+
+    def f(d, _y):
+        return float(np.mean(d))
+
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, cov=np.diag(d), gamma=f),
+            fn(x, cov=np.diag(d), gamma=float(np.mean(d))),
+            rtol=1e-12,
+            atol=1e-14,
+        )
+
+
+def test_callable_gamma_scalar_with_dirs():
+    # A scalar-returning callable flows through the subspace-split recursion:
+    # the top level defers resolution and the recursive solve re-derives the
+    # same single scale from the reduced residual, so the result equals passing
+    # the scalar explicitly.
+    gen = rng()
+    p = 6
+    n = 3
+    x = gen.normal(size=(n, p))
+    v = gen.normal(size=(p, 2))
+    g = float(np.mean(np.linspace(0.5, 2.0, p)))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, dirs=v, gamma=lambda _d, _y: g),
+            fn(x, dirs=v, gamma=g),
+            rtol=1e-12,
+            atol=1e-14,
+        )
 
 
 def test_callable_gamma_with_dirs_matches_per_row():
