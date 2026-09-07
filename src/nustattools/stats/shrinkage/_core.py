@@ -23,47 +23,53 @@ from numpy.typing import ArrayLike, NDArray
 _EPSILON: float = np.finfo(float).eps  # pylint: disable=no-member
 
 
-def _empirical_gamma(d: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
-    """Return the per-observation empirical prior scale ``||y||^2 / p_eff``.
+def _empirical_gamma(
+    d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]
+) -> NDArray[Any]:
+    """Return the per-observation empirical prior scale ``||y / sqrt(pi)||^2 / p_eff``.
 
-    ``y`` has shape ``(..., p_eff)`` (the centered canonical data).  The result
-    has shape ``(...,)``: one prior scale for each observation, computed from
-    the squared norm over the trailing (coordinate) axis only.
+    ``y`` has shape ``(..., p_eff)`` (the centered canonical data) and ``pi``
+    has shape ``(p_eff,)`` (the canonical diagonal of the prior covariance,
+    all ones for the default homoscedastic prior).  The result has shape
+    ``(...,)``: one prior scale for each observation, computed from the
+    squared norm over the trailing (coordinate) axis only, after normalising
+    each coordinate by the corresponding prior scale ``sqrt(pi_j)``.
 
     """
 
     p_eff = len(d)
-    norm2 = np.sum(y**2, axis=-1)
-    return cast(NDArray[Any], norm2 / p_eff)
+    safe_pi = np.where(pi > 0, pi, 1.0)
+    return cast(NDArray[Any], np.sum(y**2 / safe_pi, axis=-1) / p_eff)
 
 
 _EMPIRICAL_GAMMA_PRESETS: dict[
-    str, Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]]
+    str, Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]
 ] = {
     "empirical": _empirical_gamma,
 }
 
 
 def _resolve_data_gamma(
-    f: Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]],
+    f: Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]],
     d: NDArray[Any],
+    pi: NDArray[Any],
     y: NDArray[Any],
 ) -> NDArray[Any]:
-    """Call a data-to-scale function ``f(d, y)`` and validate its output shape.
+    """Call a data-to-scale function ``f(d, pi, y)`` and validate its output shape.
 
     The callable must return a real-valued array of prior scales that is either
     a singular scalar (a single scale shared by every observation, natural when
-    it is computed only from ``d`` and not the data ``y``) or an array whose
-    shape equals ``y.shape[:-1]`` (one prior scale per observation, i.e.
-    exactly the leading batch dimensions of the canonical data ``y``).  Any
-    other shape would collapse independent observations and is rejected.  The
-    returned value must be non-negative.  The validated prior scales are
+    it is computed only from ``d`` / ``pi`` and not the data ``y``) or an
+    array whose shape equals ``y.shape[:-1]`` (one prior scale per observation,
+    i.e. exactly the leading batch dimensions of the canonical data ``y``).
+    Any other shape would collapse independent observations and is rejected.
+    The returned value must be non-negative.  The validated prior scales are
     returned as a ``float`` array (a 0-d array for a scalar).
 
     """
 
     try:
-        out = np.asarray(f(d, y), dtype=float)
+        out = np.asarray(f(d, pi, y), dtype=float)
     except Exception as e:
         msg = "gamma callable must return a real-valued array of prior scales."
         raise TypeError(msg) from e
@@ -169,7 +175,7 @@ def _canonicalize_prior(
     orthogonal rotation within a group of (near-)equal canonical variances
     ``d`` leaves ``B cov B^T`` diagonal -- to make
     ``b_rot @ prior_cov @ b_rot.T`` diagonal as well, and returns that diagonal
-    as ``pi_diag`` together with the rotated ``b_rot``.
+    as ``pi`` together with the rotated ``b_rot``.
 
     When all canonical variances coincide (in particular for a data covariance
     proportional to ``Q^{-1}``, where ``D`` is a scalar multiple of the
@@ -210,15 +216,15 @@ def _canonicalize_prior(
                     )
                     raise ValueError(msg)
     rot = np.eye(p)
-    pi_diag = np.empty(p)
+    pi = np.empty(p)
     for group in groups:
         evals, evecs = np.linalg.eigh(w[np.ix_(group, group)])
         rot[np.ix_(group, group)] = evecs.T
-        pi_diag[group] = evals
-    if np.any(pi_diag <= 0):
+        pi[group] = evals
+    if np.any(pi <= 0):
         msg = "prior covariance matrix must be positive definite (in canonical coordinates)."
         raise ValueError(msg)
-    return pi_diag, rot @ b
+    return pi, rot @ b
 
 
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
@@ -502,7 +508,7 @@ def _estimate_pd(
     ``prior_cov`` is the prior covariance in the *original* coordinates; when
     given, the canonical frame is rotated (whenever the canonical variances
     allow; see :func:`_canonicalize_prior`) so that the prior is diagonal in the
-    canonical coordinates, and its diagonal ``pi_diag`` is threaded to the
+    canonical coordinates, and its diagonal ``pi`` is threaded to the
     canonical estimator as the shape of the prior (scaled by ``gamma``).
     Without it the prior reduces to the homoscedastic ``gamma I`` of the current
     implementation.
@@ -519,18 +525,18 @@ def _estimate_pd(
     again by the recursive solve.
 
     When ``gamma`` is a named preset (currently only ``"empirical"``, inferred
-    per observation as ``||y||^2 / p_eff``) or a callable ``f(d, y)``, it is
-    resolved from the canonical data actually shrunk, per observation; see the
-    :mod:`nustattools.stats.shrinkage` module docstring for the accepted forms
-    and the per-observation shape contract.  When the problem is
-    subspace-split (``dirs`` given) the residual ``(eta, diag(d_perp))`` is
-    solved by a recursive :func:`_estimate_pd` in which the preset name or
-    callable is left unresolved, so the per-observation scale is derived from
-    the reduced residual ``eta`` with effective dimension ``len(d_perp)``
-    (rather than the full data).  The same holds when this function is entered
-    from :func:`_estimate_split` (singular loss): ``x`` is already the
-    loss-free complement residual, so the preset scale reflects that reduced
-    problem.
+    per observation as ``||y / sqrt(pi)||^2 / p_eff``) or a callable
+    ``f(d, pi, y)``, it is resolved from the canonical data actually shrunk,
+    per observation; see the :mod:`nustattools.stats.shrinkage` module docstring
+    for the accepted forms and the per-observation shape contract.  When the
+    problem is subspace-split (``dirs`` given) the residual
+    ``(eta, diag(d_perp))`` is solved by a recursive :func:`_estimate_pd` in
+    which the preset name or callable is left unresolved, so the per-observation
+    scale is derived from the reduced residual ``eta`` with effective dimension
+    ``len(d_perp)`` (rather than the full data).  The same holds when this
+    function is entered from :func:`_estimate_split` (singular loss): ``x`` is
+    already the loss-free complement residual, so the preset scale reflects
+    that reduced problem.
 
     """
 
@@ -540,11 +546,11 @@ def _estimate_pd(
     p = qa.shape[0]
     b, binv, d = _canonicalize(cova, qa)
     if prior_cov is None:
-        pi_diag = np.ones(p)
+        pi = np.ones(p)
     else:
         pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
         free = _cov_proportional_to_qinv(cova, qa)
-        pi_diag, b = _canonicalize_prior(b, d, pc, free_rotation=free)
+        pi, b = _canonicalize_prior(b, d, pc, free_rotation=free)
         binv = np.linalg.inv(b)
     x_star = xa @ b.T
     if offset is None:
@@ -565,35 +571,35 @@ def _estimate_pd(
         msg = f"Unknown gamma specification '{kwargs['gamma']}'; use a number or one of: {names}."
         raise ValueError(msg)
     # A named preset or callable prior scale is resolved per observation: each
-    # draw gets its own scale (e.g. ||y_i||^2 / p_eff).  In the plain (no-dirs)
-    # path it is resolved here and passed to the canonical estimator as an array,
-    # which vectorizes over the batch.  In the dirs path below the preset name /
-    # callable is left unresolved so the recursive solve derives it from the
-    # reduced residual actually shrunk (eta, len(d_perp)).
+    # draw gets its own scale (e.g. ||y_i / sqrt(pi)||^2 / p_eff).  In the plain
+    # (no-dirs) path it is resolved here and passed to the canonical estimator
+    # as an array, which vectorizes over the batch.  In the dirs path below the
+    # preset name / callable is left unresolved so the recursive solve derives
+    # it from the reduced residual actually shrunk (eta, len(d_perp)).
     if dirs is None:
         g = kwargs.get("gamma")
         if isinstance(g, str):
-            resolved = _EMPIRICAL_GAMMA_PRESETS[g](d, y)
+            resolved = _EMPIRICAL_GAMMA_PRESETS[g](d, pi, y)
         elif callable(g):
-            resolved = _resolve_data_gamma(g, d, y)
+            resolved = _resolve_data_gamma(g, d, pi, y)
         else:
             resolved = None
         if resolved is not None:
             kwargs["gamma"] = float(resolved) if resolved.ndim == 0 else resolved
         if prior_cov is not None:
-            kwargs["pi_diag"] = pi_diag
+            kwargs["pi"] = pi
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
         v = b @ _validate_dirs(dirs, p)
         kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
         # The reduced problem's prior covariance: the canonical prior
-        # diag(pi_diag) restricted to the residual subspace in the orthonormal
-        # residual basis l2 is l2^T diag(pi_diag) l2; pass it on so the
-        # recursive solve canonicalizes (and where possible diagonalizes) it.
-        # With no explicit prior the reduced problem inherits none (the
-        # homoscedastic default).
+        # diag(pi) restricted to the residual subspace in the orthonormal
+        # residual basis l2 is l2^T diag(pi) l2; pass it on so the recursive
+        # solve canonicalizes (and where possible diagonalizes) it.  With no
+        # explicit prior the reduced problem inherits none (the homoscedastic
+        # default).
         reduced_prior: NDArray[Any] | None = (
-            None if prior_cov is None else l2.T @ np.diag(pi_diag) @ l2
+            None if prior_cov is None else l2.T @ np.diag(pi) @ l2
         )
         # The residual (eta, diag(d_perp), identity loss) is itself a canonical
         # normal problem with no subspace and no offset; solve it recursively.

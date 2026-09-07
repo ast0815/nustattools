@@ -57,19 +57,22 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
 - a non-negative ``float`` giving a single prior scale shared by every
   coordinate and observation;
 - the string ``"empirical"`` to infer the scale per observation from the data
-  as ``gamma = ||y||^2 / p_eff``, where ``y`` is the centered data in canonical
-  coordinates and ``p_eff`` is the effective dimension (one scale per
-  observation, so a batched ``x`` — e.g. the draws of a risk sweep — yields one
-  gamma per draw);
+  as ``gamma = ||y / sqrt(pi)||^2 / p_eff``, where ``y`` is the centered data in
+  canonical coordinates, ``pi`` is the canonical diagonal of the prior
+  covariance (all ones without ``prior_cov``) and ``p_eff`` is the effective
+  dimension (one scale per observation, so a batched ``x`` — e.g. the draws
+  of a risk sweep — yields one gamma per draw);
 - a one-dimensional ``numpy.ndarray`` giving an explicit prior scale per
   observation; its shape must match the leading batch dimensions of ``x``
   (``()`` for a single vector);
-- a callable ``f(d, y)`` that computes the prior scales from the canonical
-  coordinate variances ``d`` and the centered canonical data ``y``.  It may
-  return either a singular scalar (a single scale shared by every observation,
-  e.g. when the scale is inferred only from ``d`` and not the data) or a
-  real-valued, non-negative array whose shape equals ``y.shape[:-1]`` (one
-  prior scale per observation).  Any error from the callable is reported as a
+- a callable ``f(d, pi, y)`` that computes the prior scales from the canonical
+  coordinate variances ``d`` (shape ``(p,)``), the canonical diagonal ``pi`` of
+  the prior covariance (shape ``(p,)``; all ones without ``prior_cov``), and
+  the centered canonical data ``y``.  It may return either a singular scalar
+  (a single scale shared by every observation, e.g. when the scale is inferred
+  only from ``d`` / ``pi`` and not the data) or a real-valued, non-negative
+  array whose shape equals ``y.shape[:-1]`` (one prior scale per
+  observation).  Any error from the callable is reported as a
   :class:`TypeError`, and a shape mismatch or negative return as a
   :class:`ValueError`.
 

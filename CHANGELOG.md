@@ -63,12 +63,19 @@ and this project adheres to
   registry of named presets (only `"empirical"` is currently registered), which
   lays the groundwork for future presets and callable prior scales.
 - The `gamma` parameter of the `bayes`, `robust_bayes` and `tan_bayes`
-  estimators may also be a callable `f(d, y)`, where `d` are the canonical
-  coordinate variances and `y` the centered canonical data; it must return a
-  real-valued, non-negative array of prior scales, either a singular scalar (one
-  scale shared by every observation, e.g. inferred only from `d`) or an array
-  whose shape matches the batch dimensions of `y`. The `tan` and `minimax_bayes`
-  estimators remain strictly `float` only.
+  estimators may also be a callable `f(d, pi, y)`, where `d` are the canonical
+  coordinate variances, `pi` the canonical diagonal of the prior covariance (all
+  ones without `prior_cov`) and `y` the centered canonical data; it must return
+  a real-valued, non-negative array of prior scales, either a singular scalar
+  (one scale shared by every observation, e.g. inferred only from `d` / `pi`) or
+  an array whose shape matches the batch dimensions of `y`. The `tan` and
+  `minimax_bayes` estimators remain strictly `float` only.
+- The `"empirical"` preset computes the prior-aware MLE-like scale
+  `||y / sqrt(pi)||^2 / p` (so the default homoscedastic prior recovers the
+  classic `||y||^2 / p`); the callable now receives `pi` for custom scale
+  formulas.
+- The canonical-prior diagonal threaded to the canonical estimators is named
+  `pi` (matching `d`), not `pi_diag`.
 - `estimate_risk` and `estimate_risk_curve` are faster: the quadratic loss is
   evaluated without the `(p, p)` einsum, and `estimate_risk_curve` now draws the
   Monte Carlo noise once as `N(0, cov)` and translates it to each sweep point

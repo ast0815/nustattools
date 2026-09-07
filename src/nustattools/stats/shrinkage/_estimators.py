@@ -27,9 +27,9 @@ from numpy.typing import ArrayLike, NDArray
 
 from ._core import _estimate
 
-#: Alias for a gamma prior-scale callable ``f(d, y)``; see the
+#: Alias for a gamma prior-scale callable ``f(d, pi, y)``; see the
 #: :mod:`nustattools.stats.shrinkage` module docstring for the contract.
-GammaCallable = Callable[[NDArray[Any], NDArray[Any]], NDArray[Any]]
+GammaCallable = Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]
 
 
 def _berger_canonical(
@@ -165,7 +165,7 @@ def _tan_canonical(
     positive: bool,
     strength: float,
     gamma: float,
-    pi_diag: NDArray[Any] | None = None,
+    pi: NDArray[Any] | None = None,
 ) -> NDArray[Any]:
     """Tan's improved minimax estimator in canonical form.
 
@@ -208,15 +208,15 @@ def _tan_canonical(
       classic flat-canonical-prior :math:`d_j^2`).  Low-importance coordinates
       are shrunk proportional to their variance.
 
-    ``pi_diag`` (the canonical diagonal of an explicit prior covariance
-    ``Theta``, default all ones) gives the base prior shape scaled by
-    ``gamma``: the effective per-coordinate prior variance is
-    ``gamma * pi_diag[j]``, replacing ``gamma`` throughout the Bayes-rule
-    direction and importance above.  As ``gamma`` increases the relative
-    importance ordering of the coordinates ranges from ``d_j`` (``gamma = 0``,
-    shape-independent) through :math:`d_j^2/(d_j + \\gamma \\pi_j)` to
-    :math:`d_j^2/\\pi_j` (``gamma = inf``; for the default homoscedastic shape
-    ``pi_j = 1`` this is the flat-prior ``d_j^2`` ranking).
+    ``pi`` (the canonical diagonal of an explicit prior covariance ``Theta``,
+    default all ones) gives the base prior shape scaled by ``gamma``: the
+    effective per-coordinate prior variance is ``gamma * pi[j]``, replacing
+    ``gamma`` throughout the Bayes-rule direction and importance above.  As
+    ``gamma`` increases the relative importance ordering of the coordinates
+    ranges from ``d_j`` (``gamma = 0``, shape-independent) through
+    :math:`d_j^2/(d_j + \\gamma \\pi_j)` to :math:`d_j^2/\\pi_j` (``gamma =
+    inf``; for the default homoscedastic shape ``pi_j = 1`` this is the
+    flat-prior ``d_j^2`` ranking).
 
     """
 
@@ -226,19 +226,19 @@ def _tan_canonical(
 
     # Bayes importance d* = d^2/(d+gamma*pi), weight (d+gamma*pi)/d^2 and the
     # low-importance Bayes-rule direction a = d/(d+gamma*pi) (see Corollary 3).
-    # An explicit prior shape pi_diag makes the effective prior variance
-    # gamma * pi_diag (per coordinate).  Only the gamma=0 limit is
+    # An explicit prior shape pi makes the effective prior variance
+    # gamma * pi (per coordinate).  Only the gamma=0 limit is
     # shape-independent (d* -> d); the gamma=inf limit below ranks coordinates
     # by d^2/pi (shape-dependent), reducing to d^2 for the default
     # homoscedastic shape.
-    if pi_diag is None:
-        pi_diag = np.ones(p_eff)
+    if pi is None:
+        pi = np.ones(p_eff)
     if gamma == 0.0:
         d_star = d
         weight = 1.0 / d
         low_a = np.ones(p_eff)
     elif not np.isfinite(gamma):
-        # gamma -> inf with a fixed prior shape pi_diag (guaranteed > 0): the
+        # gamma -> inf with a fixed prior shape pi (guaranteed > 0): the
         # effective per-coordinate prior variance gamma*pi_j outgrows the
         # coordinate variance, so d*_j -> d_j^2/(gamma*pi_j), weight ->
         # gamma*pi_j/d_j^2 and low_a -> d_j/(gamma*pi_j).  The common gamma
@@ -246,11 +246,11 @@ def _tan_canonical(
         # so they are dropped here: d_star = d^2/pi, weight = pi/d^2,
         # low_a = d/pi.  For the default homoscedastic shape (pi_j = 1) this is
         # the classic A†_inf (d^2, 1/d^2, d).
-        d_star = d**2 / pi_diag
-        weight = pi_diag / d**2
-        low_a = d / pi_diag
+        d_star = d**2 / pi
+        weight = pi / d**2
+        low_a = d / pi
     else:
-        d_plus_g = d + gamma * pi_diag
+        d_plus_g = d + gamma * pi
         d_star = d**2 / d_plus_g
         weight = d_plus_g / d**2
         low_a = d / d_plus_g
@@ -451,7 +451,7 @@ def _minimax_bayes_canonical(
     positive: bool,
     strength: float,
     gamma: float,
-    pi_diag: NDArray[Any] | None = None,
+    pi: NDArray[Any] | None = None,
 ) -> NDArray[Any]:
     """Berger's improved minimax estimator ``delta^MB`` in canonical form.
 
@@ -464,9 +464,9 @@ def _minimax_bayes_canonical(
     ``(p,)``.  ``strength`` scales the shrinkage constant ``(k - 2)_+``:
     ``strength = 1`` recovers Tan's version and ``strength = 2`` Berger's
     original ``2(k - 2)_+``; minimaxity holds for ``0 <= strength <= 2``.
-    ``gamma`` is the (finite, non-negative) prior scale.  ``pi_diag`` (default
-    all ones) is the canonical diagonal of an explicit prior covariance, making
-    the effective per-coordinate prior variance ``gamma * pi_diag[j]``.
+    ``gamma`` is the (finite, non-negative) prior scale.  ``pi`` (default all
+    ones) is the canonical diagonal of an explicit prior covariance, making
+    the effective per-coordinate prior variance ``gamma * pi[j]``.
 
     """
 
@@ -476,14 +476,14 @@ def _minimax_bayes_canonical(
 
     # Bayes importance d* = d^2/(d+gamma), Bayes-rule weight w = d/(d+gamma)
     # and the cumulative shrinkage statistic S_k = sum_{l<=k} x_l^2/(d_l+gamma).
-    # An explicit prior shape pi_diag makes the effective per-coordinate prior
-    # variance gamma * pi_diag (replacing gamma).  For gamma >= 0 these are all
+    # An explicit prior shape pi makes the effective per-coordinate prior
+    # variance gamma * pi (replacing gamma).  For gamma >= 0 these are all
     # well-defined, with gamma=0 the Bhattacharya limit (d* = d, w = 1).  As
     # gamma -> inf, w -> 0 and the estimator reduces to the identity
     # (delta = X), so no separate limit is needed.
-    if pi_diag is None:
-        pi_diag = np.ones(p_eff)
-    d_plus_g = d + gamma * pi_diag
+    if pi is None:
+        pi = np.ones(p_eff)
+    d_plus_g = d + gamma * pi
     d_star = d**2 / d_plus_g
     weight = d / d_plus_g
 
@@ -656,7 +656,7 @@ def _tan_bayes_canonical(
     positive: bool,
     strength: float,
     gamma: float | NDArray[Any],
-    pi_diag: NDArray[Any] | None = None,
+    pi: NDArray[Any] | None = None,
 ) -> NDArray[Any]:
     """``delta_{A,c}`` in canonical form with the Bayes-rule shrinkage direction.
 
@@ -669,10 +669,10 @@ def _tan_bayes_canonical(
     ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``: the estimator is minimax for
     ``0 <= strength <= 2``.  ``gamma`` is the prior scale; a scalar is broadcast
     across observations and ``(...,)`` array values give one scale per
-    observation (matching the batch dims of ``x``).  ``pi_diag`` (default all
-    ones) is the canonical diagonal of an explicit prior covariance, making the
-    effective per-coordinate prior variance ``gamma * pi_diag[j]`` and hence
-    ``a_j = d_j / (d_j + gamma * pi_diag[j])``.
+    observation (matching the batch dims of ``x``).  ``pi`` (default all ones)
+    is the canonical diagonal of an explicit prior covariance, making the
+    effective per-coordinate prior variance ``gamma * pi[j]`` and hence
+    ``a_j = d_j / (d_j + gamma * pi[j])``.
 
     The Bayes-rule direction ``a_j`` is proportional to variance: high-variance
     coordinates are shrunk more (like Berger's estimator), while low-variance
@@ -689,10 +689,10 @@ def _tan_bayes_canonical(
     if p_eff < 3:
         return x
 
-    if pi_diag is None:
-        pi_diag = np.ones(p_eff)
+    if pi is None:
+        pi = np.ones(p_eff)
     g = np.asarray(gamma, dtype=float)[..., None]
-    a = d / (d + g * pi_diag)
+    a = d / (d + g * pi)
     da = d * a
     c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
     bad = c_star_val <= 0.0
@@ -857,7 +857,7 @@ def _robust_bayes_canonical(
     *,
     strength: float,
     gamma: float | NDArray[Any],
-    pi_diag: NDArray[Any] | None = None,
+    pi: NDArray[Any] | None = None,
 ) -> NDArray[Any]:
     """The robust generalised Bayes estimator ``delta^RB`` in canonical form.
 
@@ -872,9 +872,9 @@ def _robust_bayes_canonical(
     Berger's original ``2(k - 2)_+``.  ``gamma`` is the (finite, non-negative)
     prior scale, either a scalar (shared across observations) or an array
     matching the batch dims of ``x`` (one prior scale per observation).
-    ``pi_diag`` (default all ones) is the canonical diagonal of an explicit
-    prior covariance, making the effective per-coordinate prior variance
-    ``gamma * pi_diag[j]``.
+    ``pi`` (default all ones) is the canonical diagonal of an explicit prior
+    covariance, making the effective per-coordinate prior variance
+    ``gamma * pi[j]``.
 
     The estimator is *not* minimax: it is robust to misspecification of the
     prior but may have greater risk than the identity estimator.  Unlike
@@ -897,10 +897,10 @@ def _robust_bayes_canonical(
     if c_k <= 0:
         return x
 
-    if pi_diag is None:
-        pi_diag = np.ones(p_eff)
+    if pi is None:
+        pi = np.ones(p_eff)
     g = np.asarray(gamma, dtype=float)[..., None]
-    d_plus_g = d + g * pi_diag
+    d_plus_g = d + g * pi
     weight = d / d_plus_g
     s_val = np.sum(x**2 / d_plus_g, axis=-1)
     # When s_val = 0 (e.g. x = 0) the ratio is infinite so m = 1; suppress the
@@ -1061,14 +1061,14 @@ def _bayes_canonical(
     d: NDArray[Any],
     *,
     gamma: float | NDArray[Any],
-    pi_diag: NDArray[Any] | None = None,
+    pi: NDArray[Any] | None = None,
 ) -> NDArray[Any]:
     """Bayes rule in canonical form under the prior Gamma = diag(gamma * pi).
 
     The canonical problem has diagonal covariance ``D = diag(d)`` and identity
-    loss.  Under the prior ``theta* ~ N(0, diag(gamma * pi))`` (with ``pi =
-    pi_diag``, the canonical diagonal of an explicit prior covariance, all ones
-    by default) the posterior mean (Bayes rule) is:
+    loss.  Under the prior ``theta* ~ N(0, diag(gamma * pi))`` (with ``pi``,
+    the canonical diagonal of an explicit prior covariance, all ones by
+    default) the posterior mean (Bayes rule) is:
 
     .. math:: \\delta_j = \\frac{\\gamma \\pi_j}{d_j + \\gamma \\pi_j} \\, x_j^*.
 
@@ -1086,11 +1086,11 @@ def _bayes_canonical(
 
     """
 
-    if pi_diag is None:
-        pi_diag = np.ones(d.shape[0])
+    if pi is None:
+        pi = np.ones(d.shape[0])
     g = np.asarray(gamma, dtype=float)[..., None]
     with np.errstate(divide="ignore", invalid="ignore"):
-        tau = np.where(pi_diag == 0.0, 0.0, g * pi_diag)
+        tau = np.where(pi == 0.0, 0.0, g * pi)
         factor = np.where(np.isfinite(tau), tau / (d + tau), 1.0)
     return cast(NDArray[Any], factor * x)
 

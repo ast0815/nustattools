@@ -2626,29 +2626,83 @@ def test_empirical_gamma_per_observation_vector():
     # The internal prior-scale resolver must return one value per observation
     # (the norm over the trailing coordinate axis only).  This is the
     # per-observation array that the vectorized estimators broadcast, so it
-    # must not sum over the batch.  There is no small-dimension clamp: the
-    # scale is always ||y||^2 / p_eff.
+    # must not sum over the batch.  With the default homoscedastic prior
+    # (pi = 1) the scale is ||y||^2 / p_eff; with a non-uniform prior the
+    # scale is ||y / sqrt(pi)||^2 / p_eff, covered by a separate test.
     gen = rng()
     p = 6
     n = 5
     d = np.linspace(0.5, 2.0, p)
     y = gen.normal(size=(n, p))
-    g = _core_empirical_gamma(d, y)
+    g = _core_empirical_gamma(d, np.ones(p), y)
     assert g.shape == (n,)
     for i in range(n):
         expected = float(np.sum(y[i] ** 2)) / p
         np.testing.assert_allclose(g[i], expected, rtol=1e-12, atol=1e-12)
 
     small_input = gen.normal(size=(n, 2))
-    small = _core_empirical_gamma(np.array([0.5, 1.0]), small_input)
+    small = _core_empirical_gamma(np.array([0.5, 1.0]), np.ones(2), small_input)
     assert small.shape == (n,)
     for i in range(n):
         np.testing.assert_allclose(
             small[i], float(np.sum(small_input[i] ** 2)) / 2.0, rtol=1e-12, atol=1e-12
         )
 
-    single = _core_empirical_gamma(d, gen.normal(size=p))
+    single = _core_empirical_gamma(d, np.ones(p), gen.normal(size=p))
     assert single.ndim == 0
+
+
+def test_empirical_gamma_uses_pi():
+    # The "empirical" prior scale is the MLE-like scale ||y / sqrt(pi)||^2 / p:
+    # normalizing each coordinate by the corresponding prior shape recovers a
+    # homoscedastic observation, then the standard per-coordinate norm is
+    # divided by the effective dimension.  With pi = 1 this reduces to the
+    # classic ||y||^2 / p.
+    gen = rng()
+    p = 5
+    n = 4
+    d = np.linspace(0.5, 2.0, p)
+    y = gen.normal(size=(n, p))
+    pi = np.array([1.0, 4.0, 0.5, 2.0, 3.0])
+    g = _core_empirical_gamma(d, pi, y)
+    assert g.shape == (n,)
+    for i in range(n):
+        expected = float(np.sum(y[i] ** 2 / pi)) / p
+        np.testing.assert_allclose(g[i], expected, rtol=1e-12, atol=1e-12)
+
+    # pi = 1 reproduces the homoscedastic default exactly.
+    g_default = _core_empirical_gamma(d, np.ones(p), y)
+    g_pi1 = _core_empirical_gamma(d, np.ones(p), y)
+    np.testing.assert_allclose(g_default, g_pi1, rtol=1e-12, atol=1e-12)
+    for i in range(n):
+        np.testing.assert_allclose(
+            g_default[i], float(np.sum(y[i] ** 2)) / p, rtol=1e-12, atol=1e-12
+        )
+
+
+def test_empirical_gamma_via_estimator_uses_pi():
+    # The estimator-level "empirical" preset threads the canonical pi through
+    # to the gamma resolver, so the prior-aware formula governs the
+    # per-observation scale.  Compare a per-observation resolver with a
+    # callable that follows the same formula.
+    gen = rng()
+    p = 5
+    n = 3
+    d = np.linspace(0.5, 2.0, p)
+    x = gen.normal(size=(n, p))
+    pi = np.array([1.0, 4.0, 0.5, 2.0, 3.0])
+    cov = np.diag(d)
+
+    def callable_gamma(d_, pi_, y_):
+        return np.sum(y_**2 / pi_, axis=-1) / len(d_)
+
+    for method in ("bayes", "robust_bayes", "tan_bayes"):
+        fn = getattr(_shrinkage, method)
+        from_empirical = fn(x, cov=cov, gamma="empirical", prior_cov=np.diag(pi))
+        from_callable = fn(x, cov=cov, gamma=callable_gamma, prior_cov=np.diag(pi))
+        np.testing.assert_allclose(
+            from_empirical, from_callable, rtol=1e-12, atol=1e-14
+        )
 
 
 def test_empirical_gamma_batched_with_dirs_matches_per_row():
@@ -2668,8 +2722,9 @@ def test_empirical_gamma_batched_with_dirs_matches_per_row():
 
 def test_empirical_gamma_small_dim_uses_plain_scale():
     # The empirical prior scale has no small-dimension clamp: for p < 3 it is
-    # still ||y||^2 / p, so "empirical" must match passing that value explicitly
-    # rather than forcing gamma = 0.
+    # still ||y||^2 / p (the default-homoscedastic case with pi = 1), so
+    # "empirical" must match passing that value explicitly rather than
+    # forcing gamma = 0.
     gen = rng()
     for p in (1, 2):
         x = gen.normal(size=p)
@@ -2815,9 +2870,9 @@ def test_vector_gamma_rejects_negative():
 
 
 def test_callable_gamma_matches_explicit_per_obs():
-    # A gamma callable f(d, y) is resolved per observation: for a batched x it
-    # must return shape (n,) and the result must equal passing that per-obs
-    # array explicitly.
+    # A gamma callable f(d, pi, y) is resolved per observation: for a batched
+    # x it must return shape (n,) and the result must equal passing that
+    # per-obs array explicitly.
     gen = rng()
     p = 6
     n = 4
@@ -2826,7 +2881,7 @@ def test_callable_gamma_matches_explicit_per_obs():
         fn = getattr(_shrinkage, method)
         g = gen.uniform(0.0, 3.0, size=n)
         np.testing.assert_allclose(
-            fn(x, gamma=lambda _d, y, g=g: np.full(y.shape[:-1], g)),
+            fn(x, gamma=lambda _d, _pi, y, g=g: np.full(y.shape[:-1], g)),
             fn(x, gamma=g.astype(float)),
             rtol=1e-12,
             atol=1e-14,
@@ -2840,7 +2895,7 @@ def test_callable_gamma_single_vector_scalar():
     p = 6
     x = gen.normal(size=p)
 
-    def f(_d, y):
+    def f(_d, _pi, y):
         return np.sum(y**2) / p
 
     fn = _shrinkage.bayes
@@ -2861,7 +2916,7 @@ def test_callable_gamma_scalar_shared_across_batch():
     for method in _EMPIRICAL_METHODS:
         fn = getattr(_shrinkage, method)
         np.testing.assert_allclose(
-            fn(x, gamma=lambda _d, _y: g),
+            fn(x, gamma=lambda _d, _pi, _y: g),
             fn(x, gamma=g),
             rtol=1e-12,
             atol=1e-14,
@@ -2878,7 +2933,7 @@ def test_callable_gamma_d_only_scalar():
     x = gen.normal(size=(n, p))
     d = np.linspace(0.5, 2.0, p)
 
-    def f(d, _y):
+    def f(d, _pi, _y):
         return float(np.mean(d))
 
     for method in _EMPIRICAL_METHODS:
@@ -2905,7 +2960,7 @@ def test_callable_gamma_scalar_with_dirs():
     for method in _EMPIRICAL_METHODS:
         fn = getattr(_shrinkage, method)
         np.testing.assert_allclose(
-            fn(x, dirs=v, gamma=lambda _d, _y: g),
+            fn(x, dirs=v, gamma=lambda _d, _pi, _y: g),
             fn(x, dirs=v, gamma=g),
             rtol=1e-12,
             atol=1e-14,
@@ -2922,7 +2977,7 @@ def test_callable_gamma_with_dirs_matches_per_row():
     x = gen.normal(size=(n, p))
     v = gen.normal(size=(p, 2))
 
-    def f(d, y):
+    def f(d, _pi, y):
         return np.sum(y**2, axis=-1) / len(d)
 
     for method in _EMPIRICAL_METHODS:
@@ -2937,7 +2992,7 @@ def test_callable_gamma_via_shrink_frontend():
     gen = rng()
     x = gen.normal(size=6)
 
-    def f(d, y):
+    def f(d, _pi, y):
         return np.sum(y**2, axis=-1) / len(d)
 
     np.testing.assert_allclose(
@@ -2948,12 +3003,35 @@ def test_callable_gamma_via_shrink_frontend():
     )
 
 
+def test_callable_gamma_receives_pi():
+    # The gamma callable f(d, pi, y) receives the canonical diagonal of the
+    # prior covariance as its middle argument, both the default homoscedastic
+    # shape (pi = 1) and an explicit prior_cov.
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+
+    seen: dict[str, np.ndarray] = {}
+
+    def f(d, pi, y):
+        seen["d"] = np.asarray(d, dtype=float).copy()
+        seen["pi"] = np.asarray(pi, dtype=float).copy()
+        return float(np.sum(y**2) / len(d))
+
+    _shrinkage.bayes(x, gamma=f)
+    np.testing.assert_allclose(seen["pi"], np.ones(p), rtol=1e-12, atol=1e-14)
+
+    prior = np.diag([1.0, 4.0, 0.5, 2.0])
+    _shrinkage.bayes(x, gamma=f, prior_cov=prior)
+    np.testing.assert_allclose(seen["pi"], np.diag(prior), rtol=1e-12, atol=1e-14)
+
+
 def test_callable_gamma_rejects_negative():
     # A callable returning negative prior scales is rejected.
     gen = rng()
     x = gen.normal(size=(3, 4))
 
-    def f(_d, y):
+    def f(_d, _pi, y):
         return -np.ones(y.shape[:-1])
 
     with pytest.raises(ValueError, match="non-negative"):
@@ -2966,7 +3044,7 @@ def test_callable_gamma_rejects_bad_shape():
     gen = rng()
     x = gen.normal(size=(3, 4))
 
-    def f(_d, y):
+    def f(_d, _pi, y):
         return np.ones(y.shape)
 
     with pytest.raises(ValueError, match="matching"):
@@ -2978,7 +3056,7 @@ def test_callable_gamma_rejects_non_numeric():
     gen = rng()
     x = gen.normal(size=(3, 4))
 
-    def f(_d, _y):
+    def f(_d, _pi, _y):
         return "not a gamma"
 
     with pytest.raises(TypeError):
@@ -2991,7 +3069,7 @@ def test_float_only_methods_reject_callable_gamma():
     gen = rng()
     x = gen.normal(size=6)
 
-    def f(_d, y):
+    def f(_d, _pi, y):
         return np.full(y.shape[:-1], 1.0)
 
     for method in _FLOAT_ONLY_METHODS:
@@ -3196,18 +3274,14 @@ def test_canonical_estimators_agree_with_public_prior_cov():
     gamma = 0.9
 
     expected = {
-        "bayes": _bayes_canonical(x, d, gamma=gamma, pi_diag=pi),
-        "robust_bayes": _robust_bayes_canonical(
-            x, d, strength=1.0, gamma=gamma, pi_diag=pi
-        ),
+        "bayes": _bayes_canonical(x, d, gamma=gamma, pi=pi),
+        "robust_bayes": _robust_bayes_canonical(x, d, strength=1.0, gamma=gamma, pi=pi),
         "tan_bayes": _tan_bayes_canonical(
-            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
+            x, d, positive=False, strength=1.0, gamma=gamma, pi=pi
         ),
-        "tan": _tan_canonical(
-            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
-        ),
+        "tan": _tan_canonical(x, d, positive=False, strength=1.0, gamma=gamma, pi=pi),
         "minimax_bayes": _minimax_bayes_canonical(
-            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
+            x, d, positive=False, strength=1.0, gamma=gamma, pi=pi
         ),
     }
     for est, ref in expected.items():
@@ -3232,7 +3306,7 @@ def test_tan_gamma_inf_constant_shape_equals_flat():
             positive=True,
             strength=1.0,
             gamma=float("inf"),
-            pi_diag=c * np.ones(5),
+            pi=c * np.ones(5),
         )
         np.testing.assert_allclose(shaped, flat, rtol=1e-9, atol=1e-10)
 
@@ -3286,9 +3360,7 @@ def test_tan_gamma_inf_prior_shape_ranks_by_d2_over_pi():
     ref = np.empty(p)
     ref[order] = factor * x_sorted
 
-    got = _tan_canonical(
-        x, d, positive=False, strength=1.0, gamma=float("inf"), pi_diag=pi
-    )
+    got = _tan_canonical(x, d, positive=False, strength=1.0, gamma=float("inf"), pi=pi)
     np.testing.assert_allclose(got, ref, rtol=1e-9, atol=1e-10)
 
     flat = _tan_canonical(x, d, positive=False, strength=1.0, gamma=float("inf"))
@@ -3337,15 +3409,18 @@ def test_prior_cov_rotation_preserves_canonical_form():
 
 def test_prior_cov_with_empirical_gamma():
     # A per-observation empirical scale multiplies the per-coordinate prior
-    # shape: tau_j = gamma_obs * pi_j.
+    # shape: tau_j = gamma_obs * pi_j.  The prior-aware empirical scale is
+    # ||y / sqrt(pi)||^2 / p so each coordinate of y is divided by the
+    # corresponding prior shape before the squared norm.
     gen = rng()
     x = gen.normal(size=(4, 3))
     cov = np.eye(3)
     q = np.eye(3)
     prior = np.diag([2.0, 3.0, 4.0])
     got = _shrinkage.bayes(x, cov, Q=q, gamma="empirical", prior_cov=prior)
-    g = np.sum(x**2, axis=-1) / 3
-    tau = g[:, None] * np.array([2.0, 3.0, 4.0])
+    pi = np.array([2.0, 3.0, 4.0])
+    g = np.sum(x**2 / pi, axis=-1) / 3
+    tau = g[:, None] * pi
     expect = tau / (1.0 + tau) * x
     np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-10)
 
