@@ -372,6 +372,12 @@ def tan(
     if strength < 0 or strength > 2:
         msg = "strength must be in [0, 2]."
         raise ValueError(msg)
+    if isinstance(cast(Any, gamma), str) or callable(gamma) or np.ndim(gamma) > 0:
+        msg = (
+            "gamma must be a scalar float for this estimator; "
+            "callable, string, and per-observation array gamma are not supported."
+        )
+        raise TypeError(msg)
     if gamma < 0:
         msg = "gamma must be non-negative."
         raise ValueError(msg)
@@ -547,6 +553,12 @@ def minimax_bayes(
     if strength < 0 or strength > 2:
         msg = "strength must be in [0, 2]."
         raise ValueError(msg)
+    if isinstance(cast(Any, gamma), str) or callable(gamma) or np.ndim(gamma) > 0:
+        msg = (
+            "gamma must be a scalar float for this estimator; "
+            "callable, string, and per-observation array gamma are not supported."
+        )
+        raise TypeError(msg)
     if gamma < 0:
         msg = "gamma must be non-negative."
         raise ValueError(msg)
