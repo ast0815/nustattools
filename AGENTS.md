@@ -44,6 +44,10 @@
 - All tests must have 100% coverage
 - All user-facing changes must be documented in `CHANGELOG.md`
   - These entried should be short and not go into details
+- mypy quirk: in an exhaustiveness `else` branch after `isinstance(...)` /
+  `callable(...)` narrows a union to `Never`, mypy strict flags a preceding
+  `msg = ...` local assignment as unreachable.  Use an inline module-level
+  message constant with `raise TypeError(_MSG)` instead.
 
 # Testing Best Practices:
 

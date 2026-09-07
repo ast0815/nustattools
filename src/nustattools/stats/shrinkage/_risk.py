@@ -21,6 +21,26 @@ from ._estimators import _resolve_method
 
 _Estimator = Callable[..., NDArray[Any]] | str
 
+_ESTIMATOR_ERROR = (
+    "estimators must be a callable, a method name, or a sequence of these."
+)
+
+
+def _check_n_reps(n_reps: int) -> None:
+    """Raise unless ``n_reps`` is an integer >= 2."""
+    if n_reps < 2:
+        msg = "n_reps must be an integer >= 2."
+        raise ValueError(msg)
+
+
+def _resolve_estimator(estimator: _Estimator) -> Callable[..., NDArray[Any]]:
+    """Resolve a single estimator spec to its callable."""
+    if isinstance(estimator, str):
+        return _resolve_method(estimator)
+    if callable(estimator):
+        return estimator
+    raise TypeError(_ESTIMATOR_ERROR)
+
 
 def _normalize_estimators(
     estimators: _Estimator | Sequence[_Estimator],
@@ -33,23 +53,11 @@ def _normalize_estimators(
 
     """
 
-    if isinstance(estimators, str):
-        return True, [_resolve_method(estimators)]
-    if callable(estimators):
-        return True, [estimators]
+    if isinstance(estimators, str) or callable(estimators):
+        return True, [_resolve_estimator(estimators)]
     if isinstance(estimators, (list, tuple)):
-        resolved: list[Callable[..., NDArray[Any]]] = []
-        for est in estimators:
-            if isinstance(est, str):
-                resolved.append(_resolve_method(est))
-            elif callable(est):
-                resolved.append(est)
-            else:
-                msg = "estimators must be a callable, a method name, or a sequence of these."
-                raise TypeError(msg)
-        return False, resolved
-    msg = "estimators must be a callable, a method name, or a sequence of these."
-    raise TypeError(msg)
+        return False, [_resolve_estimator(est) for est in estimators]
+    raise TypeError(_ESTIMATOR_ERROR)
 
 
 def estimate_risk(
@@ -131,9 +139,7 @@ def estimate_risk(
 
     """
 
-    if n_reps < 2:
-        msg = "n_reps must be an integer >= 2."
-        raise ValueError(msg)
+    _check_n_reps(n_reps)
 
     theta_arr = np.asarray(theta, dtype=float)
     if theta_arr.ndim != 1:
@@ -422,9 +428,7 @@ def estimate_risk_curve(
 
     """
 
-    if n_reps < 2:
-        msg = "n_reps must be an integer >= 2."
-        raise ValueError(msg)
+    _check_n_reps(n_reps)
 
     cv = np.asarray(cov)
     if cv.ndim != 2 or cv.shape[0] != cv.shape[1]:

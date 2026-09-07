@@ -593,9 +593,9 @@ def _tan_bayes_canonical(
     ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
     ``(p,)``.  ``strength`` scales the minimax constant
     ``c*(D, A) = tr(DA) - 2 lambda_max(DA)``: the estimator is minimax for
-    ``0 <= strength <= 2``.  ``gamma`` is the prior scale, either a scalar
-    (shared across observations) or an array matching the batch dims of ``x``
-    (one prior scale per observation).
+    ``0 <= strength <= 2``.  ``gamma`` is the prior scale; a scalar is broadcast
+    across observations and ``(...,)`` array values give one scale per
+    observation (matching the batch dims of ``x``).
 
     The Bayes-rule direction ``a_j = d_j/(d_j + gamma)`` is proportional to
     variance: high-variance coordinates are shrunk more (like Berger's
@@ -612,31 +612,18 @@ def _tan_bayes_canonical(
     if p_eff < 3:
         return x
 
-    if np.ndim(gamma) > 0:
-        g = np.asarray(gamma, dtype=float)[..., None]
-        a = d / (d + g)
-        da = d * a
-        c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
-        bad = c_star_val <= 0.0
-        s_val = np.sum(a**2 * x**2, axis=-1)
-        c_actual = strength * c_star_val
-        factor = 1.0 - c_actual[..., None] * a / s_val[..., None]
-        if positive:
-            factor = np.maximum(factor, 0.0)
-        return np.where(bad[..., None], x, factor * x)
-
-    a = d / (d + gamma)
+    g = np.asarray(gamma, dtype=float)[..., None]
+    a = d / (d + g)
     da = d * a
-    c_star_scalar = float(np.sum(da) - 2.0 * np.max(da))
-    if c_star_scalar <= 0.0:
-        return x
-
-    s_val_scalar = np.sum(a**2 * x**2, axis=-1)
-    c_actual_scalar = strength * c_star_scalar
-    factor_scalar = 1.0 - c_actual_scalar * a / s_val_scalar[..., None]
+    c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
+    bad = c_star_val <= 0.0
+    s_val = np.sum(a**2 * x**2, axis=-1)
+    c_actual = strength * c_star_val
+    with np.errstate(divide="ignore", invalid="ignore"):
+        factor = 1.0 - c_actual[..., None] * a / s_val[..., None]
     if positive:
-        factor_scalar = np.maximum(factor_scalar, 0.0)
-    return cast(NDArray[Any], factor_scalar * x)
+        factor = np.maximum(factor, 0.0)
+    return np.where(bad[..., None], x, factor * x)
 
 
 def tan_bayes(
@@ -810,18 +797,8 @@ def _robust_bayes_canonical(
     if c_k <= 0:
         return x
 
-    if np.ndim(gamma) > 0:
-        g = np.asarray(gamma, dtype=float)[..., None]
-        d_plus_g = d + g
-        weight = d / d_plus_g
-        s_val = np.sum(x**2 / d_plus_g, axis=-1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ratio = c_k / s_val
-        m_k = np.minimum(1.0, ratio)
-        factor = 1.0 - m_k[..., None] * weight
-        return cast(NDArray[Any], factor * x)
-
-    d_plus_g = d + gamma
+    g = np.asarray(gamma, dtype=float)[..., None]
+    d_plus_g = d + g
     weight = d / d_plus_g
     s_val = np.sum(x**2 / d_plus_g, axis=-1)
     # When s_val = 0 (e.g. x = 0) the ratio is infinite so m = 1; suppress the
@@ -984,16 +961,9 @@ def _bayes_canonical(
 
     """
 
-    if np.ndim(gamma) == 0:
-        if gamma == 0.0:
-            return np.zeros_like(x)
-        if not np.isfinite(gamma):
-            return x
-        factor = gamma / (d + gamma)
-        return cast(NDArray[Any], factor * x)
-
     g = np.asarray(gamma, dtype=float)[..., None]
-    factor = np.where(np.isfinite(g), g / (d + g), 1.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        factor = np.where(np.isfinite(g), g / (d + g), 1.0)
     return cast(NDArray[Any], factor * x)
 
 
