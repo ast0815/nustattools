@@ -25,10 +25,34 @@ basis ``l2`` is taken orthonormal (eigenvectors of the symmetric residual
 covariance), the change of coordinates is an isometry of the squared-error
 loss, so the reduced shrinkage conserves the full loss exactly.
 
-The *prior scale* ``gamma`` of the Bayes-rule estimators — :func:`bayes`,
-:func:`robust_bayes` and :func:`tan_bayes` — selects a homoscedastic prior
-:math:`\\theta \\sim N(0, \\gamma I)` in the canonical coordinates.  It can be
-given in any of four forms:
+The *prior* of the Bayes-rule estimators — :func:`bayes`, :func:`robust_bayes`
+and :func:`tan_bayes` — and of the gamma-based minimax estimators
+(:func:`tan` and :func:`minimax_bayes`) is a Gaussian
+:math:`\\theta \\sim N(0, \\gamma \\Theta)`.  It has a *shape* ``Theta`` and a
+*scale* ``gamma``:
+
+- ``Theta`` — the prior covariance, of shape ``(p, p)`` in the same
+  coordinates as ``x`` — is either left at its default ``Q^{-1}`` (the
+  current homoscedastic prior in canonical coordinates) or set explicitly via
+  the ``prior_cov`` argument of the estimators.  When given, the
+  canonicalization *rotates the canonical frame* — always possible when the
+  canonical coordinate variances coincide, in particular when ``cov`` is
+  proportional to ``Q^{-1}`` — so that ``Theta`` is diagonal in the canonical
+  coordinates, and passes that diagonal ``diag(pi)`` to the estimator.  The
+  prior then acts per coordinate: the Bayes-rule direction/weight
+  ``d_j / (d_j + gamma * pi_j)`` and the posterior mean
+  ``gamma * pi_j / (d_j + gamma * pi_j)`` replace their homoscedastic
+  counterparts.  ``Theta`` must be symmetric positive definite and must be
+  diagonalizable in the canonical coordinates (its canonical off-diagonals
+  must vanish up to numerical precision); for ``cov`` proportional to
+  ``Q^{-1}`` this is automatic since the canonical variances then coincide and
+  the rotation is unconstrained, so any positive-definite prior works there.
+  The proportionality is detected with a ``sqrt(eps)``-relative, roundoff-aware
+  check (:func:`_cov_proportional_to_qinv`), so it covers numerically-inverted
+  matrices such as ``Q = inv(cov)`` rather than requiring exact
+  proportionality.
+- ``gamma`` is the prior *scale* — a non-negative number scaling the whole
+  prior.  It can be given in any of four forms:
 
 - a non-negative ``float`` giving a single prior scale shared by every
   coordinate and observation;
@@ -54,7 +78,9 @@ estimator as an array broadcast against the batch dims of ``x``; the supported
 estimators vectorize, so the whole batch is solved with no per-observation
 Python loop.  The :func:`tan` and :func:`minimax_bayes` estimators, whose
 gamma-dependent coordinate ranking or segmentation does not (yet) admit a
-per-observation scale, accept only a non-negative ``float``.
+per-observation scale, accept only a non-negative ``float``; their ranking
+may still depend on the per-coordinate prior shape ``diag(pi)``, which is
+observation-independent.
 
 The loss matrix ``Q`` may be positive *semi*-definite.  Its null space carries
 no loss, so it is treated as an *additional set of no-shrink directions*,
@@ -100,9 +126,11 @@ from ._core import (
     # names, signatures and behaviour may change without notice, so do not
     # rely on them outside this package's tests.
     _canonicalize,  # noqa: F401
+    _canonicalize_prior,  # noqa: F401
     _dirs_projection,  # noqa: F401
     _estimate,  # noqa: F401
     _estimate_split,  # noqa: F401
+    _group_degenerate,  # noqa: F401
     _merge_dirs,  # noqa: F401
     _subspace_reduce,  # noqa: F401
 )

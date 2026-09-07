@@ -104,6 +104,123 @@ def _canonicalize(
     return b, binv, d
 
 
+def _cov_proportional_to_qinv(cova: NDArray[Any], qa: NDArray[Any]) -> bool:
+    """True when ``cov`` is numerically proportional to ``Q^{-1}``.
+
+    With ``C`` the Cholesky/triangular factor ``Q = C^T C``, the canonical
+    matrix ``M = C cov C^T`` is a scalar multiple of the identity exactly when
+    ``cov = c Q^{-1}``, in which case the canonical variances all coincide and
+    the canonical-frame rotation is unconstrained.  When ``cov`` and ``Q`` are
+    supplied as numerically-inverted matrices (e.g. ``Q = inv(cov)``) the
+    computed ``M`` deviates from that identity by the roundoff of the inversion
+    and matrix products (roughly ``eps * cond(cov)``), so the comparison uses a
+    relative tolerance of ``sqrt(eps)``, covering condition numbers up to about
+    ``1/sqrt(eps)``.
+
+    """
+
+    c = np.linalg.cholesky(qa).T
+    m = c @ cova @ c.T
+    p = cova.shape[0]
+    scale = float(np.trace(m)) / p
+    tol = np.sqrt(_EPSILON) * scale
+    return bool(np.max(np.abs(m - scale * np.eye(p))) <= tol)
+
+
+def _group_degenerate(d: NDArray[Any], tol: float) -> list[list[int]]:
+    """Partition coordinates into groups of (near-)equal canonical variance.
+
+    ``d`` holds the canonical coordinate variances ``(p,)``.  Coordinates are
+    grouped (in descending ``d`` order) when their variance gaps do not exceed
+    ``tol``.  Only *within* a such a group is the canonical form defined up to an
+    orthogonal rotation: any rotation inside a group of exactly-equal variances
+    keeps ``B cov B^T`` diagonal, so within-group (and only within-group)
+    freedom can be spent on diagonalizing a second matrix.
+
+    """
+
+    order = np.argsort(d)[::-1]
+    groups: list[list[int]] = []
+    current: list[int] = [int(order[0])]
+    for idx in order[1:]:
+        # Descending order, so d[prev] >= d[idx]: the gap is d[prev] - d[idx].
+        if d[current[-1]] - d[idx] <= tol:
+            current.append(int(idx))
+        else:
+            groups.append(current)
+            current = [int(idx)]
+    groups.append(current)
+    return groups
+
+
+def _canonicalize_prior(
+    b: NDArray[Any],
+    d: NDArray[Any],
+    prior_cov: NDArray[Any],
+    *,
+    free_rotation: bool = False,
+) -> tuple[NDArray[Any], NDArray[Any]]:
+    """Rotate the canonical frame so the prior covariance becomes diagonal.
+
+    ``b`` and ``d`` are the canonicalization results of :func:`_canonicalize`
+    (``B cov B^T = diag(d)`` and ``Q = B^T B``).  ``prior_cov`` is the
+    symmetric positive-definite prior covariance in the *original* coordinates.
+    This function spends the rotational freedom of the canonical form -- any
+    orthogonal rotation within a group of (near-)equal canonical variances
+    ``d`` leaves ``B cov B^T`` diagonal -- to make
+    ``b_rot @ prior_cov @ b_rot.T`` diagonal as well, and returns that diagonal
+    as ``pi_diag`` together with the rotated ``b_rot``.
+
+    When all canonical variances coincide (in particular for a data covariance
+    proportional to ``Q^{-1}``, where ``D`` is a scalar multiple of the
+    identity) the rotation is unconstrained and *any* positive-definite
+    ``prior_cov`` is accepted.  Otherwise the prior must already be diagonal in
+    the canonical coordinates up to the covariance-degenerate groups: it may
+    couple coordinates *inside* a degenerate group (the within-group rotation
+    then disentangles them) but not coordinates with differing variances.  A
+    genuinely non-diagonalizable prior raises ``ValueError``.
+
+    When ``free_rotation`` is true the rotation is declared unconstrained so
+    the prior is diagonalized by a full rotation regardless of the ``d``
+    values; the caller should set it only after detecting ``cov``
+    proportional to ``Q^{-1}`` to numerical roundoff via
+    :func:`_cov_proportional_to_qinv`.
+
+    """
+
+    p = prior_cov.shape[0]
+    w = b @ prior_cov @ b.T
+    zero_tol = _zero_eigenvalue_tolerance(np.linalg.eigvalsh(w), p)
+    if np.allclose(w, np.diag(np.diag(w)), rtol=0.0, atol=zero_tol):
+        return np.diag(w).copy(), b
+    if free_rotation:
+        groups = [list(range(p))]
+    else:
+        tol = _zero_eigenvalue_tolerance(d, p)
+        groups = _group_degenerate(d, tol)
+        for i, gi in enumerate(groups):
+            for gj in groups[i + 1 :]:
+                if not np.allclose(w[np.ix_(gi, gj)], 0.0, rtol=0.0, atol=zero_tol):
+                    msg = (
+                        "prior covariance matrix cannot be diagonalized in the "
+                        "canonical coordinates: it couples canonical coordinates "
+                        "with differing variances.  When the data covariance is "
+                        "proportional to Q^{-1} this is automatic; otherwise "
+                        "choose a prior that is diagonal in canonical space."
+                    )
+                    raise ValueError(msg)
+    rot = np.eye(p)
+    pi_diag = np.empty(p)
+    for group in groups:
+        evals, evecs = np.linalg.eigh(w[np.ix_(group, group)])
+        rot[np.ix_(group, group)] = evecs.T
+        pi_diag[group] = evals
+    if np.any(pi_diag <= 0):
+        msg = "prior covariance matrix must be positive definite (in canonical coordinates)."
+        raise ValueError(msg)
+    return pi_diag, rot @ b
+
+
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive definite with the given shape."""
 
@@ -298,6 +415,7 @@ def _estimate_split(
     *,
     offset: ArrayLike | None,
     dirs: NDArray[Any],
+    prior_cov: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
     """Estimate on a singular-loss problem by splitting before canonicalizing.
@@ -340,8 +458,23 @@ def _estimate_split(
     d_perp = lam[keep]
     q_comp = l2.T @ q @ l2
     eta = (y - kept) @ l2
+    # The prior only acts where shrinkage happens: restrict it to the
+    # covariance-metric complement of the no-shrink directions.  Since l2 is
+    # an orthonormal basis spanning that complement, the restricted covariance
+    # is l2^T prior_cov l2 (the covariance-metric projection of the prior onto
+    # the complement is its restriction there).
+    if prior_cov is not None:
+        pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
+        prior_comp = l2.T @ pc @ l2
+    else:
+        prior_comp = None
     delta_comp = _estimate_pd(
-        eta, np.diag(d_perp), q_comp, canonical_estimator, **kwargs
+        eta,
+        np.diag(d_perp),
+        q_comp,
+        canonical_estimator,
+        prior_cov=prior_comp,
+        **kwargs,
     )
     return cast(NDArray[Any], kept_off + kept + delta_comp @ l2.T)
 
@@ -354,6 +487,7 @@ def _estimate_pd(
     *,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
+    prior_cov: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
     """Apply a canonical-form estimator to a strictly positive-definite problem.
@@ -365,13 +499,24 @@ def _estimate_pd(
     or, when ``dirs`` (a matrix whose columns span the affine direction) is
     given, towards the affine subspace ``offset + span(dirs)``.
 
+    ``prior_cov`` is the prior covariance in the *original* coordinates; when
+    given, the canonical frame is rotated (whenever the canonical variances
+    allow; see :func:`_canonicalize_prior`) so that the prior is diagonal in the
+    canonical coordinates, and its diagonal ``pi_diag`` is threaded to the
+    canonical estimator as the shape of the prior (scaled by ``gamma``).
+    Without it the prior reduces to the homoscedastic ``gamma I`` of the current
+    implementation.
+
     In the latter case the projection is built in the covariance (precision)
     metric (see :func:`_subspace_reduce`), so the fitted and residual components
     are uncorrelated, and the residual ``(I - P) (x - offset)`` is shrunk in the
     complement.  The residual problem is itself a canonical normal problem with
     diagonal covariance ``d_perp`` and identity loss, so it is solved by
     recursing into :func:`_estimate_pd`; the effective dimension of the
-    shrinkage problem becomes ``len(d_perp)``.
+    shrinkage problem becomes ``len(d_perp)``.  In that recursion the prior is
+    restricted to the complement, i.e. passed as the covariance-metric
+    projection of ``prior_cov`` onto the residual subspace, and canonicalized
+    again by the recursive solve.
 
     When ``gamma`` is a named preset (currently only ``"empirical"``, inferred
     per observation as ``||y||^2 / p_eff``) or a callable ``f(d, y)``, it is
@@ -394,6 +539,13 @@ def _estimate_pd(
     qa = np.asarray(q, dtype=float)
     p = qa.shape[0]
     b, binv, d = _canonicalize(cova, qa)
+    if prior_cov is None:
+        pi_diag = np.ones(p)
+    else:
+        pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
+        free = _cov_proportional_to_qinv(cova, qa)
+        pi_diag, b = _canonicalize_prior(b, d, pc, free_rotation=free)
+        binv = np.linalg.inv(b)
     x_star = xa @ b.T
     if offset is None:
         offset_star = np.zeros(p)
@@ -428,16 +580,32 @@ def _estimate_pd(
             resolved = None
         if resolved is not None:
             kwargs["gamma"] = float(resolved) if resolved.ndim == 0 else resolved
+        if prior_cov is not None:
+            kwargs["pi_diag"] = pi_diag
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
         v = b @ _validate_dirs(dirs, p)
         kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
+        # The reduced problem's prior covariance: the canonical prior
+        # diag(pi_diag) restricted to the residual subspace in the orthonormal
+        # residual basis l2 is l2^T diag(pi_diag) l2; pass it on so the
+        # recursive solve canonicalizes (and where possible diagonalizes) it.
+        # With no explicit prior the reduced problem inherits none (the
+        # homoscedastic default).
+        reduced_prior: NDArray[Any] | None = (
+            None if prior_cov is None else l2.T @ np.diag(pi_diag) @ l2
+        )
         # The residual (eta, diag(d_perp), identity loss) is itself a canonical
         # normal problem with no subspace and no offset; solve it recursively.
         # gamma="empirical" is intentionally left unresolved so the recursive
         # solve derives it from the residual actually shrunk (eta, len(d_perp)).
         reduced = _estimate_pd(
-            eta, np.diag(d_perp), np.eye(d_perp.shape[0]), canonical_estimator, **kwargs
+            eta,
+            np.diag(d_perp),
+            np.eye(d_perp.shape[0]),
+            canonical_estimator,
+            prior_cov=reduced_prior,
+            **kwargs,
         )
         delta_star = offset_star + kept + reduced @ l2.T
     return cast(NDArray[Any], delta_star @ binv.T)
@@ -451,6 +619,7 @@ def _estimate(
     *,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
+    prior_cov: ArrayLike | None = None,
     **kwargs: Any,
 ) -> NDArray[Any]:
     """Run a canonical-form estimator on the given problem.
@@ -464,7 +633,9 @@ def _estimate(
     ``canonical_estimator`` must have the signature
     ``canonical(x_star, d, **kwargs)``, where ``x_star`` has shape ``(..., p)``
     and ``d`` holds the coordinate variances ``(p,)``; it returns the
-    canonical-form estimate with shape ``(..., p)``.
+    canonical-form estimate with shape ``(..., p)``.  ``prior_cov`` is an
+    optional prior covariance in the original coordinates; see
+    :func:`_estimate_pd`.
 
     The estimate shrinks towards the point ``offset`` (default zero) or, when
     ``dirs`` (a matrix whose columns span the affine direction) is given,
@@ -481,7 +652,14 @@ def _estimate(
     w = np.linalg.eigvalsh(qa)
     if np.all(w > _zero_eigenvalue_tolerance(w, p)):
         return _estimate_pd(
-            xa, cova, qa, canonical_estimator, offset=offset, dirs=dirs, **kwargs
+            xa,
+            cova,
+            qa,
+            canonical_estimator,
+            offset=offset,
+            dirs=dirs,
+            prior_cov=prior_cov,
+            **kwargs,
         )
     dirs_all = None if dirs is None else _validate_dirs(dirs, p)
     dirs_full = _merge_dirs(dirs_all, qa, p)
@@ -492,5 +670,6 @@ def _estimate(
         canonical_estimator,
         offset=offset,
         dirs=dirs_full,
+        prior_cov=prior_cov,
         **kwargs,
     )

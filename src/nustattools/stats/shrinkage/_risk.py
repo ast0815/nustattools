@@ -16,7 +16,13 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from ._core import _canonicalize, _validate_sympd, _validate_sympsd
+from ._core import (
+    _canonicalize,
+    _canonicalize_prior,
+    _cov_proportional_to_qinv,
+    _validate_sympd,
+    _validate_sympsd,
+)
 from ._estimators import _resolve_method
 
 _Estimator = Callable[..., NDArray[Any]] | str
@@ -109,7 +115,10 @@ def estimate_risk(
         Seed for the random number generator, for reproducible results.
     **kwargs
         Additional keyword arguments passed to every estimator (e.g.
-        ``strength``, ``positive``, ``offset``, ``dirs``).
+        ``strength``, ``positive``, ``offset``, ``dirs``).  ``prior_cov`` is
+        forwarded to the estimators through here as well; see
+        :func:`estimate_risk_curve` for the consistent-direction handling of
+        the prior.
 
     Returns
     -------
@@ -332,6 +341,7 @@ def estimate_risk_curve(
     seed: int | np.random.Generator | None = None,
     estimator_labels: Sequence[str] | None = None,
     direction_labels: Sequence[str] | None = None,
+    prior_cov: ArrayLike | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Sweep the estimated risk of estimators against the true mean.
@@ -391,6 +401,18 @@ def estimate_risk_curve(
     direction_labels : sequence of str, default=None
         Optional display labels, one per direction, used as ``direction`` in
         each record.  Defaults to the direction name, axis index, or position.
+    prior_cov : array_like, default=None
+        The prior covariance matrix, of shape ``(p, p)``, forwarded to the
+        estimators and used to define the canonical frame for the *canonical*
+        direction specifications (``"axis j"`` and raw vectors).  When given,
+        the canonicalization rotates the frame (where the canonical variances
+        allow; automatic for ``cov`` proportional to ``Q^{-1}``) so that the
+        prior is diagonal in the canonical coordinates, exactly as the
+        estimators do internally; mapping the directions in the same frame
+        keeps the raw-vector and axis directions consistent with the
+        estimator's own canonicalization.  See the
+        :mod:`nustattools.stats.shrinkage` module docstring for the accepted
+        shapes and the diagonalizability requirement.
     **kwargs
         Additional keyword arguments passed to every estimator (as in
         :func:`estimate_risk`).
@@ -439,6 +461,11 @@ def estimate_risk_curve(
 
     baseline: float = float(np.trace(qa @ cova))
     b, binv, d = _canonicalize(cova, qa)
+    if prior_cov is not None:
+        pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
+        free = _cov_proportional_to_qinv(cova, qa)
+        _, b = _canonicalize_prior(b, d, pc, free_rotation=free)
+        kwargs["prior_cov"] = prior_cov
     pinv: NDArray[Any] = np.linalg.inv(cova)
 
     dirs = _canonical_directions(directions, d, b, direction_labels)

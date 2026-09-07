@@ -7,7 +7,19 @@ import pytest
 
 import nustattools.stats as s
 from nustattools.stats import shrinkage as _shrinkage
-from nustattools.stats.shrinkage._core import _empirical_gamma as _core_empirical_gamma
+from nustattools.stats.shrinkage._core import (
+    _cov_proportional_to_qinv,
+)
+from nustattools.stats.shrinkage._core import (
+    _empirical_gamma as _core_empirical_gamma,
+)
+from nustattools.stats.shrinkage._estimators import (
+    _bayes_canonical,
+    _minimax_bayes_canonical,
+    _robust_bayes_canonical,
+    _tan_bayes_canonical,
+    _tan_canonical,
+)
 
 
 def rng():
@@ -2986,3 +2998,421 @@ def test_float_only_methods_reject_callable_gamma():
         fn = getattr(_shrinkage, method)
         with pytest.raises(TypeError):
             fn(x, gamma=f)
+
+
+# ---------------------------------------------------------------------------
+# Explicit prior covariance (prior_cov): validation, rotation, and consistency.
+# ---------------------------------------------------------------------------
+
+_PRIOR_METHODS = ["bayes", "robust_bayes", "tan_bayes", "tan", "minimax_bayes"]
+
+
+def _diagonalizable_prior(cov, q, pi):
+    """A SPD prior whose canonical form is diagonal with variances ``pi``.
+
+    Given ``cov`` and ``q``, ``B^{-1} diag(pi) B^{-T}`` is by construction
+    diagonal in the canonical coordinates.
+    """
+    b, _, _ = _shrinkage._canonicalize(np.asarray(cov), np.asarray(q))
+    binv = np.linalg.inv(b)
+    return binv @ np.diag(pi) @ binv.T
+
+
+def test_prior_cov_validation():
+    # prior_cov must be square of the right shape, symmetric and positive
+    # definite; and its canonical form must be diagonalizable.
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    for est in _PRIOR_METHODS:
+        fn = getattr(_shrinkage, est)
+        with pytest.raises(ValueError, match="prior covariance matrix must have shape"):
+            fn(x, prior_cov=np.eye(p - 1))
+        with pytest.raises(ValueError, match="must be symmetric"):
+            fn(x, prior_cov=np.triu(np.ones((p, p))))
+        with pytest.raises(ValueError, match="positive definite"):
+            fn(x, prior_cov=np.zeros((p, p)))
+
+
+def test_prior_cov_not_diagonalizable_in_canonical_space_raises():
+    # With distinct canonical variances the rotation is not free, so a prior
+    # that couples canonical coordinates with differing variances is rejected.
+    gen = rng()
+    x = gen.normal(size=3)
+    cov = np.diag([1.0, 2.0, 4.0])  # canonical coords = original coords
+    q = np.eye(3)
+    bad = np.array([[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]])
+    for est in _PRIOR_METHODS:
+        fn = getattr(_shrinkage, est)
+        with pytest.raises(ValueError, match="cannot be diagonalized"):
+            fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=bad)
+
+
+def test_prior_cov_diagonal_in_canonical_space_accepted():
+    # A prior that is diagonal in the canonical coordinates works even when the
+    # canonical variances are all distinct (no rotational freedom needed).
+    gen = rng()
+    x = gen.normal(size=3)
+    cov = np.diag([1.0, 2.0, 4.0])
+    q = np.eye(3)
+    prior = np.diag([2.0, 0.5, 3.0])
+    for est in _PRIOR_METHODS:
+        fn = getattr(_shrinkage, est)
+        assert fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=prior).shape == x.shape
+
+
+def test_prior_cov_identity_equals_default():
+    # The default prior is Q^{-1} (the homoscedastic canonical prior), so
+    # passing prior_cov = inv(Q) must reproduce the default exactly, for every
+    # prior-aware estimator and a general cov/Q.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=(3, p))
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    b = gen.normal(size=(p, p))
+    q = b @ b.T + np.eye(p)
+    params = {
+        "bayes": {"gamma": 1.5},
+        "robust_bayes": {"gamma": 1.5},
+        "tan_bayes": {"gamma": 0.7, "positive": False},
+        "tan": {"gamma": 0.7, "positive": False},
+        "minimax_bayes": {"gamma": 0.7, "positive": False},
+    }
+    for est in _PRIOR_METHODS:
+        fn = getattr(_shrinkage, est)
+        default = fn(x, cov=cov, Q=q, **params[est])
+        with_qinv = fn(x, cov=cov, Q=q, prior_cov=np.linalg.inv(q), **params[est])
+        np.testing.assert_allclose(default, with_qinv, rtol=1e-9, atol=1e-9)
+
+
+def test_gamma_scales_prior_shape():
+    # gamma is a pure scale of the effective prior: doubling gamma with a fixed
+    # shape equals keeping gamma and doubling the shape.
+    gen = rng()
+    x = gen.normal(size=(4, 4))
+    pi = np.array([2.0, 1.0, 3.0, 0.5])
+    cov = np.eye(4)
+    q = np.eye(4)
+    for est in _PRIOR_METHODS:
+        fn = getattr(_shrinkage, est)
+        lhs = fn(x, cov=cov, Q=q, gamma=2.0, prior_cov=np.diag(pi))
+        rhs = fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=np.diag(2.0 * pi))
+        np.testing.assert_allclose(lhs, rhs, rtol=1e-12, atol=1e-12)
+
+
+def test_bayes_general_prior_matches_canonical_reference():
+    # The full pipeline (canonicalization + rotation + Bayes rule) must equal a
+    # manual canonical computation with the rotated frame, for a general SPD
+    # prior in the cov proportional to Q^{-1} regime.
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    q = a @ a.T + p * np.eye(p)
+    q = (q + q.T) / 2
+    cov = 2.0 * np.linalg.inv(q)  # cov proportional to Q^{-1}: rotation free
+    m = gen.normal(size=(p, p))
+    prior = m @ m.T + p * np.eye(p)
+    prior = (prior + prior.T) / 2  # arbitrary SPD
+
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior)
+    xs = x @ b_rot.T
+    gamma = 1.3
+    factor = gamma * pi / (d + gamma * pi)
+    expect = factor * xs @ np.linalg.inv(b_rot).T
+
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=cov, Q=q, gamma=gamma, prior_cov=prior),
+        expect,
+        rtol=1e-9,
+        atol=1e-10,
+    )
+
+
+def test_prior_cov_proportional_qinv_ill_conditioned():
+    # Q = inv(cov) makes chol(Q)^T cov chol(Q)^T equal to c*I only up to the
+    # roundoff of the inversion (~ eps * cond(cov)).  The computed canonical
+    # variances are then only *nearly* equal, so the free rotation must be
+    # recognized from the matrix-level proportionality, not from the eps-scale
+    # grouping tolerance: a general SPD prior has to be accepted.
+    gen = rng()
+    p = 5
+    u = np.linalg.qr(gen.normal(size=(p, p)))[0]
+    cov = u @ np.diag(np.logspace(-2, 2, p)) @ u.T
+    cov = (cov + cov.T) / 2
+    q = np.linalg.inv(cov)  # cond(cov) ~ 1e4: proportionality only numerical
+    x = gen.normal(size=p)
+    m = gen.normal(size=(p, p))
+    prior = m @ m.T + p * np.eye(p)
+    prior = (prior + prior.T) / 2
+
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    assert _cov_proportional_to_qinv(cov, q)
+    # Without the flag the near-coinciding variances split into groups at the
+    # eps tolerance, so the general prior is (rightly) rejected; only the
+    # roundoff-aware free rotation accepts it.
+    with pytest.raises(ValueError, match="cannot be diagonalized"):
+        _shrinkage._canonicalize_prior(b.copy(), d.copy(), prior)
+
+    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior, free_rotation=True)
+    xs = x @ b_rot.T
+    gamma = 1.3
+    factor = gamma * pi / (d + gamma * pi)
+    expect = factor * xs @ np.linalg.inv(b_rot).T
+    np.testing.assert_allclose(
+        _shrinkage.bayes(x, cov=cov, Q=q, gamma=gamma, prior_cov=prior),
+        expect,
+        rtol=1e-8,
+        atol=1e-9,
+    )
+
+    # The risk-sweep entry point uses the same free-rotation detection.
+    records = _shrinkage.estimate_risk_curve(
+        cov,
+        "bayes",
+        Q=q,
+        directions="uniform",
+        distances=(0.0, 2.0, 3),
+        n_reps=500,
+        seed=0,
+        gamma=1.0,
+        prior_cov=prior,
+    )
+    assert len(records) == 3
+
+
+def test_canonical_estimators_agree_with_public_prior_cov():
+    # With cov = I, Q = I the canonical coordinates are the original
+    # coordinates, so the public estimators applied to a diagonal prior must
+    # agree with the internal canonical estimators given the prior diagonal.
+    gen = rng()
+    x = gen.normal(size=6)
+    d = gen.uniform(0.5, 3.0, size=6)
+    pi = gen.uniform(0.5, 3.0, size=6)
+    cov = np.diag(d)
+    q = np.eye(6)
+    gamma = 0.9
+
+    expected = {
+        "bayes": _bayes_canonical(x, d, gamma=gamma, pi_diag=pi),
+        "robust_bayes": _robust_bayes_canonical(
+            x, d, strength=1.0, gamma=gamma, pi_diag=pi
+        ),
+        "tan_bayes": _tan_bayes_canonical(
+            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
+        ),
+        "tan": _tan_canonical(
+            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
+        ),
+        "minimax_bayes": _minimax_bayes_canonical(
+            x, d, positive=False, strength=1.0, gamma=gamma, pi_diag=pi
+        ),
+    }
+    for est, ref in expected.items():
+        fn = getattr(_shrinkage, est)
+        got = fn(x, cov=cov, Q=q, gamma=gamma, prior_cov=np.diag(pi))
+        np.testing.assert_allclose(got, ref, rtol=1e-9, atol=1e-10)
+
+
+def test_tan_gamma_inf_constant_shape_equals_flat():
+    # At gamma = inf a constant prior shape (pi_j = c for all j) only rescales
+    # d*, weight and low_a by common factors that cancel in the segmentation,
+    # a_star and the shrinkage ratio, so it reproduces the default homoscedastic
+    # A†_inf exactly.
+    gen = rng()
+    d = gen.uniform(0.5, 3.0, size=5)
+    x = gen.normal(size=5)
+    flat = _tan_canonical(x, d, positive=True, strength=1.0, gamma=float("inf"))
+    for c in (0.25, 2.5):
+        shaped = _tan_canonical(
+            x,
+            d,
+            positive=True,
+            strength=1.0,
+            gamma=float("inf"),
+            pi_diag=c * np.ones(5),
+        )
+        np.testing.assert_allclose(shaped, flat, rtol=1e-9, atol=1e-10)
+
+    cov = np.diag(d)
+    public_flat = _shrinkage.tan(
+        x, cov=cov, Q=np.eye(5), positive=True, gamma=float("inf")
+    )
+    public_shaped = _shrinkage.tan(
+        x,
+        cov=cov,
+        Q=np.eye(5),
+        positive=True,
+        gamma=float("inf"),
+        prior_cov=2.5 * np.eye(5),
+    )
+    np.testing.assert_allclose(public_shaped, public_flat, rtol=1e-9, atol=1e-10)
+
+
+def test_tan_gamma_inf_prior_shape_ranks_by_d2_over_pi():
+    # The gamma=inf limit with a fixed non-uniform prior shape ranks the Bayes
+    # importance by d_j^2/pi_j (weight pi/d^2, low-axis d/pi), not the flat
+    # d_j^2: the result follows the shape-aware limit and differs from the
+    # homoscedastic A†_inf.
+    d = np.array([1.0, 2.0, 3.0, 4.0])
+    pi = np.array([1.0, 4.0, 1.0, 2.0])
+    x = np.array([0.8, -1.3, 0.5, 1.1])
+
+    d_star = d**2 / pi
+    weight = pi / d**2
+    low_a = d / pi
+    order = np.argsort(d_star)[::-1]
+    d_sorted = d[order]
+    d_star_sorted = d_star[order]
+    cw = np.cumsum(weight[order])
+    p = len(d)
+    nu = p
+    for k in range(3, p):
+        if (k - 2) / cw[k - 1] > d_star_sorted[k]:
+            nu = k
+            break
+    s = cw[nu - 1]
+    a = np.empty(p)
+    a[:nu] = (nu - 2) / (s * d_sorted[:nu])
+    a[nu:] = low_a[order[nu:]]
+    c_star = (nu - 2) ** 2 / s
+    if nu < p:
+        c_star += np.sum(d_star_sorted[nu:])
+    x_sorted = x[order]
+    s_val = np.sum(a**2 * x_sorted**2)
+    factor = 1.0 - c_star * a / s_val
+    ref = np.empty(p)
+    ref[order] = factor * x_sorted
+
+    got = _tan_canonical(
+        x, d, positive=False, strength=1.0, gamma=float("inf"), pi_diag=pi
+    )
+    np.testing.assert_allclose(got, ref, rtol=1e-9, atol=1e-10)
+
+    flat = _tan_canonical(x, d, positive=False, strength=1.0, gamma=float("inf"))
+    assert not np.allclose(got, flat, rtol=1e-9, atol=1e-10)
+
+
+def test_prior_cov_couples_only_degenerate_coordinates():
+    # The within-group rotation freedom of the canonicalization can disentangle
+    # a prior that couples coordinates of (near-)equal variance, but not a prior
+    # coupling coordinates with differing variances.
+    d = np.array([1.0, 1.0, 2.0])
+    ok = np.array(
+        [[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]]
+    )  # couples the two degenerate coords (0,1) only
+    pi, b = _shrinkage._canonicalize_prior(np.eye(3), d, ok)
+    np.testing.assert_allclose(b @ ok @ b.T, np.diag(pi), rtol=1e-9, atol=1e-10)
+    np.testing.assert_allclose(pi, [1.5, 0.5, 2.0], rtol=1e-9, atol=1e-10)
+
+    bad = np.array(
+        [[1.0, 0.0, 0.5], [0.0, 1.0, 0.0], [0.5, 0.0, 2.0]]
+    )  # couples coord 0 (d=1) to coord 2 (d=2)
+    with pytest.raises(ValueError, match="cannot be diagonalized"):
+        _shrinkage._canonicalize_prior(np.eye(3), d, bad)
+
+
+def test_prior_cov_rotation_preserves_canonical_form():
+    # The rotated frame must still satisfy B cov B^T = diag(d) and Q = B^T B:
+    # rotating the canonical coordinates within degenerate groups is lossless.
+    gen = rng()
+    p = 5
+    a = gen.normal(size=(p, p))
+    q = a @ a.T + p * np.eye(p)
+    q = (q + q.T) / 2
+    cov = 3.0 * np.linalg.inv(q)  # all canonical variances equal -> free rotation
+    m = gen.normal(size=(p, p))
+    prior = m @ m.T + p * np.eye(p)
+    prior = (prior + prior.T) / 2
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior)
+    np.testing.assert_allclose(b_rot @ cov @ b_rot.T, np.diag(d), rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(b_rot.T @ b_rot, q, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(
+        b_rot @ prior @ b_rot.T, np.diag(pi), rtol=1e-8, atol=1e-10
+    )
+
+
+def test_prior_cov_with_empirical_gamma():
+    # A per-observation empirical scale multiplies the per-coordinate prior
+    # shape: tau_j = gamma_obs * pi_j.
+    gen = rng()
+    x = gen.normal(size=(4, 3))
+    cov = np.eye(3)
+    q = np.eye(3)
+    prior = np.diag([2.0, 3.0, 4.0])
+    got = _shrinkage.bayes(x, cov, Q=q, gamma="empirical", prior_cov=prior)
+    g = np.sum(x**2, axis=-1) / 3
+    tau = g[:, None] * np.array([2.0, 3.0, 4.0])
+    expect = tau / (1.0 + tau) * x
+    np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-10)
+
+
+def test_prior_cov_with_singular_Q():
+    # A singular Q splits the problem; the prior is restricted to the range of
+    # Q (the part that is shrunk), while the loss-free null space is kept at
+    # the data value.
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    cov = np.eye(4)
+    q = np.diag([1.0, 1.0, 0.0, 0.0])
+    prior = np.diag([2.0, 3.0, 4.0, 1.0])
+    got = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=prior)
+    expect = np.array([2.0 / 3.0 * x[0], 3.0 / 4.0 * x[1], x[2], x[3]])
+    np.testing.assert_allclose(got, expect, rtol=1e-8, atol=1e-10)
+
+
+def test_prior_cov_with_dirs():
+    # With an affine no-shrink direction the prior acts only on the residual;
+    # the component along dirs is kept at the data value.
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    cov = np.eye(4)
+    q = np.eye(4)
+    prior = np.diag([2.0, 3.0, 4.0, 1.0])
+    dirs = np.eye(4)[:, :1]  # e1 kept at its data value
+    got = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=prior, dirs=dirs)
+    expect = np.array([x[0], 3.0 / 4.0 * x[1], 4.0 / 5.0 * x[2], 1.0 / 2.0 * x[3]])
+    np.testing.assert_allclose(got, expect, rtol=1e-8, atol=1e-10)
+
+
+def test_risk_helpers_pass_prior_cov():
+    # estimate_risk and estimate_risk_curve must accept and forward prior_cov
+    # to the estimators.
+    cov = np.diag([1.0, 2.0, 3.0])
+    prior = np.diag([2.0, 1.0, 0.5])
+    theta = np.array([1.0, 0.0, 0.0])
+    est = functools.partial(_shrinkage.bayes, prior_cov=prior)
+    risk = s.estimate_risk(theta, cov, est, n_reps=200, seed=0)
+    assert risk.shape == (2,)
+    est2 = functools.partial(_shrinkage.bayes, gamma=1.0, prior_cov=prior)
+    records = s.estimate_risk_curve(
+        cov,
+        est2,
+        directions="uniform",
+        distances=(0.0, 1.0, 2),
+        n_reps=200,
+        seed=0,
+        prior_cov=prior,
+    )
+    assert len(records) == 2
+    assert all(np.isfinite(r["risk"]) for r in records)
+
+
+def test_berger_rejects_prior_cov():
+    # Berger involves no prior, so it rejects prior_cov (and gamma) with a
+    # TypeError — both when called directly and through shrink (the default
+    # method), mirroring the rejection of unsupported kwargs elsewhere.
+    gen = rng()
+    x = gen.normal(size=4)
+    cov = np.diag([1.0, 2.0, 3.0, 4.0])
+    prior = np.diag([2.0, 3.0, 4.0, 1.0])
+    with pytest.raises(TypeError):
+        _shrinkage.berger(x, cov=cov, prior_cov=prior)
+    with pytest.raises(TypeError):
+        _shrinkage.berger(x, cov=cov, gamma=1.0)
+    with pytest.raises(TypeError):
+        _shrinkage.shrink(x, cov=cov, prior_cov=prior, method="berger")
+    # The prior-aware estimators still accept it through the same front-end.
+    got = _shrinkage.shrink(x, cov=cov, method="bayes", gamma=1.0, prior_cov=prior)
+    assert got.shape == x.shape

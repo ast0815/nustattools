@@ -10,6 +10,22 @@ and this project adheres to
 
 ### Added
 
+- New `prior_cov` argument to the prior-based shrinkage estimators (`bayes`,
+  `robust_bayes`, `tan_bayes`, `tan`, `minimax_bayes`) and `shrink`,
+  `estimate_risk` / `estimate_risk_curve`: an explicit prior covariance matrix
+  `Theta` in the original coordinates, making the Gaussian prior
+  `theta ~ N(0, gamma * Theta)` (defaults to `Q^{-1}`, i.e. the previous
+  homoscedastic canonical prior). The canonicalization rotates the canonical
+  frame so that `Theta` is diagonal in canonical coordinates (with the rotation
+  free when `cov` is proportional to `Q^{-1}`), and `gamma` continues to scale
+  the prior per coordinate. `berger`, which involves no prior, rejects
+  `prior_cov` with a `TypeError`.
+- `tan`'s infinite-`gamma` limit (`A†_inf`) now respects an explicit prior shape
+  whenever one is given, ranking coordinates by `d_j^2 / pi_j` instead of the
+  flat `d_j^2`; with the default homoscedastic prior both coincide.
+- The `prior_cov` diagonalization now recognises `cov` proportional to `Q^{-1}`
+  at numerical roundoff (relative `sqrt(eps)`), so any positive-definite prior
+  is accepted with `Q = inv(cov)` even for ill-conditioned covariances.
 - New shrinkage estimator `robust_bayes` (Berger's 1982 `delta^RB`, Tan2015
   Equation 7) with a homoscedastic prior `Gamma = gamma I`, a non-minimax
   robust-to-prior-misspecification estimator, registered in `shrink` and
