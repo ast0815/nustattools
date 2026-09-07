@@ -86,6 +86,12 @@ and this project adheres to
   `d_j`, and the shrinkage-direction matrix `A` (and the `A†_0`/`A†_∞` limits),
   so they are readable without the reference papers.
 
+### Fixed
+
+- The documentation of `estimate_risk_curve` now states that the loss matrix `Q`
+  must be positive definite; unlike the estimators and `estimate_risk`, the risk
+  curve does not accept a positive semi-definite `Q`.
+
 ### Added
 
 - The shrinkage estimators (`shrink`, `berger`, `tan`) and `estimate_risk` now

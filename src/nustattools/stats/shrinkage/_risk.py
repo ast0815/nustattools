@@ -363,9 +363,8 @@ def estimate_risk_curve(
     estimators : callable or str, or sequence of these
         The estimator(s) to evaluate; see :func:`estimate_risk`.
     Q : array_like, default=None
-        The known loss matrix, of shape ``(p, p)``.  May be positive
-        semi-definite; see the :mod:`nustattools.stats.shrinkage` module
-        docstring.  Defaults to the identity.
+        The known loss matrix, of shape ``(p, p)``.  Must be symmetric and
+        positive definite.  Defaults to the identity.
     directions : str, int, array_like, or sequence of these, default=\
 ('uniform', 'proportional', 'inverse')
         The directions along which to move the mean.  A name selects a built-in
