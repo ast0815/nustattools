@@ -427,6 +427,23 @@ def test_estimate_canonicalizes_and_decanonicalizes():
     np.testing.assert_allclose(out_identity, xa)
 
 
+def test_canonicalize_sorts_by_decreasing_variance():
+    # The canonical coordinates are ordered by decreasing variance d
+    # (coordinate 0 is the largest variance), matching the risk-curve axis
+    # convention, while the frame still diagonalizes cov and Q and round-trips.
+    gen = rng()
+    p = 5
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + p * np.eye(p)
+    m = gen.normal(size=(p, p))
+    q = m @ m.T + np.eye(p)
+    b, binv, d = _shrinkage._canonicalize(cov, q)
+    np.testing.assert_allclose(b @ cov @ b.T, np.diag(d), rtol=1e-9, atol=1e-10)
+    np.testing.assert_allclose(b.T @ b, q, rtol=1e-9, atol=1e-10)
+    np.testing.assert_allclose(b @ binv, np.eye(p), rtol=1e-9, atol=1e-10)
+    assert np.all(np.diff(d) <= 1e-12)
+
+
 def _projection(basis):
     """Euclidean-orthogonal projection matrix onto the span of ``basis``.
 
@@ -956,7 +973,7 @@ def test_estimate_risk_curve_negative_axis():
     assert recs[0]["direction"] == "axis -1"
     _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
     smallest = int(np.argsort(d)[::-1][-1])
-    raw = np.eye(3)[smallest] @ binv
+    raw = binv[:, smallest]
     by_raw = _shrinkage.estimate_risk_curve(
         cov, est, directions=[raw], distances=[0.0, 1.0], n_reps=200, seed=0
     )
@@ -1051,7 +1068,7 @@ def test_estimate_risk_curve_axis_ordering():
     assert recs[0]["direction"] == "axis 0"
     _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
     largest = int(np.argsort(d)[::-1][0])
-    raw = np.eye(3)[largest] @ binv
+    raw = binv[:, largest]
     same_axis = _shrinkage.estimate_risk_curve(
         cov, est, directions=[raw], distances=[0.0, 1.0], n_reps=200, seed=0
     )
@@ -3023,7 +3040,10 @@ def test_callable_gamma_receives_pi():
 
     prior = np.diag([1.0, 4.0, 0.5, 2.0])
     _shrinkage.bayes(x, gamma=f, prior_cov=prior)
-    np.testing.assert_allclose(seen["pi"], np.diag(prior), rtol=1e-12, atol=1e-14)
+    # With cov = Q = I the canonical variances all coincide, so the free
+    # ordering is spent to report pi ordered decreasingly within the block.
+    expected = np.sort(np.diag(prior))[::-1]
+    np.testing.assert_allclose(seen["pi"], expected, rtol=1e-12, atol=1e-14)
 
 
 def test_callable_gamma_rejects_negative():
@@ -3405,6 +3425,54 @@ def test_prior_cov_rotation_preserves_canonical_form():
     np.testing.assert_allclose(
         b_rot @ prior @ b_rot.T, np.diag(pi), rtol=1e-8, atol=1e-10
     )
+
+
+def test_prior_canonical_frame_pi_ordering():
+    # pi is non-increasing within each block of (numerically-)equal canonical
+    # variance, in both the already-diagonal and the rotated paths; within a
+    # block the permutation/rotation is the only freedom, so this is always
+    # possible and is what the canonicalization reports.
+    d = np.array([4.0, 4.0, 2.0, 1.0, 1.0])  # blocks (0,1) and (3,4)
+
+    # Already-diagonal prior: blocks are permuted so pi descends inside them,
+    # distinct-variance coordinates stay pinned to their diagonal entries.
+    prior = np.diag([2.0, 4.0, 3.0, 1.0, 0.5])
+    pi, _ = _shrinkage._canonicalize_prior(np.eye(5), d, prior)
+    np.testing.assert_allclose(pi, [4.0, 2.0, 3.0, 1.0, 0.5], rtol=1e-12, atol=1e-14)
+
+    # Rotated path: a general prior coupling only the degenerate coordinates is
+    # diagonalized within each block and ordered non-increasing there.
+    m = np.array(
+        [
+            [1.0, 0.6, 0.0, 0.0, 0.0],
+            [0.6, 2.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 3.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 2.0, 0.8],
+            [0.0, 0.0, 0.0, 0.8, 1.0],
+        ]
+    )
+    pi_r, b_r = _shrinkage._canonicalize_prior(np.eye(5), d, m)
+    np.testing.assert_allclose(b_r @ m @ b_r.T, np.diag(pi_r), rtol=1e-9, atol=1e-10)
+    assert np.all(np.diff(pi_r[0:2]) <= 1e-12)
+    assert np.all(np.diff(pi_r[3:5]) <= 1e-12)
+
+
+def test_tan_canonical_inputs_are_order_invariant():
+    # The canonical estimators treat the coordinates as an unordered set that
+    # they rank internally: relabelling x, d and pi together leaves the result
+    # unchanged (up to the same relabelling).
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    d = gen.uniform(0.5, 5.0, size=p)
+    pi = gen.uniform(0.5, 5.0, size=p)
+    perm = np.random.default_rng(0).permutation(p)
+
+    got = _tan_canonical(x, d, positive=False, strength=1.0, gamma=0.7, pi=pi)
+    permuted = _tan_canonical(
+        x[perm], d[perm], positive=False, strength=1.0, gamma=0.7, pi=pi[perm]
+    )
+    np.testing.assert_allclose(got[perm], permuted, rtol=1e-10, atol=1e-12)
 
 
 def test_prior_cov_with_empirical_gamma():

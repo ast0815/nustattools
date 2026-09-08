@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- The canonical coordinates are now guaranteed to be ordered by _decreasing_
+  variance `d` (coordinate 0 has the largest variance), matching the risk-curve
+  axis convention; the canonical prior diagonal `pi` follows the same order and
+  is non-increasing within each block of (numerically-)equal `d`.
 - New `prior_cov` argument to the prior-based shrinkage estimators (`bayes`,
   `robust_bayes`, `tan_bayes`, `tan`, `minimax_bayes`) and `shrink`,
   `estimate_risk` / `estimate_risk_curve`: an explicit prior covariance matrix

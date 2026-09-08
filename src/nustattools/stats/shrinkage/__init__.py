@@ -10,7 +10,11 @@ the loss reduces to the sum of squared errors.  The public estimators accept a
 general covariance matrix ``cov`` and loss matrix ``Q``, canonicalize the
 problem internally, and transform the result back.  This keeps the
 per-estimator implementations simple: they only ever need to shrink a vector
-towards zero with independent coordinates of varying variance.
+towards zero with independent coordinates of varying variance.  The canonical
+coordinates are ordered by *decreasing* variance ``d`` (coordinate ``0`` has
+the largest variance, matching the risk-curve axis convention); the canonical
+prior diagonal ``pi`` follows the same order and is non-increasing within each
+block of (numerically-)equal ``d``.
 
 The estimators may shrink towards an arbitrary affine subspace
 ``offset + span(dirs)``, where ``dirs`` is a matrix whose columns span the

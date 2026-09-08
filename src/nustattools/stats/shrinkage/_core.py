@@ -94,7 +94,10 @@ def _canonicalize(
     """Transform to canonical form (diagonal covariance, identity loss).
 
     Returns ``(B, Binv, D)`` such that ``Q = B^T B``, ``B cov B^T = D`` (with
-    ``D`` diagonal) and ``Binv = inv(B)``.  Row vectors ``x`` transform to the
+    ``D`` diagonal) and ``Binv = inv(B)``.  ``D = diag(d)`` with ``d``
+    non-increasing: the canonical coordinates are ordered by *decreasing*
+    variance, so coordinate ``0`` has the largest variance (matching the
+    risk-curve axis convention).  Row vectors ``x`` transform to the
     canonical coordinates as ``x_star = x @ B.T`` and back as
     ``x = x_star @ Binv.T``.  See [Tan2015]_, Section 3.2.
 
@@ -103,8 +106,12 @@ def _canonicalize(
     # C with Q = C^T C (upper triangular from the Cholesky factor of Q)
     c = np.linalg.cholesky(q).T
     # Diagonalize C Sigma C^T.  eigh gives o^T (C Sigma C^T) o = diag(d), so
-    # the orthogonal O with O (C Sigma C^T) O^T = diag(d) is O = o^T.
+    # the orthogonal O with O (C Sigma C^T) O^T = diag(d) is O = o^T.  The
+    # eigenvalues come out ascending; permute the frame so d is descending.
     d, o = np.linalg.eigh(c @ cov @ c.T)
+    perm = np.argsort(d)[::-1]
+    o = o[:, perm]
+    d = d[perm]
     b = o.T @ c
     binv = np.linalg.inv(b)
     return b, binv, d
@@ -177,6 +184,14 @@ def _canonicalize_prior(
     ``b_rot @ prior_cov @ b_rot.T`` diagonal as well, and returns that diagonal
     as ``pi`` together with the rotated ``b_rot``.
 
+    The returned ``pi`` is aligned with the ``d`` from :func:`_canonicalize`
+    (already non-increasing in the frame it rotates); within each block of
+    (numerically-)equal ``d`` that the frame rotates the entries are ordered
+    non-increasing as well.  When the prior is already diagonal the same
+    ordering is achieved by permuting the runs of *exactly*-equal ``d``
+    (a permutation is an orthogonal rotation, so ``B cov B^T = diag(d)`` is
+    preserved); the remaining coordinates keep their given diagonal order.
+
     When all canonical variances coincide (in particular for a data covariance
     proportional to ``Q^{-1}``, where ``D`` is a scalar multiple of the
     identity) the rotation is unconstrained and *any* positive-definite
@@ -198,7 +213,27 @@ def _canonicalize_prior(
     w = b @ prior_cov @ b.T
     zero_tol = _zero_eigenvalue_tolerance(np.linalg.eigvalsh(w), p)
     if np.allclose(w, np.diag(np.diag(w)), rtol=0.0, atol=zero_tol):
-        return np.diag(w).copy(), b
+        # The prior is already diagonal in the canonical coordinates, so no
+        # rotation is needed.  Only the frame's *ordering* is a free choice:
+        # coordinates with exactly-equal canonical variances may be permuted
+        # without disturbing ``B cov B^T = diag(d)`` (a permutation is an
+        # orthogonal rotation), so permute each run of equal ``d`` so that
+        # ``pi`` is non-increasing inside it.  Runs of merely near-equal (but
+        # distinct) ``d`` keep their given diagonal order.
+        pi = np.diag(w).copy()
+        rot = np.eye(p)
+        j = 0
+        while j < p:
+            k = j + 1
+            while k < p and d[k] == d[j]:
+                k += 1
+            if k - j > 1:
+                blk = np.arange(j, k)
+                desc = np.argsort(pi[blk])[::-1]
+                rot[np.ix_(blk, blk)] = np.eye(k - j)[desc]
+                pi[blk] = pi[blk][desc]
+            j = k
+        return pi, rot @ b
     if free_rotation:
         groups = [list(range(p))]
     else:
@@ -218,9 +253,18 @@ def _canonicalize_prior(
     rot = np.eye(p)
     pi = np.empty(p)
     for group in groups:
-        evals, evecs = np.linalg.eigh(w[np.ix_(group, group)])
-        rot[np.ix_(group, group)] = evecs.T
-        pi[group] = evals
+        # Sort the positions ascending: the group lists are built by walking
+        # ``d`` in descending order, so their members need not be position-
+        # ordered.  eigh returns ascending eigenvalues; assigning them in
+        # *descending* order to the ascending positions makes ``pi``
+        # non-increasing in the flattened array (every such assignment is an
+        # orthogonal rotation of the frame, so it is still a valid within-block
+        # rotation).
+        grp = np.sort(np.asarray(group))
+        evals, evecs = np.linalg.eigh(w[np.ix_(grp, grp)])
+        desc = np.argsort(evals)[::-1]
+        rot[np.ix_(grp, grp)] = evecs[:, desc].T
+        pi[grp] = evals[desc]
     if np.any(pi <= 0):
         msg = "prior covariance matrix must be positive definite (in canonical coordinates)."
         raise ValueError(msg)

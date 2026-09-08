@@ -218,6 +218,10 @@ def _tan_canonical(
     inf``; for the default homoscedastic shape ``pi_j = 1`` this is the
     flat-prior ``d_j^2`` ranking).
 
+    The coordinates are in canonical order: ``d`` is non-increasing (variance
+    decreasing) and ``pi`` is its aligned prior diagonal, non-increasing within
+    each block of (numerically-)equal ``d``.
+
     """
 
     p_eff = len(d)
@@ -466,7 +470,10 @@ def _minimax_bayes_canonical(
     original ``2(k - 2)_+``; minimaxity holds for ``0 <= strength <= 2``.
     ``gamma`` is the (finite, non-negative) prior scale.  ``pi`` (default all
     ones) is the canonical diagonal of an explicit prior covariance, making
-    the effective per-coordinate prior variance ``gamma * pi[j]``.
+    the effective per-coordinate prior variance ``gamma * pi[j]``.  The
+    coordinates are in canonical order: ``d`` is non-increasing and ``pi`` is
+    its aligned prior diagonal, non-increasing within each block of
+    (numerically-)equal ``d``.
 
     """
 
@@ -672,7 +679,9 @@ def _tan_bayes_canonical(
     observation (matching the batch dims of ``x``).  ``pi`` (default all ones)
     is the canonical diagonal of an explicit prior covariance, making the
     effective per-coordinate prior variance ``gamma * pi[j]`` and hence
-    ``a_j = d_j / (d_j + gamma * pi[j])``.
+    ``a_j = d_j / (d_j + gamma * pi[j])``.  The coordinates are in canonical
+    order: ``d`` is non-increasing and ``pi`` is its aligned prior diagonal,
+    non-increasing within each block of (numerically-)equal ``d``.
 
     The Bayes-rule direction ``a_j`` is proportional to variance: high-variance
     coordinates are shrunk more (like Berger's estimator), while low-variance
@@ -874,7 +883,9 @@ def _robust_bayes_canonical(
     matching the batch dims of ``x`` (one prior scale per observation).
     ``pi`` (default all ones) is the canonical diagonal of an explicit prior
     covariance, making the effective per-coordinate prior variance
-    ``gamma * pi[j]``.
+    ``gamma * pi[j]``.  The coordinates are in canonical order: ``d`` is
+    non-increasing and ``pi`` is its aligned prior diagonal, non-increasing
+    within each block of (numerically-)equal ``d``.
 
     The estimator is *not* minimax: it is robust to misspecification of the
     prior but may have greater risk than the identity estimator.  Unlike
@@ -1073,7 +1084,10 @@ def _bayes_canonical(
     .. math:: \\delta_j = \\frac{\\gamma \\pi_j}{d_j + \\gamma \\pi_j} \\, x_j^*.
 
     ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
-    ``(p,)``.  ``gamma >= 0`` is the prior scale, either a scalar (shared across
+    ``(p,)``.  The coordinates are in canonical order: ``d`` is non-increasing
+    and ``pi`` is its aligned prior diagonal, non-increasing within each block
+    of (numerically-)equal ``d``.  ``gamma >= 0`` is the prior scale, either a
+    scalar (shared across
     observations) or an array matching the batch dims of ``x`` (one prior scale
     per observation):
 
