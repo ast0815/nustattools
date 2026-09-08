@@ -115,6 +115,11 @@ and this project adheres to
 
 ### Fixed
 
+- `tan_bayes`'s infinite-`gamma` limit no longer degenerates to the identity:
+  since `delta_{A,c}` is invariant under a scalar rescaling of the Bayes-rule
+  direction `A`, the `gamma = inf` limit uses the direction `a_j = d_j / pi_j`
+  (shrinkage proportional to variance, like `tan`'s `A†_inf`), reducing to the
+  identity only when the corresponding `c* = c*(D, diag(d/pi))` is non-positive.
 - The documentation of `estimate_risk_curve` now states that the loss matrix `Q`
   must be positive definite; unlike the estimators and `estimate_risk`, the risk
   curve does not accept a positive semi-definite `Q`.

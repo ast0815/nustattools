@@ -689,8 +689,13 @@ def _tan_bayes_canonical(
 
     - zero prior scale: ``a_j = 1`` (A = I), reducing to the Berger direction
       with ``c* = tr(D) - 2 max(d)``.
-    - infinite prior scale: ``a_j = 0`` (A = 0), no shrinkage (identity
-      estimator).
+    - infinite prior scale: ``a_j -> d_j/pi_j`` up to a common scalar.  The
+      estimator ``delta_{A,c}`` is invariant under a scalar rescaling of ``A``
+      (the factor cancels between ``c*``, ``A`` and the quadratic form
+      ``x^T A^2 x``), so the limit is the fixed direction ``A ~ diag(d/pi)``
+      with ``c* = c*(D, diag(d/pi))`` (shrinkage proportional to variance),
+      not the identity; the estimator still reduces to the identity when that
+      ``c* <= 0``.
 
     """
 
@@ -702,6 +707,12 @@ def _tan_bayes_canonical(
         pi = np.ones(p_eff)
     g = np.asarray(gamma, dtype=float)[..., None]
     a = d / (d + g * pi)
+    # gamma -> inf: a_j = d_j/(d_j + gamma*pi_j) is proportional to d_j/pi_j
+    # (the common 1/gamma factor).  Since delta_{A,c} is invariant under a
+    # scalar rescaling of A (the factor cancels between c*, A and the quadratic
+    # form x^T A^2 x), the limit keeps a_j = d_j/pi_j instead of collapsing to
+    # a = 0.
+    a = np.where(np.isinf(g), d / pi, a)
     da = d * a
     c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
     bad = c_star_val <= 0.0
@@ -773,7 +784,13 @@ def tan_bayes(
 
         - ``gamma = 0``: ``a_j = 1`` (A = I), the Berger direction with
           ``c* = tr(D) - 2 max(d)``.
-        - ``gamma = inf``: ``a_j = 0`` (A = 0), no shrinkage (identity).
+        - ``gamma = inf``: ``a_j -> d_j/pi_j`` up to a common scalar.  Since
+          ``delta_{A,c}`` is invariant under a scalar rescaling of ``A`` (the
+          factor cancels between ``c*``, ``A`` and the quadratic form
+          ``x^T A^T Q A x``), the limit is the fixed direction
+          ``A ~ diag(d/pi)`` with ``c* = c*(D, diag(d/pi))`` (shrinkage
+          proportional to variance); the estimator reduces to the identity
+          only when that ``c* <= 0``.
         - intermediate ``gamma``: coordinates with larger variance ``d_j`` are
           shrunk more (proportional to ``d_j/(d_j + gamma)``).
 
@@ -823,8 +840,10 @@ def tan_bayes(
 
     When ``gamma = 0``, the direction reduces to ``A = I`` and the estimator
     becomes a Berger-type estimator with ``c* = tr(D) - 2 max(d)``.  For
-    finite ``gamma``, the direction interpolates between this and the identity
-    (no shrinkage) as ``gamma`` increases.
+    finite ``gamma``, the direction interpolates between this and the
+    ``gamma = inf`` direction ``A ~ diag(d/pi)`` (the estimator is invariant
+    under a scalar rescaling of ``A``, so the infinite-scale limit does not
+    collapse to the identity) as ``gamma`` increases.
 
     Examples
     --------

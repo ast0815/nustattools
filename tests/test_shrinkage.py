@@ -2079,6 +2079,10 @@ def _tan_bayes_general_formula(x, cov, q, gamma, strength=1.0):
     x_star = x @ b.T
 
     a = d / (d + gamma)
+    if np.isinf(gamma):
+        # gamma -> inf: a_j -> d_j up to a common scalar, which cancels in the
+        # estimator (a linear factor of A does not change delta_{A,c}).
+        a = d
     da = d * a
     c_star = float(np.sum(da) - 2.0 * np.max(da))
     if c_star <= 0.0:
@@ -2110,14 +2114,107 @@ def test_tan_bayes_gamma_zero_is_berger_like():
     np.testing.assert_allclose(delta, factor * x, rtol=1e-10)
 
 
-def test_tan_bayes_gamma_inf_is_identity():
-    # gamma=inf -> a=0 (A=0) -> c*=0 -> identity.
+def test_tan_bayes_gamma_inf_limit():
+    # gamma=inf -> a_j -> d_j/pi_j up to a common scalar that cancels: the
+    # limit is the fixed direction A ~ diag(d/pi), not the identity (a linear
+    # factor of A does not change delta_{A,c}).  For the flat cov=eye case the
+    # direction is a=1, i.e. the Berger-like c* = sum(d) - 2*max(d) = 3.
+    x = rng().normal(size=5)
+    delta = _shrinkage.tan_bayes(x, cov=np.eye(5), gamma=float("inf"), positive=False)
+    c_star = 3.0
+    s_val = float(np.sum(x**2))
+    factor = 1.0 - c_star / s_val
+    np.testing.assert_allclose(delta, factor * x, rtol=1e-10)
+    assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_tan_bayes_gamma_inf_matches_prior_shape_limit():
+    # The gamma=inf limit uses a_j = d_j/pi_j (up to a cancelling scalar).  With
+    # cov = diag(d), Q = I the canonical coordinates are the original
+    # coordinates (already in the canonical decreasing-variance order), so a
+    # directly-specified prior diagonal must reproduce the internal canonical
+    # form for both a constant and a non-constant prior shape.
+    d = np.array([2.9, 2.3, 1.7, 1.1, 0.6])
+    x = rng().normal(size=5)
+    pi = np.array([1.0, 1.0, 0.5, 0.5, 0.3])
+    cov = np.diag(d)
+
+    for shape in (np.ones(5), pi):
+        delta = _shrinkage.tan_bayes(
+            x,
+            cov=cov,
+            gamma=float("inf"),
+            positive=False,
+            prior_cov=np.diag(shape),
+        )
+        ref = _tan_bayes_canonical(
+            x, d, positive=False, strength=1.0, gamma=float("inf"), pi=shape
+        )
+        np.testing.assert_allclose(delta, ref, rtol=1e-9, atol=1e-10)
+        assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_tan_bayes_gamma_inf_constant_shape_equals_flat():
+    # At gamma = inf a constant prior shape (pi_j = c for all j) only rescales A
+    # by a common factor that cancels in the shrinkage ratio, so it reproduces
+    # the default homoscedastic limit exactly.
+    gen = rng()
+    d = gen.uniform(0.5, 3.0, size=5)
+    x = gen.normal(size=5)
+    flat = _tan_bayes_canonical(x, d, positive=True, strength=1.0, gamma=float("inf"))
+    for c in (0.25, 2.5):
+        shaped = _tan_bayes_canonical(
+            x,
+            d,
+            positive=True,
+            strength=1.0,
+            gamma=float("inf"),
+            pi=c * np.ones(5),
+        )
+        np.testing.assert_allclose(shaped, flat, rtol=1e-9, atol=1e-10)
+
+
+def test_tan_bayes_gamma_inf_limit_is_continuous():
+    # Large finite gamma approaches the gamma=inf limit continuously.
+    d = np.array([1.0, 0.8, 0.5, 0.3, 0.2])
+    cov = np.diag(d)
+    x = rng().normal(size=5)
+    inf = _shrinkage.tan_bayes(x, cov=cov, gamma=float("inf"), positive=False)
+    for gamma in (1e8, 1e12):
+        np.testing.assert_allclose(
+            _shrinkage.tan_bayes(x, cov=cov, gamma=gamma, positive=False),
+            inf,
+            rtol=1e-6,
+            atol=1e-8,
+        )
+
+
+def test_tan_bayes_gamma_inf_limit_can_stay_identity():
+    # When one coordinate dominates, the limit direction gives c* <= 0 and the
+    # estimator reduces to the identity, as for finite gamma.
+    d = np.array([4.0, 2.0, 1.0, 0.5, 0.25])
+    cov = np.diag(d)
     x = rng().normal(size=5)
     np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x, cov=np.eye(5), gamma=float("inf")),
-        x,
-        atol=1e-12,
+        _shrinkage.tan_bayes(x, cov=cov, gamma=float("inf")), x, atol=1e-12
     )
+
+
+def test_tan_bayes_array_gamma_mixes_inf():
+    # A per-observation gamma array may mix inf (limit direction) with finite
+    # values; each observation must use its own scale.
+    p = 5
+    d = np.array([1.0, 0.8, 0.5, 0.3, 0.2])
+    cov = np.diag(d)
+    x = rng().normal(size=(4, p))
+    gammas = np.array([np.inf, 1.0, 2.0, np.inf])
+    delta = _shrinkage.tan_bayes(x, cov=cov, gamma=gammas, positive=False)
+    for i in range(4):
+        np.testing.assert_allclose(
+            delta[i],
+            _shrinkage.tan_bayes(x[i], cov=cov, gamma=float(gammas[i]), positive=False),
+            rtol=1e-10,
+        )
 
 
 def test_tan_bayes_shape():
@@ -2163,6 +2260,21 @@ def test_tan_bayes_general_Q_matches_closed_form():
     np.testing.assert_allclose(
         _shrinkage.tan_bayes(x, cov=cov, Q=q, gamma=gamma, positive=False),
         _tan_bayes_general_formula(x, cov, q, gamma),
+    )
+
+
+def test_tan_bayes_general_formula_at_inf():
+    # The gamma=inf limit also agrees with the direct general-form formula.
+    a = rng().normal(size=(5, 5))
+    cov = a @ a.T + 5.0 * np.eye(5)
+    b = rng().normal(size=(5, 5))
+    q = b @ b.T + np.eye(5)
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=cov, Q=q, gamma=float("inf"), positive=False),
+        _tan_bayes_general_formula(x, cov, q, float("inf")),
+        rtol=1e-8,
+        atol=1e-10,
     )
 
 
