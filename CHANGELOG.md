@@ -115,6 +115,13 @@ and this project adheres to
 
 ### Fixed
 
+- `estimate_risk_curve` now maps true means back to the original space with the
+  same (prior-rotated) canonical frame the estimators canonicalize the data in,
+  so integer "axis j" and raw-vector directions sweep the estimator's canonical
+  coordinate `j` (whose prior diagonal `pi` is non-increasing within each block
+  of equal `d`) instead of the unrotated-frame coordinate. The shared
+  canonical-frame construction is factored into a private `_canonical_frame`
+  helper used by both the estimators and the risk curve.
 - `tan_bayes`'s infinite-`gamma` limit no longer degenerates to the identity:
   since `delta_{A,c}` is invariant under a scalar rescaling of the Bayes-rule
   direction `A`, the `gamma = inf` limit uses the direction `a_j = d_j / pi_j`

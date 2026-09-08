@@ -8,6 +8,7 @@ import pytest
 import nustattools.stats as s
 from nustattools.stats import shrinkage as _shrinkage
 from nustattools.stats.shrinkage._core import (
+    _canonical_frame,
     _cov_proportional_to_qinv,
 )
 from nustattools.stats.shrinkage._core import (
@@ -20,6 +21,7 @@ from nustattools.stats.shrinkage._estimators import (
     _tan_bayes_canonical,
     _tan_canonical,
 )
+from nustattools.stats.shrinkage._risk import _canonical_directions
 
 
 def rng():
@@ -3567,6 +3569,79 @@ def test_prior_canonical_frame_pi_ordering():
     np.testing.assert_allclose(b_r @ m @ b_r.T, np.diag(pi_r), rtol=1e-9, atol=1e-10)
     assert np.all(np.diff(pi_r[0:2]) <= 1e-12)
     assert np.all(np.diff(pi_r[3:5]) <= 1e-12)
+
+
+def test_canonical_frame_matches_estimator_pipeline():
+    # _canonical_frame must reproduce the frame (B, Binv, d, pi) the estimators
+    # canonicalize the data in: with a prior it is the rotated frame and the
+    # prior diagonal pi non-increasing within each equal-d block, with the
+    # inverse consistently rotated as well.
+    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
+    q = np.eye(5)
+    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
+    b, binv, d, pi = _canonical_frame(cov, q, prior)
+    np.testing.assert_allclose(d, [2.0, 2.0, 1.0, 1.0, 0.5])
+    np.testing.assert_allclose(pi, [3.0, 1.0, 2.0, 1.0, 1.0])  # sorted tie blocks
+    np.testing.assert_allclose(b @ cov @ b.T, np.diag(d), rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(b @ binv, np.eye(5), rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(b @ prior @ b.T, np.diag(pi), rtol=1e-12, atol=1e-14)
+
+    b0, binv0, d0, pi0 = _canonical_frame(cov, q, None)
+    np.testing.assert_allclose(pi0, np.ones(5))
+    np.testing.assert_allclose(b0 @ cov @ b0.T, np.diag(d0), rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(b0 @ binv0, np.eye(5), rtol=1e-12, atol=1e-14)
+
+
+def test_risk_curve_axes_match_estimator_prior_frame():
+    # The risk-curve "axis j" must be the estimator's canonical coordinate j
+    # (pi non-increasing within each equal-d block), not the unrotated-frame
+    # coordinate.  With a tie block in d and a diagonal prior needing an in-tie
+    # sort the estimator's frame permutes the block, so the risk curve must map
+    # means back to the original space with the *rotated* inverse.
+    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
+    q = np.eye(5)
+    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
+    b, binv, d, _ = _canonical_frame(cov, q, prior)
+
+    for axis in range(5):
+        ((_, u_star),) = _canonical_directions([axis], d, b, None)
+        theta = u_star @ binv.T
+        canonical_mean = theta @ b.T
+        expected = np.zeros(5)
+        expected[axis] = 1.0
+        np.testing.assert_allclose(canonical_mean, expected, atol=1e-12)
+
+
+def test_risk_curve_raw_direction_uses_estimator_prior_frame():
+    # A raw direction equal to an estimator-frame axis (mapped back to the
+    # original space) must resolve to exactly that canonical coordinate.
+    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
+    q = np.eye(5)
+    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
+    b, binv, d, _ = _canonical_frame(cov, q, prior)
+
+    for axis in range(5):
+        ((_, u_star),) = _canonical_directions([binv[:, axis]], d, b, None)
+        expected = np.zeros(5)
+        expected[axis] = 1.0
+        np.testing.assert_allclose(u_star, expected, atol=1e-12)
+
+
+def test_risk_curve_named_directions_frame_invariant():
+    # The built-in directions depend only on d, which a within-tie-block prior
+    # rotation does not change, so they are identical in the plain and
+    # prior-rotated frames (and hence unaffected by the frame the curve maps
+    # means back with).
+    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
+    q = np.eye(5)
+    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
+    names = ["uniform", "proportional", "inverse"]
+    d_plain = np.array([2.0, 2.0, 1.0, 1.0, 0.5])
+    u_plain = dict(_canonical_directions(names, d_plain, np.eye(5), None))
+    b, _, d, _ = _canonical_frame(cov, q, prior)
+    u_rot = dict(_canonical_directions(names, d, b, None))
+    for name in names:
+        np.testing.assert_allclose(u_rot[name], u_plain[name], atol=1e-12)
 
 
 def test_tan_canonical_inputs_are_order_invariant():

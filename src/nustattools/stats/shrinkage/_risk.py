@@ -17,9 +17,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ._core import (
-    _canonicalize,
-    _canonicalize_prior,
-    _cov_proportional_to_qinv,
+    _canonical_frame,
     _validate_sympd,
     _validate_sympsd,
 )
@@ -410,7 +408,10 @@ def estimate_risk_curve(
         prior is diagonal in the canonical coordinates, exactly as the
         estimators do internally; mapping the directions in the same frame
         keeps the raw-vector and axis directions consistent with the
-        estimator's own canonicalization.  See the
+        estimator's own canonicalization.  The shared frame also orders the
+        canonical prior diagonal ``pi`` non-increasingly within each block of
+        (numerically-)equal ``d`` (as the estimators receive it), so ``axis j``
+        is the estimator's canonical coordinate ``j``.  See the
         :mod:`nustattools.stats.shrinkage` module docstring for the accepted
         shapes and the diagonalizability requirement.
     **kwargs
@@ -460,11 +461,8 @@ def estimate_risk_curve(
     qa = np.eye(p) if Q is None else _validate_sympd(Q, (p, p), "Q")
 
     baseline: float = float(np.trace(qa @ cova))
-    b, binv, d = _canonicalize(cova, qa)
+    b, binv, d, _ = _canonical_frame(cova, qa, prior_cov)
     if prior_cov is not None:
-        pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
-        free = _cov_proportional_to_qinv(cova, qa)
-        _, b = _canonicalize_prior(b, d, pc, free_rotation=free)
         kwargs["prior_cov"] = prior_cov
     pinv: NDArray[Any] = np.linalg.inv(cova)
 

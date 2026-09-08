@@ -271,6 +271,34 @@ def _canonicalize_prior(
     return pi, rot @ b
 
 
+def _canonical_frame(
+    cov: NDArray[Any],
+    q: NDArray[Any],
+    prior_cov: ArrayLike | None,
+) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
+    """Return the canonical frame ``(B, Binv, d, pi)`` shared by estimators.
+
+    Composes :func:`_canonicalize` and, for a given ``prior_cov``,
+    :func:`_canonicalize_prior` into the frame the estimators actually shrink
+    in: ``B`` and ``Binv = inv(B)`` are the (rotated) frame, ``d`` the
+    non-increasing canonical variances and ``pi`` its aligned prior diagonal
+    (all ones without a prior; non-increasing within each block of
+    (numerically-)equal ``d`` when the frame rotated a prior).  Callers that
+    canonicalize data or directions and map back to the original space with
+    ``Binv`` must use this single frame, so their coordinate ``j`` is exactly
+    the estimator's canonical coordinate ``j``.
+
+    """
+
+    b, binv, d = _canonicalize(cov, q)
+    if prior_cov is None:
+        return b, binv, d, np.ones(d.shape[0])
+    pc = _validate_sympd(prior_cov, (d.shape[0], d.shape[0]), "prior covariance matrix")
+    free = _cov_proportional_to_qinv(cov, q)
+    pi, b = _canonicalize_prior(b, d, pc, free_rotation=free)
+    return b, np.linalg.inv(b), d, pi
+
+
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive definite with the given shape."""
 
@@ -588,14 +616,7 @@ def _estimate_pd(
     cova = np.asarray(cov, dtype=float)
     qa = np.asarray(q, dtype=float)
     p = qa.shape[0]
-    b, binv, d = _canonicalize(cova, qa)
-    if prior_cov is None:
-        pi = np.ones(p)
-    else:
-        pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
-        free = _cov_proportional_to_qinv(cova, qa)
-        pi, b = _canonicalize_prior(b, d, pc, free_rotation=free)
-        binv = np.linalg.inv(b)
+    b, binv, d, pi = _canonical_frame(cova, qa, prior_cov)
     x_star = xa @ b.T
     if offset is None:
         offset_star = np.zeros(p)
