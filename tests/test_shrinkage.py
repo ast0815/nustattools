@@ -10,6 +10,8 @@ from nustattools.stats import shrinkage as _shrinkage
 from nustattools.stats.shrinkage._core import (
     _canonical_frame,
     _cov_proportional_to_qinv,
+    _max_rel_risk_gamma,
+    _parse_gamma_factory,
 )
 from nustattools.stats.shrinkage._core import (
     _empirical_gamma as _core_empirical_gamma,
@@ -2876,6 +2878,217 @@ def test_empirical_gamma_unknown_string_raises():
     for method in _EMPIRICAL_METHODS:
         with pytest.raises(ValueError, match="empirical"):
             getattr(_shrinkage, method)(x, gamma="bogus")
+
+
+def test_max_rel_risk_gamma_matches_lambda():
+    # The max_rel_risk factory builds exactly the per-observation scale
+    # sqrt(sum((d*y/pi)^2)) / sqrt(sum(d)*alpha).
+    gen = rng()
+    p = 5
+    d = np.linspace(0.5, 2.0, p)
+    pi = np.linspace(0.5, 1.5, p)
+    y = gen.normal(size=(3, p))
+    alpha = 0.1
+    g = _max_rel_risk_gamma(alpha)
+    ref = np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (np.sum(d) * alpha))
+    np.testing.assert_allclose(g(d, pi, y), ref, rtol=1e-12, atol=1e-14)
+
+
+def test_max_rel_risk_gamma_alpha_validation():
+    # The relative-risk cap alpha must be a positive number.
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError, match="alpha"):
+            _max_rel_risk_gamma(bad)
+
+
+def test_parse_gamma_factory_numeric():
+    # A factory string parses its numeric arguments and builds the callable.
+    gen = rng()
+    p = 5
+    d = np.linspace(0.5, 2.0, p)
+    pi = np.ones(p)
+    y = gen.normal(size=p)
+    g = _parse_gamma_factory("max_rel_risk( 0.1 )")
+    np.testing.assert_allclose(g(d, pi, y), _max_rel_risk_gamma(0.1)(d, pi, y))
+
+
+def test_parse_gamma_factory_bad_spec():
+    # A string that does not match the name(...) pattern is rejected.
+    with pytest.raises(ValueError, match="Unknown gamma specification"):
+        _parse_gamma_factory("max_rel_risk")
+
+
+def test_parse_gamma_factory_unknown_name():
+    with pytest.raises(ValueError, match="factory"):
+        _parse_gamma_factory("bogus(0.1)")
+
+
+@pytest.mark.parametrize("alpha", [0.1, 2.0])
+@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
+def test_factory_gamma_matches_explicit_callable(method, alpha):
+    # A factory string resolves to the same per-observation scale as the
+    # equivalent callable built by _max_rel_risk_gamma.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    fn = getattr(_shrinkage, method)
+    np.testing.assert_allclose(
+        fn(x, gamma=f"max_rel_risk({alpha})"),
+        fn(x, gamma=_max_rel_risk_gamma(alpha)),
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_factory_gamma_batched_matches_per_row():
+    # A factory string on a batched x yields one scale per observation, so the
+    # batched call must equal stacking per-row calls.
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, gamma="max_rel_risk(0.1)")
+        per_row = np.stack([fn(x[i], gamma="max_rel_risk(0.1)") for i in range(n)])
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-14)
+
+
+def test_factory_gamma_with_dirs_matches_explicit():
+    # The factory string flows through the subspace-split recursion like a
+    # callable: the recursive solve re-derives the scale from the reduced
+    # residual actually shrunk.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    v = gen.normal(size=(p, 2))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, dirs=v, gamma="max_rel_risk(0.1)"),
+            fn(x, dirs=v, gamma=_max_rel_risk_gamma(0.1)),
+            rtol=1e-10,
+            atol=1e-12,
+        )
+
+
+def test_factory_gamma_with_dirs_matches_per_row():
+    gen = rng()
+    p = 6
+    n = 4
+    x = gen.normal(size=(n, p))
+    v = gen.normal(size=(p, 2))
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        batched = fn(x, dirs=v, gamma="max_rel_risk(0.1)")
+        per_row = np.stack(
+            [fn(x[i], dirs=v, gamma="max_rel_risk(0.1)") for i in range(n)]
+        )
+        np.testing.assert_allclose(batched, per_row, rtol=1e-12, atol=1e-14)
+
+
+def test_factory_gamma_with_psd_Q_matches_explicit():
+    # With singular Q the null space of Q is merged into the no-shrink
+    # directions and the factory scale is resolved from the residual problem.
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    q = np.diag([1.0, 1.0, 1.0, 1.0, 0.0, 0.0])
+    fn = _shrinkage.bayes
+    np.testing.assert_allclose(
+        fn(x, Q=q, gamma="max_rel_risk(0.1)"),
+        fn(x, Q=q, gamma=_max_rel_risk_gamma(0.1)),
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def test_factory_gamma_uses_pi():
+    # The max_rel_risk scale divides by the canonical prior diagonal pi, so an
+    # explicit prior_cov must change the result and match the explicit callable
+    # under the same prior.
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    prior = np.diag([1.0, 4.0, 0.5, 2.0])
+    with_prior = _shrinkage.bayes(x, gamma="max_rel_risk(0.1)", prior_cov=prior)
+    without = _shrinkage.bayes(x, gamma="max_rel_risk(0.1)")
+    assert not np.allclose(with_prior, without, rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(
+        with_prior,
+        _shrinkage.bayes(x, gamma=_max_rel_risk_gamma(0.1), prior_cov=prior),
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def test_factory_gamma_via_shrink_frontend():
+    # The shrink() front-end forwards the factory string to the resolved
+    # estimator.
+    gen = rng()
+    x = gen.normal(size=6)
+    np.testing.assert_allclose(
+        s.shrink(x, method="bayes", gamma="max_rel_risk(0.1)"),
+        _shrinkage.bayes(x, gamma="max_rel_risk(0.1)"),
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_factory_gamma_unknown_factory_raises():
+    # A string matching the factory syntax but naming an unregistered factory
+    # is rejected.
+    gen = rng()
+    x = gen.normal(size=5)
+    for method in _EMPIRICAL_METHODS:
+        with pytest.raises(ValueError, match="factory"):
+            getattr(_shrinkage, method)(x, gamma="bogus(0.1)")
+
+
+@pytest.mark.parametrize(
+    ("bad", "match"),
+    [
+        ("max_rel_risk", "Unknown gamma specification"),
+        ("max_rel_risk()", "Invalid gamma factory argument"),
+        ("max_rel_risk(abc)", "must be a numeric literal"),
+    ],
+)
+def test_factory_gamma_malformed_raises(bad, match):
+    # Factory syntax errors (no parentheses, no argument, non-numeric argument)
+    # are rejected with ValueError.
+    gen = rng()
+    x = gen.normal(size=5)
+    with pytest.raises(ValueError, match=match):
+        _shrinkage.bayes(x, gamma=bad)
+
+
+def test_factory_gamma_bad_arity_or_type_raises():
+    # Arity that does not fit the registered factory, or a valid literal that
+    # is not a number, is rejected with TypeError.
+    gen = rng()
+    x = gen.normal(size=5)
+    for bad in ("max_rel_risk(1, 2)", "max_rel_risk('0.1')"):
+        with pytest.raises(TypeError):
+            _shrinkage.bayes(x, gamma=bad)
+
+
+def test_factory_gamma_alpha_nonpositive_raises():
+    # The relative-risk cap alpha must be > 0, enforced at parse time.
+    gen = rng()
+    x = gen.normal(size=5)
+    for bad in ("max_rel_risk(0)", "max_rel_risk(-1)"):
+        with pytest.raises(ValueError, match="alpha"):
+            _shrinkage.bayes(x, gamma=bad)
+
+
+def test_float_only_methods_reject_factory_gamma():
+    # tan and minimax_bayes only accept a numeric gamma, exactly as with the
+    # "empirical" string and callables.
+    gen = rng()
+    x = gen.normal(size=6)
+    for method in _FLOAT_ONLY_METHODS:
+        with pytest.raises(TypeError):
+            getattr(_shrinkage, method)(x, gamma="max_rel_risk(0.1)")
 
 
 def test_float_only_methods_reject_string_gamma():

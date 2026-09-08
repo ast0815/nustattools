@@ -56,7 +56,7 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
   matrices such as ``Q = inv(cov)`` rather than requiring exact
   proportionality.
 - ``gamma`` is the prior *scale* — a non-negative number scaling the whole
-  prior.  It can be given in any of four forms:
+  prior.  It can be given in any of five forms:
 
 - a non-negative ``float`` giving a single prior scale shared by every
   coordinate and observation;
@@ -69,6 +69,15 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
 - a one-dimensional ``numpy.ndarray`` giving an explicit prior scale per
   observation; its shape must match the leading batch dimensions of ``x``
   (``()`` for a single vector);
+- a factory string ``"name(arg, ...)"`` combining the two previous forms: a
+  registered factory rebuilds a per-observation gamma callable from its
+  arguments, given as numeric literals (e.g. ``"max_rel_risk(0.1)"``).  The
+  built-in factory ``"max_rel_risk(alpha)"`` (with ``alpha > 0``) caps the
+  per-observation *increase* of the relative risk at ``alpha`` (so the
+  relative risk itself is at most ``1 + alpha``), using the prior scale
+  ``gamma = ||d * y / pi||_2 / sqrt(alpha * sum(d))``; it resolves per
+  observation exactly like the callable form below, including the same shape
+  and non-negativity validation;
 - a callable ``f(d, pi, y)`` that computes the prior scales from the canonical
   coordinate variances ``d`` (shape ``(p,)``), the canonical diagonal ``pi`` of
   the prior covariance (shape ``(p,)``; all ones without ``prior_cov``), and

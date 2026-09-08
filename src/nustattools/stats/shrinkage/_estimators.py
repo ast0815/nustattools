@@ -778,7 +778,8 @@ def tan_bayes(
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for the accepted forms (scalar, ``"empirical"``,
-        per-observation array, or callable) and the per-observation shape
+        per-observation array, factory string like ``"max_rel_risk(0.1)"``,
+        or callable) and the per-observation shape
         contract.  Controls the Bayes-rule shrinkage direction
         ``a_j = d_j / (d_j + gamma)``:
 
@@ -993,7 +994,8 @@ def robust_bayes(
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for the accepted forms (scalar, ``"empirical"``,
-        per-observation array, or callable) and the per-observation shape
+        per-observation array, factory string like ``"max_rel_risk(0.1)"``,
+        or callable) and the per-observation shape
         contract.  ``gamma = 0`` corresponds to the spherically
         symmetric limiting form ``{1 - strength*(k-2)_+/(X^T D^{-1} X)}_+ x``
         while larger ``gamma`` shrinks coordinates more strongly in the
@@ -1164,7 +1166,8 @@ def bayes(
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for the accepted forms (scalar, ``"empirical"``,
-        per-observation array, or callable) and the per-observation shape
+        per-observation array, factory string like ``"max_rel_risk(0.1)"``,
+        or callable) and the per-observation shape
         contract.  ``gamma = 0`` gives the degenerate estimate
         ``delta = 0``; ``gamma = inf`` gives the identity estimate
         ``delta = x``; intermediate values interpolate between the two,

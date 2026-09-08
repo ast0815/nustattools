@@ -13,6 +13,8 @@ the sibling modules build on it.
 
 from __future__ import annotations
 
+import ast
+import re
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -47,6 +49,95 @@ _EMPIRICAL_GAMMA_PRESETS: dict[
 ] = {
     "empirical": _empirical_gamma,
 }
+
+
+def _max_rel_risk_gamma(
+    alpha: float,
+) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
+    """Return a per-observation prior scale capping the relative risk increase.
+
+    The returned callable ``g(d, pi, y)`` infers, for each observation, the
+    prior scale that caps the per-observation *increase* of the relative risk
+    at ``alpha`` (i.e. the relative risk itself is at most ``1 + alpha``):
+
+    .. math::
+
+        g = \\frac{1}{\\sqrt{\\alpha \\sum_j d_j}}
+            \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
+
+    with ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` (the canonical
+    diagonal of the prior covariance) and ``y`` of shape ``(..., p)`` (the
+    centered canonical data).  The result has shape ``(...,)``: one prior scale
+    per observation.  Raises :class:`ValueError` unless ``alpha > 0``.
+
+    """
+
+    if alpha <= 0:
+        msg = "alpha must be > 0."
+        raise ValueError(msg)
+
+    def gamma(d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
+        return cast(
+            NDArray[Any],
+            np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (np.sum(d) * alpha)),
+        )
+
+    return gamma
+
+
+_GAMMA_FACTORIES: dict[
+    str,
+    Callable[..., Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]],
+] = {
+    "max_rel_risk": _max_rel_risk_gamma,
+}
+
+_FACTORY_PATTERN = re.compile(r"^(\w+)\(([^()]*)\)$")
+
+
+def _parse_gamma_factory(
+    spec: str,
+) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
+    """Build a per-observation gamma callable from a factory string.
+
+    ``spec`` has the form ``name(arg, ...)`` where ``name`` identifies a
+    registered factory in :data:`_GAMMA_FACTORIES` and the arguments are
+    numeric literals (e.g. ``"max_rel_risk(0.1)"``).  Raises
+    :class:`ValueError` for a malformed specification or an unregistered name,
+    and :class:`TypeError` for a literal argument that is not numeric or whose
+    arity does not match the factory.
+
+    """
+
+    match = _FACTORY_PATTERN.match(spec)
+    if match is None:
+        msg = f"Unknown gamma specification '{spec}'."
+        raise ValueError(msg)
+    name, args_text = match.groups()
+    if name not in _GAMMA_FACTORIES:
+        names = ", ".join(_GAMMA_FACTORIES)
+        msg = f"Unknown gamma factory '{name}'; available factories: {names}."
+        raise ValueError(msg)
+    args: list[float] = []
+    for token in args_text.split(","):
+        tok = token.strip()
+        if not tok:
+            msg = f"Invalid gamma factory argument in '{spec}'."
+            raise ValueError(msg)
+        try:
+            value = ast.literal_eval(tok)
+        except (ValueError, SyntaxError) as e:
+            msg = (
+                f"Gamma factory argument '{tok}' in '{spec}' must be a numeric literal."
+            )
+            raise ValueError(msg) from e
+        if not isinstance(value, (int, float)):
+            msg = (
+                f"Gamma factory argument '{tok}' in '{spec}' must be a numeric literal."
+            )
+            raise TypeError(msg)
+        args.append(float(value))
+    return _GAMMA_FACTORIES[name](*args)
 
 
 def _resolve_data_gamma(
@@ -627,14 +718,15 @@ def _estimate_pd(
             raise ValueError(msg)
         offset_star = o @ b.T
     y = x_star - offset_star
-    if (
-        "gamma" in kwargs
-        and isinstance(kwargs["gamma"], str)
-        and kwargs["gamma"] not in _EMPIRICAL_GAMMA_PRESETS
-    ):
-        names = ", ".join(_EMPIRICAL_GAMMA_PRESETS)
-        msg = f"Unknown gamma specification '{kwargs['gamma']}'; use a number or one of: {names}."
-        raise ValueError(msg)
+    if "gamma" in kwargs and isinstance(kwargs["gamma"], str):
+        g_str = kwargs["gamma"]
+        if g_str not in _EMPIRICAL_GAMMA_PRESETS:
+            if _FACTORY_PATTERN.match(g_str):
+                kwargs["gamma"] = _parse_gamma_factory(g_str)
+            else:
+                names = ", ".join(_EMPIRICAL_GAMMA_PRESETS)
+                msg = f"Unknown gamma specification '{g_str}'; use a number or one of: {names}."
+                raise ValueError(msg)
     # A named preset or callable prior scale is resolved per observation: each
     # draw gets its own scale (e.g. ||y_i / sqrt(pi)||^2 / p_eff).  In the plain
     # (no-dirs) path it is resolved here and passed to the canonical estimator

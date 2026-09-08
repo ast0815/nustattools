@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- `gamma` now also accepts factory strings like `"max_rel_risk(0.1)"` for the
+  size-related estimators, resolving per observation like the callable form
+  (currently only the `max_rel_risk` factory cap is built in).
 - The canonical coordinates are now guaranteed to be ordered by _decreasing_
   variance `d` (coordinate 0 has the largest variance), matching the risk-curve
   axis convention; the canonical prior diagonal `pi` follows the same order and
