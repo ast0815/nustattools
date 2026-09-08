@@ -75,7 +75,10 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
   built-in factory ``"max_rel_risk(alpha)"`` (with ``alpha > 0``) caps the
   per-observation *increase* of the relative risk at ``alpha`` (so the
   relative risk itself is at most ``1 + alpha``), using the prior scale
-  ``gamma = ||d * y / pi||_2 / sqrt(alpha * sum(d))``; it resolves per
+  ``gamma = ||d * y / pi||_2 / sqrt(alpha * sum(d))``; the built-in factory
+  ``"max_abs_risk(alpha)"`` (with ``alpha > 0``) caps the per-observation
+  *absolute* increase of the risk at ``alpha``, using the prior scale
+  ``gamma = ||d * y / pi||_2 / sqrt(alpha)``.  Factories resolve per
   observation exactly like the callable form below, including the same shape
   and non-negativity validation;
 - a callable ``f(d, pi, y)`` that computes the prior scales from the canonical

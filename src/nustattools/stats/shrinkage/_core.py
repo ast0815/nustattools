@@ -85,11 +85,43 @@ def _max_rel_risk_gamma(
     return gamma
 
 
+def _max_abs_risk_gamma(
+    alpha: float,
+) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
+    """Return a per-observation prior scale capping the absolute risk increase.
+
+    The returned callable ``g(d, pi, y)`` infers, for each observation, the
+    prior scale that caps the per-observation *absolute* increase of the risk
+    at ``alpha``:
+
+    .. math::
+
+        g = \\frac{1}{\\sqrt{\\alpha}}
+            \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
+
+    with ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` (the canonical
+    diagonal of the prior covariance) and ``y`` of shape ``(..., p)`` (the
+    centered canonical data).  The result has shape ``(...,)``: one prior scale
+    per observation.  Raises :class:`ValueError` unless ``alpha > 0``.
+
+    """
+
+    if alpha <= 0:
+        msg = "alpha must be > 0."
+        raise ValueError(msg)
+
+    def gamma(d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
+        return np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / alpha)
+
+    return gamma
+
+
 _GAMMA_FACTORIES: dict[
     str,
     Callable[..., Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]],
 ] = {
     "max_rel_risk": _max_rel_risk_gamma,
+    "max_abs_risk": _max_abs_risk_gamma,
 }
 
 _FACTORY_PATTERN = re.compile(r"^(\w+)\(([^()]*)\)$")
