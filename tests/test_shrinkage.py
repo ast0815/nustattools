@@ -3870,10 +3870,10 @@ def test_risk_curve_axes_match_estimator_prior_frame():
     cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
     q = np.eye(5)
     prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
-    b, binv, d, _ = _canonical_frame(cov, q, prior)
+    b, binv, d, pi = _canonical_frame(cov, q, prior)
 
     for axis in range(5):
-        ((_, u_star),) = _canonical_directions([axis], d, b, None)
+        ((_, u_star),) = _canonical_directions([axis], d, b, None, pi)
         theta = u_star @ binv.T
         canonical_mean = theta @ b.T
         expected = np.zeros(5)
@@ -3911,6 +3911,41 @@ def test_risk_curve_named_directions_frame_invariant():
     u_rot = dict(_canonical_directions(names, d, b, None))
     for name in names:
         np.testing.assert_allclose(u_rot[name], u_plain[name], atol=1e-12)
+
+
+def test_risk_curve_axes_follow_prior_ordering_when_all_d_equal():
+    # Regression: with cov proportional to Q^{-1} every canonical variance is
+    # equal, so the (arbitrary) argsort tie-break used to pick "axis j" must be
+    # replaced by the prior ordering that the estimators themselves use (via
+    # _canonicalize_prior).  Otherwise "axis -1" does not select the smallest
+    # prior variance and axes with equal prior variance produce different
+    # risk curves.
+    p = 10
+    cov = np.eye(p)
+    q = np.eye(p)
+    prior = np.diag([4000, 200, 10, 5, 5, 5, 1, 1, 1, 1])
+    b, binv, d, pi = _canonical_frame(cov, q, prior)
+
+    np.testing.assert_allclose(d, 1.0)
+    # The shared frame orders pi non-increasingly within the all-equal-d block,
+    # and axis j must be that canonical coordinate j.
+    for axis in range(p):
+        ((_, u_star),) = _canonical_directions([axis], d, b, None, pi)
+        canonical_mean = (u_star @ binv.T) @ b.T
+        expected = np.zeros(p)
+        expected[axis] = 1.0
+        np.testing.assert_allclose(canonical_mean, expected, atol=1e-12)
+
+    def axis_variance(axis: int) -> tuple[float, float]:
+        ((_, u_star),) = _canonical_directions([axis], d, b, None, pi)
+        idx = int(np.flatnonzero(u_star)[0])
+        return float(d[idx]), float(pi[idx])
+
+    # Axes selecting equal prior variances resolve to coordinates with matching
+    # (d, pi), so the curve is the same for each.
+    assert axis_variance(-1) == axis_variance(-2)
+    assert axis_variance(0) == (1.0, 4000.0)
+    assert axis_variance(-1) == (1.0, 1.0)
 
 
 def test_tan_canonical_inputs_are_order_invariant():

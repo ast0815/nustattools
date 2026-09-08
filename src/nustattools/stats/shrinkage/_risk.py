@@ -232,6 +232,7 @@ def _canonical_directions(
     d: NDArray[Any],
     b: NDArray[Any],
     direction_labels: Sequence[str] | None,
+    pi: NDArray[Any] | None = None,
 ) -> list[tuple[str, NDArray[Any]]]:
     """Resolve direction specs into unit canonical-space directions.
 
@@ -245,6 +246,13 @@ def _canonical_directions(
     * an array of the original dimension: mapped to canonical space as
       ``u* ~ raw @ B.T``.
 
+    ``pi`` is the aligned prior diagonal (as returned by
+    :func:`_canonical_frame`); when given, it breaks ties among (numerically)
+    equal canonical variances ``d`` so that axis ``j`` matches the
+    prior-ordering that the estimators themselves use, keeping the axis
+    directions consistent with the shared frame.  Defaults to all ones, i.e.
+    no reordering beyond ``d``.
+
     Every direction is normalized so that ``||u*|| = 1``, so that the distance
     axis agrees with the canonical Euclidean norm of the mean.
 
@@ -256,7 +264,8 @@ def _canonical_directions(
     else:
         items = [cast(_Direction, directions)]
 
-    descend = np.argsort(d)[::-1]
+    pi_arr = np.ones(p) if pi is None else np.asarray(pi, dtype=float)
+    descend = np.lexsort((-pi_arr, -d))
     result: list[tuple[str, NDArray[Any]]] = []
     for index, raw in enumerate(items):
         if isinstance(raw, str):
@@ -461,12 +470,12 @@ def estimate_risk_curve(
     qa = np.eye(p) if Q is None else _validate_sympd(Q, (p, p), "Q")
 
     baseline: float = float(np.trace(qa @ cova))
-    b, binv, d, _ = _canonical_frame(cova, qa, prior_cov)
+    b, binv, d, pi = _canonical_frame(cova, qa, prior_cov)
     if prior_cov is not None:
         kwargs["prior_cov"] = prior_cov
     pinv: NDArray[Any] = np.linalg.inv(cova)
 
-    dirs = _canonical_directions(directions, d, b, direction_labels)
+    dirs = _canonical_directions(directions, d, b, direction_labels, pi)
     _, est_list = _normalize_estimators(estimators)
     est_labels = _resolved_labels(est_list, estimator_labels)
     magnitudes = _as_magnitudes(distances)
