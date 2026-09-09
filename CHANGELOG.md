@@ -118,13 +118,14 @@ and this project adheres to
 
 ### Fixed
 
-- Integer "axis j" directions in `estimate_risk_curve` are now resolved using the
-  shared frame's prior ordering: within blocks of (numerically-)equal canonical
-  variance `d` the frame orders coordinates by decreasing prior diagonal `pi`, so
-  axis `j` picks the estimator's canonical coordinate `j`. Previously the axis
-  tie-break ignored the prior (an `argsort` on the all-equal `d`), so e.g. with
-  `cov = Q^{-1}` axes pointing at equal prior variances (such as `-1` and `-2`
-  with two equal trailing `pi` entries) produced different risk curves.
+- Integer "axis j" directions in `estimate_risk_curve` are now resolved using
+  the shared frame's prior ordering: within blocks of (numerically-)equal
+  canonical variance `d` the frame orders coordinates by decreasing prior
+  diagonal `pi`, so axis `j` picks the estimator's canonical coordinate `j`.
+  Previously the axis tie-break ignored the prior (an `argsort` on the all-equal
+  `d`), so e.g. with `cov = Q^{-1}` axes pointing at equal prior variances (such
+  as `-1` and `-2` with two equal trailing `pi` entries) produced different risk
+  curves.
 - `estimate_risk_curve` now maps true means back to the original space with the
   same (prior-rotated) canonical frame the estimators canonicalize the data in,
   so integer "axis j" and raw-vector directions sweep the estimator's canonical
