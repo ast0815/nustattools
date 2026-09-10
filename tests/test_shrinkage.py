@@ -9,6 +9,7 @@ import nustattools.stats as s
 from nustattools.stats import shrinkage as _shrinkage
 from nustattools.stats.shrinkage._core import (
     _canonical_frame,
+    _canonicalize,
     _cov_proportional_to_qinv,
     _max_abs_risk_gamma,
     _max_rel_risk_gamma,
@@ -4050,3 +4051,129 @@ def test_berger_rejects_prior_cov():
     # The prior-aware estimators still accept it through the same front-end.
     got = _shrinkage.shrink(x, cov=cov, method="bayes", gamma=1.0, prior_cov=prior)
     assert got.shape == x.shape
+
+
+# ---------------------------------------------------------------------------
+# matmul tests
+# ---------------------------------------------------------------------------
+
+
+def _canon_frame(cov, q):
+    """Return (B, Binv, d) for a given cov/loss pair."""
+    b, binv, d = _canonicalize(np.asarray(cov, dtype=float), np.asarray(q, dtype=float))
+    return b, binv, d
+
+
+def test_matmul_identity():
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, A=np.eye(p)),
+        x,
+        rtol=1e-12,
+    )
+
+
+def test_matmul_identity_with_offset():
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, A=np.eye(p), offset=offset),
+        x - offset,
+        rtol=1e-12,
+    )
+
+
+def test_matmul_known_transform():
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    q = np.eye(p)
+    b, binv, _d = _canon_frame(cov, q)
+    a_star = b @ a @ binv
+    expected = binv @ (a_star @ (b @ (x - offset)))
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, cov=cov, Q=q, A=a, offset=offset),
+        expected,
+        rtol=1e-10,
+    )
+
+
+def test_matmul_singular_A():
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    # Rank-1 A: projects onto e1 then scales
+    a = np.zeros((p, p))
+    a[0, 0] = 2.0
+    result = _shrinkage.matmul(x, A=a)
+    expected = np.zeros(p)
+    expected[0] = 2.0 * x[0]
+    np.testing.assert_allclose(result, expected, rtol=1e-12)
+
+
+def test_matmul_batched():
+    gen = rng()
+    p = 4
+    n = 6
+    x = gen.normal(size=(n, p))
+    a = gen.normal(size=(p, p))
+    offset = gen.normal(size=p)
+    batched = _shrinkage.matmul(x, A=a, offset=offset)
+    per_row = np.stack([_shrinkage.matmul(x[i], A=a, offset=offset) for i in range(n)])
+    np.testing.assert_allclose(batched, per_row, rtol=1e-12)
+
+
+def test_matmul_with_Q():
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    # Non-identity Q changes the canonical frame, which changes how A is
+    # interpreted internally.  The result should still equal A @ (x - offset)
+    # in original coordinates.
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    result = _shrinkage.matmul(x, Q=q, A=a)
+    np.testing.assert_allclose(result, a @ x, rtol=1e-10)
+
+
+def test_matmul_with_Q_and_offset():
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    result = _shrinkage.matmul(x, Q=q, A=a, offset=offset)
+    np.testing.assert_allclose(result, a @ (x - offset), rtol=1e-10)
+
+
+def test_matmul_A_shape_error():
+    with pytest.raises(ValueError, match="A must have shape"):
+        _shrinkage.matmul(rng().normal(size=3), A=np.eye(4))
+
+
+def test_matmul_A_ndim_error():
+    with pytest.raises(ValueError, match="A must be a 2-D matrix"):
+        _shrinkage.matmul(rng().normal(size=3), A=np.ones(3))
+
+
+def test_matmul_A_nonfinite_error():
+    a = np.eye(3)
+    a[1, 2] = np.inf
+    with pytest.raises(ValueError, match="A must contain only finite values"):
+        _shrinkage.matmul(rng().normal(size=3), A=a)
+
+
+def test_matmul_dirs_error():
+    with pytest.raises(ValueError, match="matmul does not support dirs"):
+        _shrinkage.matmul(rng().normal(size=3), A=np.eye(3), dirs=np.eye(3))

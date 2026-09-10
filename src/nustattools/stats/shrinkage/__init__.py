@@ -156,6 +156,7 @@ from ._core import (
 from ._estimators import (
     bayes,
     berger,
+    matmul,
     minimax_bayes,
     robust_bayes,
     shrink,
@@ -169,6 +170,7 @@ __all__ = [
     "berger",
     "estimate_risk",
     "estimate_risk_curve",
+    "matmul",
     "minimax_bayes",
     "robust_bayes",
     "shrink",

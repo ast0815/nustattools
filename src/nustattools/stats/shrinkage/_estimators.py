@@ -7,13 +7,17 @@ This private module defines the concrete minimization estimators
 their canonical-form implementations (:func:`_berger_canonical`,
 :func:`_tan_canonical`, :func:`_minimax_bayes_canonical`, :func:`_tan_bayes_canonical`,
 :func:`_robust_bayes_canonical` and :func:`_bayes_canonical`), the
+:func:`matmul` linear-transformation estimator and its canonical-form
+implementation (:func:`_matmul_canonical`), the
 :func:`shrink` front-end that dispatches to a named estimator, and the
 ``_METHODS`` registry used by :func:`shrink` and the risk-estimation helpers.
 
 Each estimator only ever needs to shrink a vector towards zero with independent
 coordinates of varying variance (the canonical form); the shared machinery in
 :mod:`nustattools.stats.shrinkage._core` validates and canonicalizes the general
-problem.
+problem.  :func:`matmul` is an exception: it applies an arbitrary user-supplied
+linear transformation in canonical coordinates, which is useful as a building
+block and for features implemented in canonical form.
 
 """
 
@@ -25,7 +29,7 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from ._core import _estimate
+from ._core import _canonical_frame, _estimate, _validate
 
 #: Alias for a gamma prior-scale callable ``f(d, pi, y)``; see the
 #: :mod:`nustattools.stats.shrinkage` module docstring for the contract.
@@ -1332,6 +1336,105 @@ def shrink(
     if prior_cov is not None:
         kwargs["prior_cov"] = prior_cov
     return fn(x, cov, Q=Q, offset=offset, dirs=dirs, **kwargs)
+
+
+def _matmul_canonical(
+    x: NDArray[Any],
+    _d: NDArray[Any],
+    *,
+    A: NDArray[Any],
+) -> NDArray[Any]:
+    """Matrix multiply in canonical form.
+
+    ``A`` has shape ``(p, p)`` and is the user-supplied matrix transformed to
+    canonical coordinates (``A_star = B @ A @ B⁻¹``).  Applied as
+    ``delta = A @ x`` where ``x`` is the centered canonical data.
+
+    """
+
+    return cast(NDArray[Any], x @ A.T)
+
+
+def matmul(
+    x: ArrayLike,
+    cov: ArrayLike | None = None,
+    *,
+    Q: ArrayLike | None = None,
+    A: ArrayLike,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+) -> NDArray[Any]:
+    """Apply a user-specified linear transformation to centered data.
+
+    Computes ``delta = A @ (x - offset)`` where ``A`` is a matrix in the
+    original coordinate system.  Internally the problem is canonicalized
+    (diagonal covariance, identity loss) and ``A`` is transformed to canonical
+    coordinates ``A_star = B @ A @ B⁻¹`` before application, so the result is
+    independent of the coordinate choice.
+
+    ``A`` has shape ``(p, p)`` and need not have any special properties (e.g.
+    invertibility, symmetry, or positive-definiteness); ensuring it does
+    something useful is the user's responsibility.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed data.  A single vector of shape ``(p,)`` or a stack of
+        observations of shape ``(..., p)``.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Defaults
+        to the identity matrix.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
+    A : array_like
+        The transformation matrix, of shape ``(p, p)``.  Must contain only
+        finite values.
+    offset : array_like, default=None
+        A point of shape ``(p,)`` subtracted from ``x`` before applying ``A``.
+        Defaults to zero.
+    dirs : array_like, default=None
+        Not supported.  Must be ``None``; passing a value raises
+        :class:`ValueError`.
+
+    Returns
+    -------
+    delta : numpy.ndarray
+        The transformed estimate, with the same shape as ``x``.
+
+    """
+
+    if dirs is not None:
+        msg = "matmul does not support dirs; pass dirs=None."
+        raise ValueError(msg)
+    aa = np.asarray(A, dtype=float)
+    if aa.ndim != 2:
+        msg = f"A must be a 2-D matrix, got {aa.ndim}-D."
+        raise ValueError(msg)
+    xa, cova, qa, p = _validate(x, cov, Q)
+    if aa.shape != (p, p):
+        msg = f"A must have shape ({p}, {p}), got {aa.shape}."
+        raise ValueError(msg)
+    if not np.all(np.isfinite(aa)):
+        msg = "A must contain only finite values."
+        raise ValueError(msg)
+    # Handle offset ourselves: subtract before canonicalizing so that the
+    # canonical estimator receives A @ (x - offset) without the offset being
+    # added back (which _estimate_pd does for shrinkage estimators).
+    if offset is not None:
+        o = np.asarray(offset, dtype=float)
+        if o.shape != (p,):
+            msg = f"offset must have shape {(p,)}, got {o.shape}."
+            raise ValueError(msg)
+        xa = xa - o
+    b, binv, _d, _pi = _canonical_frame(cova, qa, None)
+    a_star = b @ aa @ binv
+    return _estimate(
+        xa,
+        cov,
+        Q,
+        _matmul_canonical,
+        A=a_star,
+    )
 
 
 _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
