@@ -1313,10 +1313,10 @@ def shrink(
         given, it must be symmetric positive definite and diagonalizable in the
         canonical coordinates (automatic for ``cov`` proportional to
         ``Q^{-1}``); see the :mod:`nustattools.stats.shrinkage` module
-        docstring.  Only the Bayes-rule estimators (:func:`bayes`,
-        :func:`robust_bayes`, :func:`tan_bayes`) and the gamma-based
-        minimax estimators (:func:`tan`, :func:`minimax_bayes`) accept it.
-        :func:`berger`, which involves no prior, rejects it (and any
+        docstring.  Only the Bayes-rule estimators (:func:`~nustattools.stats.shrinkage.bayes`,
+        :func:`~nustattools.stats.shrinkage.robust_bayes`, :func:`~nustattools.stats.shrinkage.tan_bayes`) and the gamma-based
+        minimax estimators (:func:`~nustattools.stats.shrinkage.tan`, :func:`~nustattools.stats.shrinkage.minimax_bayes`) accept it.
+        :func:`~nustattools.stats.shrinkage.berger`, which involves no prior, rejects it (and any
         ``gamma``): passing ``prior_cov`` with ``method="berger"`` (the
         default) raises a :class:`TypeError`.
     **kwargs

@@ -52,7 +52,7 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
   ``Q^{-1}`` this is automatic since the canonical variances then coincide and
   the rotation is unconstrained, so any positive-definite prior works there.
   The proportionality is detected with a ``sqrt(eps)``-relative, roundoff-aware
-  check (:func:`_cov_proportional_to_qinv`), so it covers numerically-inverted
+  check (``_cov_proportional_to_qinv``), so it covers numerically-inverted
   matrices such as ``Q = inv(cov)`` rather than requiring exact
   proportionality.
 - ``gamma`` is the prior *scale* — a non-negative number scaling the whole
