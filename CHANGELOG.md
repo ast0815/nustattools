@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- `estimate_risk` now accepts a `truth_cov` argument to estimate the Bayesian
+  risk: the true mean is drawn as `N(theta, truth_cov)` and the data as
+  `N(theta_i, cov)` in the same `n_reps` Monte Carlo budget, averaging the loss
+  over both the data noise and the true-mean prior.
 - The `matmul` estimator now accepts an `enhance` flag (default `False`) that
   replaces `A` by a dominating linear estimator in the canonical coordinates
   (Eldar (2006), Theorem 9): the bias term is left unchanged pointwise while the

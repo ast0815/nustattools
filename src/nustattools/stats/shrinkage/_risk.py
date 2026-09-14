@@ -70,6 +70,7 @@ def estimate_risk(
     estimators: _Estimator | Sequence[_Estimator],
     *,
     Q: ArrayLike | None = None,
+    truth_cov: ArrayLike | None = None,
     n_reps: int = 10_000,
     seed: int | np.random.Generator | None = None,
     **kwargs: Any,
@@ -82,6 +83,14 @@ def estimate_risk(
     no closed form for shrinkage estimators.  This function estimates it by
     averaging the quadratic loss over ``n_reps`` samples ``x`` drawn from
     ``N(theta, cov)``.
+
+    When ``truth_cov`` is given, the *Bayesian risk* is estimated instead: the
+    true mean is itself random, ``theta_i ~ N(theta, truth_cov)``, and each of
+    the ``n_reps`` draws is a pair ``(theta_i, x_i)`` with
+    ``x_i ~ N(theta_i, cov)``.  The loss is averaged over both the data noise
+    and the true-mean prior.  Because the data covariance is constant, the two
+    Gaussian pieces are drawn independently and added, so the total Monte Carlo
+    budget is still ``n_reps`` throws — no inner loop over true values.
 
     If an ``estimators`` *sequence* is given, all estimators are evaluated on
     the *same* Monte Carlo samples, so that any difference between their
@@ -106,6 +115,12 @@ def estimate_risk(
         semi-definite; see the :mod:`nustattools.stats.shrinkage` module
         docstring for how the loss-free null space is handled.  Defaults to the
         identity.
+    truth_cov : array_like, default=None
+        The prior covariance of the true mean, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  When ``None`` (default) the true mean
+        is fixed at ``theta``; otherwise the Bayesian risk is estimated, with
+        the true mean drawn as ``N(theta, truth_cov)`` and the data as
+        ``N(theta_i, cov)`` for each draw.
     n_reps : int, default=10000
         Number of Monte Carlo draws.  Must be at least 2 so that the standard
         error is finite.
@@ -124,8 +139,10 @@ def estimate_risk(
         Each estimator contributes a row ``[risk, standard error]``, where
         ``risk`` is the Monte Carlo mean of the quadratic loss and ``standard
         error`` is its Monte Carlo standard error ``std(loss) / sqrt(n_reps)``.
-        If ``estimators`` is a single estimator the result has shape ``(2,)``;
-        if a sequence, shape ``(len(estimators), 2)``, in the given order.
+        With ``truth_cov`` given, the loss is averaged over the data noise and
+        the true-mean prior.  If ``estimators`` is a single estimator the
+        result has shape ``(2,)``; if a sequence, shape ``(len(estimators), 2)``,
+        in the given order.
 
     Examples
     --------
@@ -144,6 +161,14 @@ def estimate_risk(
     >>> s.estimate_risk(theta, np.eye(3), estimators, n_reps=2000, seed=0).shape
     (2, 2)
 
+    Estimate the Bayesian risk, averaging the loss also over a Gaussian
+    distribution of the true mean around ``theta``:
+
+    >>> s.estimate_risk(
+    ...     theta, np.eye(3), "berger", truth_cov=np.eye(3), n_reps=2000, seed=1
+    ... ).shape
+    (2,)
+
     """
 
     _check_n_reps(n_reps)
@@ -159,9 +184,20 @@ def estimate_risk(
     is_single, est_list = _normalize_estimators(estimators)
 
     gen = np.random.default_rng(seed)
-    x = gen.multivariate_normal(theta_arr, cova, size=n_reps)
+    if truth_cov is None:
+        x = gen.multivariate_normal(theta_arr, cova, size=n_reps)
+        theta_used = theta_arr
+    else:
+        truth_cova = _validate_sympd(truth_cov, (p, p), "truth_cov")
+        # Constant data covariance: draw the noise and the true-mean offsets
+        # independently and add them, so the truth and the data vary jointly
+        # within the same n_reps budget.
+        truth_off = gen.multivariate_normal(np.zeros(p), truth_cova, size=n_reps)
+        noise = gen.multivariate_normal(np.zeros(p), cova, size=n_reps)
+        theta_used = theta_arr + truth_off
+        x = theta_used + noise
 
-    result = _risk_from_samples(x, theta_arr, cova, qa, est_list, n_reps, **kwargs)
+    result = _risk_from_samples(x, theta_used, cova, qa, est_list, n_reps, **kwargs)
     if is_single:
         return cast(NDArray[Any], result[0])
     return result
@@ -178,7 +214,10 @@ def _risk_from_samples(
 ) -> NDArray[Any]:
     """Estimate risk and standard error from a batch of pre-drawn samples.
 
-    ``x`` has shape ``(n_reps, p)`` and holds draws from ``N(theta, cova)``.
+    ``x`` has shape ``(n_reps, p)`` and holds draws from ``N(theta, cova)``;
+    ``theta`` has shape ``(p,)`` for a fixed true mean, or ``(n_reps, p)`` when
+    the Bayesian risk is estimated (one true mean per draw, e.g. from
+    :func:`estimate_risk` with ``truth_cov`` set).
     Each estimator yields a row ``[risk, standard error]``.  The quadratic
     loss is evaluated as ``sum(d * (d @ qa), axis=1)``, which avoids the
     ``(p, p)`` einsum factorization and is faster for the typical small

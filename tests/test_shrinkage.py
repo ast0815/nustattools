@@ -789,6 +789,136 @@ def test_estimate_risk_general_loss_matches_trace():
     np.testing.assert_allclose(res[0], expected, rtol=0.03)
 
 
+def test_estimate_risk_bayesian_identity_matches_trace():
+    # The identity estimator's risk is trace(Q @ cov) regardless of the true
+    # mean, so averaging the truth over the prior leaves it unchanged.
+    gen = rng()
+    p = 4
+    theta = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    expected = np.trace(cov)
+    res = _shrinkage.estimate_risk(
+        theta,
+        cov,
+        functools.partial(s.shrink, strength=0.0),
+        truth_cov=np.eye(p),
+        n_reps=20_000,
+        seed=0,
+    )
+    assert res.shape == (2,)
+    np.testing.assert_allclose(res[0], expected, rtol=0.03)
+
+
+def test_estimate_risk_bayesian_general_loss_matches_trace():
+    # Same invariance with a general loss and prior.
+    gen = rng()
+    p = 4
+    theta = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    truth_cov = np.eye(p) * 2.0
+    expected = np.trace(q @ cov)
+    res = _shrinkage.estimate_risk(
+        theta,
+        cov,
+        functools.partial(s.shrink, strength=0.0),
+        Q=q,
+        truth_cov=truth_cov,
+        n_reps=20_000,
+        seed=0,
+    )
+    np.testing.assert_allclose(res[0], expected, rtol=0.03)
+
+
+def test_estimate_risk_bayesian_berger_beats_identity():
+    # Averaging the truth over a prior centered near the origin, shrinking
+    # must still beat the raw (identity) estimator under Bayesian risk.
+    gen = rng()
+    p = 6
+    theta = gen.normal(size=p) * 0.1
+    shrinker = _shrinkage.estimate_risk(
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=1.0),
+        truth_cov=np.eye(p),
+        n_reps=20_000,
+        seed=0,
+    )
+    identity = _shrinkage.estimate_risk(
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=0.0),
+        truth_cov=np.eye(p),
+        n_reps=20_000,
+        seed=0,
+    )
+    assert shrinker[0] < identity[0]
+
+
+def test_estimate_risk_bayesian_sequence_keeps_dim():
+    # A sequence of estimators yields one [risk, se] row per estimator, in order.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    est = [
+        functools.partial(s.shrink, strength=1.0),
+        functools.partial(s.shrink, strength=0.0),
+    ]
+    res = _shrinkage.estimate_risk(
+        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=2000, seed=0
+    )
+    assert res.shape == (2, 2)
+    single = _shrinkage.estimate_risk(
+        theta,
+        np.eye(p),
+        functools.partial(s.shrink, strength=1.0),
+        truth_cov=np.eye(p),
+        n_reps=2000,
+        seed=0,
+    )
+    np.testing.assert_allclose(res[0], single, rtol=1e-12)
+
+
+def test_estimate_risk_bayesian_seed_determinism():
+    # The same seed reproduces the same draws; a different seed (almost surely)
+    # does not.
+    gen = rng()
+    p = 3
+    theta = gen.normal(size=p)
+    est = functools.partial(s.shrink, strength=1.0)
+    a = _shrinkage.estimate_risk(
+        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=3
+    )
+    b = _shrinkage.estimate_risk(
+        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=3
+    )
+    c = _shrinkage.estimate_risk(
+        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=4
+    )
+    np.testing.assert_array_equal(a, b)
+    assert not np.allclose(a, c)
+
+
+def test_estimate_risk_bayesian_bad_shapes_raise():
+    # truth_cov must be a square SPD matrix matching the dimension of theta.
+    gen = rng()
+    theta = gen.normal(size=3)
+    est = functools.partial(s.shrink, strength=1.0)
+    with pytest.raises(ValueError, match="truth_cov"):
+        _shrinkage.estimate_risk(theta, np.eye(3), est, truth_cov=np.eye(4), n_reps=100)
+    with pytest.raises(ValueError, match="truth_cov"):
+        _shrinkage.estimate_risk(
+            theta, np.eye(3), est, truth_cov=np.eye(3) * -1.0, n_reps=100
+        )
+    with pytest.raises(ValueError, match="truth_cov"):
+        _shrinkage.estimate_risk(
+            theta, np.eye(3), est, truth_cov=np.ones(3), n_reps=100
+        )
+
+
 def test_estimate_risk_berger_beats_identity():
     # Shrinking a nontrivial mean must reduce the estimated risk below the
     # raw (identity) baseline.
