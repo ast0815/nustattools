@@ -3795,6 +3795,83 @@ def test_prior_cov_proportional_qinv_ill_conditioned():
     assert len(records) == 3
 
 
+def test_prior_cov_qinv_ill_conditioned_q_accepted():
+    # When prior_cov = inv(Q) but Q is ill-conditioned (e.g. a ridge-regularised
+    # difference penalty), w = B prior_cov B^T should still be recognised as a
+    # scalar multiple of the identity up to roundoff.  The canonical prior is
+    # then the homoscedastic one (constant pi, no rotation) and the estimator
+    # must reproduce the default result (no explicit prior).
+    gen = rng()
+    p = 30
+    # Q1s-like: first-difference penalty of a smooth model -> near-singular.
+    model = np.linspace(1.0, 3.0, p)
+    C1 = np.zeros((p, p))
+    for i in range(p - 1):
+        C1[i, i] += 1 / model[i] ** 2
+        C1[i, i + 1] += -2 / (model[i] * model[i + 1])
+        C1[i + 1, i + 1] += 1 / model[i + 1] ** 2
+    C1 = (C1 + C1.T) / 2
+    q = C1 + 1e-6 * np.diag(np.diag(C1))
+    prior_cov = np.linalg.inv(q)
+    # General SPD data covariance (not proportional to Q^{-1}).
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    x = gen.normal(size=(3, p))
+
+    # _canonicalize_prior must accept the prior without error.
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    pi, _ = _shrinkage._canonicalize_prior(b, d, prior_cov)
+    assert np.all(pi > 0)
+    np.testing.assert_allclose(pi, pi[0], rtol=1e-10, atol=0)
+
+    # Every prior-aware estimator must reproduce the default (no-prior) result.
+    params = {
+        "bayes": {"gamma": 1.5},
+        "robust_bayes": {"gamma": 1.5},
+        "tan_bayes": {"gamma": 0.7, "positive": False},
+        "tan": {"gamma": 0.7, "positive": False},
+        "minimax_bayes": {"gamma": 0.7, "positive": False},
+    }
+    for name, extra in params.items():
+        fn = getattr(_shrinkage, name)
+        default = fn(x, cov=cov, Q=q, **extra)
+        with_qinv = fn(x, cov=cov, Q=q, prior_cov=prior_cov, **extra)
+        np.testing.assert_allclose(default, with_qinv, rtol=1e-6, atol=1e-7)
+
+
+def test_prior_cov_double_inverse_error_message_guidance():
+    # Notebook-style construction: prior_cov = inv(C1 + ridge) with
+    # Q = inv(prior_cov).  The double inversion degrades the canonical-domain
+    # detection; the check correctly rejects and the error message warns about
+    # the double inversion and suggests the fix.
+    gen = rng()
+    p = 10
+    model = np.linspace(1.0, 3.0, p)
+    C1 = np.zeros((p, p))
+    for i in range(p - 1):
+        C1[i, i] += 1 / model[i] ** 2
+        C1[i, i + 1] += -2 / (model[i] * model[i + 1])
+        C1[i + 1, i + 1] += 1 / model[i + 1] ** 2
+    C1 = (C1 + C1.T) / 2
+    ridge = C1 + 1e-6 * np.diag(np.diag(C1))
+    C1_inv = np.linalg.inv(ridge)
+    q = np.linalg.inv(C1_inv)
+    assert np.linalg.cond(q) > 1e6
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    x = gen.normal(size=(3, p))
+
+    with pytest.raises(ValueError, match="inverting twice"):
+        _shrinkage.bayes(x, cov=cov, Q=q, prior_cov=C1_inv, gamma=1.5)
+
+    # Remediation: pass Q = M (the matrix whose inverse is prior_cov).
+    result = _shrinkage.bayes(x, cov=cov, Q=ridge, prior_cov=C1_inv, gamma=1.5)
+    assert result.shape == x.shape
+    # Or omit prior_cov entirely (defaults to Q^{-1}).
+    result = _shrinkage.bayes(x, cov=cov, Q=ridge, gamma=1.5)
+    assert result.shape == x.shape
+
+
 def test_canonical_estimators_agree_with_public_prior_cov():
     # With cov = I, Q = I the canonical coordinates are the original
     # coordinates, so the public estimators applied to a diagonal prior must

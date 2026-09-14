@@ -315,6 +315,15 @@ def _canonicalize_prior(
     (a permutation is an orthogonal rotation, so ``B cov B^T = diag(d)`` is
     preserved); the remaining coordinates keep their given diagonal order.
 
+    A prior proportional to ``Q^{-1}`` (e.g. ``prior_cov = inv(Q)`` for an
+    ill-conditioned and possibly ridge-regularised ``Q``) is the homoscedastic
+    canonical prior: its ``w`` is a scalar multiple of the identity up to the
+    roundoff of the inversion, so ``pi`` is a constant and no rotation is
+    applied.  This is detected from ``w`` with the same ``sqrt(eps)``-relative
+    tolerance as :func:`_cov_proportional_to_qinv`, so it covers numerically
+    ill-conditioned ``Q`` whose ``eps * cond(Q)`` roundoff would defeat an
+    eps-scale diagonal test.
+
     When all canonical variances coincide (in particular for a data covariance
     proportional to ``Q^{-1}``, where ``D`` is a scalar multiple of the
     identity) the rotation is unconstrained and *any* positive-definite
@@ -334,6 +343,17 @@ def _canonicalize_prior(
 
     p = prior_cov.shape[0]
     w = b @ prior_cov @ b.T
+    # When ``prior_cov`` is proportional to ``Q^{-1}`` the canonical prior
+    # ``w = B prior_cov B^T`` is a scalar multiple of the identity.  Recognise
+    # that structure from ``w`` itself (it never couples coordinates and needs
+    # no rotation), with the same ``sqrt(eps)``-relative, roundoff-aware
+    # tolerance :func:`_cov_proportional_to_qinv` uses: for an ill-conditioned
+    # ``Q`` (e.g. ``Q = inv(prior_cov)`` with a near-singular penalty matrix)
+    # the numerically-computed ``w`` deviates from ``scale * I`` by roughly
+    # ``eps * cond(Q)``, which can exceed the eps-scale diagonal check below.
+    scale = float(np.trace(w)) / p
+    if np.max(np.abs(w - scale * np.eye(p))) <= np.sqrt(_EPSILON) * scale:
+        return np.full(p, scale), b
     zero_tol = _zero_eigenvalue_tolerance(np.linalg.eigvalsh(w), p)
     if np.allclose(w, np.diag(np.diag(w)), rtol=0.0, atol=zero_tol):
         # The prior is already diagonal in the canonical coordinates, so no
@@ -370,7 +390,15 @@ def _canonicalize_prior(
                         "canonical coordinates: it couples canonical coordinates "
                         "with differing variances.  When the data covariance is "
                         "proportional to Q^{-1} this is automatic; otherwise "
-                        "choose a prior that is diagonal in canonical space."
+                        "choose a prior that is diagonal in canonical space.  "
+                        "If `prior_cov` was meant to be the default homoscedastic "
+                        "prior (proportional to Q^{-1}), the rejected coupling is "
+                        "numerical roundoff from inverting twice (e.g. "
+                        "`Q = inv(prior_cov)` with `prior_cov` itself built by "
+                        "an earlier `inv`): pass Q as the matrix whose inverse "
+                        "is `prior_cov` (e.g. `prior_cov = inv(M)` with "
+                        "`Q = M`), or omit `prior_cov` (which defaults to "
+                        "Q^{-1})."
                     )
                     raise ValueError(msg)
     rot = np.eye(p)

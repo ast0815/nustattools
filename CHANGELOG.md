@@ -132,6 +132,17 @@ and this project adheres to
 
 ### Fixed
 
+- The `prior_cov` diagonalization now recognises `prior_cov` proportional to
+  `Q^{-1}` at the `sqrt(eps)`-relative roundoff level (e.g. a single
+  `prior_cov = inv(Q)` for an ill-conditioned loss matrix) as the homoscedastic
+  canonical prior: the estimator reproduces the default (no `prior_cov`) result.
+  The canonical-domain check (`B prior_cov B^T`) amplifies the roundoff of a
+  second inversion, so `Q = inv(prior_cov)` with `prior_cov` itself built by an
+  earlier `inv` is still rejected (see below).
+- The `prior_cov`-coupling `ValueError` now warns when the rejection may be
+  caused by a double inversion (e.g. `Q = inv(prior_cov)` with
+  `prior_cov = inv(M)`) and points to the fix: pass `Q = M` (the matrix whose
+  inverse is `prior_cov`), or omit `prior_cov` (which defaults to `Q^{-1}`).
 - Integer "axis j" directions in `estimate_risk_curve` are now resolved using
   the shared frame's prior ordering: within blocks of (numerically-)equal
   canonical variance `d` the frame orders coordinates by decreasing prior
