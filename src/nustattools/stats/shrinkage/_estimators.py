@@ -1355,6 +1355,70 @@ def _matmul_canonical(
     return cast(NDArray[Any], x @ A.T)
 
 
+_ENHANCE_CONDITION_FAILED = (
+    "enhance=True requires the Eldar (2006) dominance condition "
+    "lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1 to hold in the canonical "
+    "coordinates (eq. (91)); it does not for this A, so the analytical "
+    "improvement is not guaranteed to dominate and is not applied."
+)
+
+
+def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
+    """Dominating linear improvement of ``g`` in the canonical coordinates.
+
+    Applies the closed-form improvement of [Eldar2006]_ (Theorem 9) to the
+    canonical ``(p, p)`` matrix ``g`` whose coordinates have canonical
+    variances ``d``.  Writing ``A = (g - I)^T (g - I)`` for the loss matrix of
+    the bias and ``D = diag(d)`` for the canonical covariance, it returns
+
+        g* = I - (D A D)^{1/2} D^{-1},
+
+    where a positive-semidefinite square root is taken.  Pointwise
+    ``(g* - I)^T (g* - I) = A``, so the bias term is left unchanged while the
+    variance ``tr(g D g^T)`` is not increased provided the dominance condition
+    ``lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1`` (eq. (91)) holds.
+    When the canonical variances are isotropic (``Σ = c Q^{-1}``) the
+    construction reduces to the classical improvement of [Cohen1966]_
+    (Theorem 2.1), ``I - A^{1/2}``, which dominates unconditionally, so the
+    condition is not enforced there.  In the general heteroscedastic case a
+    violation raises :class:`ValueError` rather than silently degrading the
+    estimate.
+
+    Parameters
+    ----------
+    g : numpy.ndarray
+        The canonical transformation matrix of shape ``(p, p)``.
+    d : numpy.ndarray
+        The canonical variances of shape ``(p,)`` (usually ordered decreasing).
+
+    Returns
+    -------
+    g_enh : numpy.ndarray
+        The improved matrix of shape ``(p, p)``.
+
+    Raises
+    ------
+    ValueError
+        If the canonical variances are genuinely heteroscedastic and the
+        dominance condition (91) of [Eldar2006]_ fails.
+
+    """
+
+    p = g.shape[0]
+    c = g - np.eye(p)
+    a = c.T @ c
+    evals, evecs = np.linalg.eigh(np.diag(d) @ a @ np.diag(d))
+    s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
+    if not np.allclose(d, d[0]):
+        # Condition (91): lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1,
+        # the D-weighted analogue of lambda_max(A) <= 1 in the isotropic case.
+        winv = np.diag(1.0 / np.sqrt(d))
+        cond = np.linalg.eigvalsh(winv @ s @ winv)[-1]
+        if cond > 1.0 + 1e-9:
+            raise ValueError(_ENHANCE_CONDITION_FAILED)
+    return cast(NDArray[Any], np.eye(p) - s @ np.diag(1.0 / d))
+
+
 def matmul(
     x: ArrayLike,
     cov: ArrayLike | None = None,
@@ -1363,6 +1427,7 @@ def matmul(
     A: ArrayLike,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
+    enhance: bool = False,
 ) -> NDArray[Any]:
     """Apply a user-specified linear transformation to centered data.
 
@@ -1395,11 +1460,49 @@ def matmul(
     dirs : array_like, default=None
         Not supported.  Must be ``None``; passing a value raises
         :class:`ValueError`.
+    enhance : bool, default=False
+        If ``True``, replace ``A`` by a linear estimator that dominates it in
+        the canonical coordinates (the construction of [Eldar2006]_,
+        Theorem 9): it leaves the bias term unchanged while not increasing the
+        variance, provided a dominance condition holds.  See *Notes*.
 
     Returns
     -------
     delta : numpy.ndarray
         The transformed estimate, with the same shape as ``x``.
+
+    Notes
+    -----
+    ``enhance`` replaces ``A_star`` in the canonical coordinates by the
+    dominating linear estimator of [Eldar2006]_ (Theorem 9).  Writing ``D``
+    for the diagonal canonical covariance of the coordinates and
+    ``A = (A_star - I)^T (A_star - I)`` for the loss matrix of the bias, it
+    returns
+
+    ``A_star_* = I - (D A D)^{1/2} D^{-1}``,
+
+    the positive-semidefinite square root of ``D A D``.  Pointwise,
+
+    ``(A_star_* - I)^T (A_star_* - I) = A``,
+
+    so the bias term ``‖(A_star - I)θ‖²`` is left unchanged for every ``θ``
+    while the variance ``tr(A_star D A_star^T)`` is not increased whenever the
+    dominance condition holds:
+
+    ``λ_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1`` (Eldar 2006, eq. (91)).
+
+    Under this condition the estimate dominates ``A`` exactly in the quadratic
+    risk, not merely heuristically.  When the canonical variances are
+    isotropic (``Σ = c Q⁻¹``) the construction reduces to the classical
+    improvement of [Cohen1966]_ (Theorem 2.1), ``I - A^{1/2}``, which
+    dominates unconditionally, so the condition is not enforced.  For a
+    genuinely heteroscedastic problem with the condition violated,
+    ``enhance=True`` raises :class:`ValueError` instead of silently degrading
+    the estimate.  When ``A`` is already symmetric in the canonical
+    coordinates with all eigenvalues in ``[0, 1]`` (a shrinkage kernel),
+    ``enhance`` is a no-op only if ``A_star`` also commutes with ``D``, i.e.
+    the estimator is admissible; otherwise the construction still reduces its
+    variance in the ``D``-metric.
 
     """
 
@@ -1426,8 +1529,10 @@ def matmul(
             msg = f"offset must have shape {(p,)}, got {o.shape}."
             raise ValueError(msg)
         xa = xa - o
-    b, binv, _d, _pi = _canonical_frame(cova, qa, None)
+    b, binv, d, _pi = _canonical_frame(cova, qa, None)
     a_star = b @ aa @ binv
+    if enhance:
+        a_star = _enhance_canonical(a_star, d)
     return _estimate(
         xa,
         cov,

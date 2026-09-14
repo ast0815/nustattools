@@ -4177,3 +4177,195 @@ def test_matmul_A_nonfinite_error():
 def test_matmul_dirs_error():
     with pytest.raises(ValueError, match="matmul does not support dirs"):
         _shrinkage.matmul(rng().normal(size=3), A=np.eye(3), dirs=np.eye(3))
+
+
+# ---------------------------------------------------------------------------
+# matmul enhance tests
+# ---------------------------------------------------------------------------
+
+
+def test_matmul_enhance_identity():
+    """enhance=True with A = I is a no-op."""
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, A=np.eye(p), enhance=True),
+        _shrinkage.matmul(x, A=np.eye(p), enhance=False),
+        rtol=1e-12,
+    )
+
+
+def test_matmul_enhance_symmetric_noop():
+    """enhance=True with A = I (zero bias) is a no-op in any metric."""
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    r_plain = _shrinkage.matmul(x, cov=cov, A=np.eye(p), enhance=False)
+    r_enh = _shrinkage.matmul(x, cov=cov, A=np.eye(p), enhance=True)
+    np.testing.assert_allclose(r_enh, r_plain, rtol=1e-12)
+
+
+def _shrinkage_kernel(gen: np.random.Generator, p: int) -> np.ndarray:
+    """Symmetric PSD matrix with eigenvalues in (0, 1] in a random eigenbasis.
+
+    Such kernels satisfy the dominance condition (91) of [Eldar2006]_ under
+    heteroscedastic canonical variances, unlike generic asymmetric matrices.
+    """
+    q, _ = np.linalg.qr(gen.normal(size=(p, p)))
+    eig = np.linspace(0.9, 0.2, p)
+    return q @ np.diag(eig) @ q.T
+
+
+def test_matmul_enhance_dominates_shrinkage():
+    """Enhanced A should have risk <= original A under squared-error loss."""
+    gen = rng()
+    p = 4
+    n_reps = 20_000
+    # Diagonal but heteroscedastic covariance
+    sigma_sq = np.array([0.5, 1.0, 2.0, 3.0])
+    cov = np.diag(sigma_sq)
+    # Symmetric shrinkage kernel (satisfies the dominance condition)
+    a = _shrinkage_kernel(gen, p)
+    theta = gen.normal(size=p) * 0.5
+    # Both estimators evaluated on the same samples
+    x = gen.multivariate_normal(theta, cov, size=n_reps)
+    d_plain = x @ a.T - theta[np.newaxis, :]
+    d_enh = _shrinkage.matmul(x, cov=cov, A=a, enhance=True) - theta[np.newaxis, :]
+    risk_plain = float(np.mean(np.sum(d_plain**2, axis=1)))
+    risk_enh = float(np.mean(np.sum(d_enh**2, axis=1)))
+    assert risk_enh <= risk_plain + 1e-10  # allow MC noise
+
+
+def test_matmul_enhance_raises_condition():
+    """enhance=True raises when the dominance condition (91) is violated.
+
+    Genuinely heteroscedastic canonical variances with a far-from-identity A
+    give ``lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) > 1``, in which case the
+    analytical improvement of [Eldar2006]_ (Theorem 9) is not guaranteed to
+    dominate and ``matmul`` raises instead of silently degrading the estimate.
+    """
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    cov = np.diag([0.1, 1.0, 10.0, 100.0])
+    a = gen.normal(size=(p, p)) * 2.0
+    b, binv, d, _ = _canonical_frame(cov, np.eye(p), None)
+    assert not np.allclose(d, d[0])  # genuinely heteroscedastic
+    a_star = b @ a @ binv
+    a2 = (a_star - np.eye(p)).T @ (a_star - np.eye(p))
+    dmat = np.diag(d)
+    dmat_half = np.diag(1.0 / np.sqrt(d))
+    m = dmat @ a2 @ dmat
+    evals, evecs = np.linalg.eigh(m)
+    s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
+    cond = np.linalg.eigvalsh(dmat_half @ s @ dmat_half)[-1]
+    assert cond > 1.0
+    with pytest.raises(ValueError, match="Eldar"):
+        _shrinkage.matmul(x, cov=cov, A=a, enhance=True)
+
+
+def test_matmul_enhance_heteroscedastic_guaranteed():
+    """When the condition (91) holds, the enhanced A dominates analytically.
+
+    Check in the canonical coordinates over several seeds: the bias term is
+    identical pointwise ``‖(A_enh - I)θ‖² = ‖(A_star - I)θ‖²`` while the
+    canonical variance ``tr(A D A^T)`` is not increased, so the quadratic risk
+    is never worse.  This is the heteroscedastic analogue of
+    ``test_matmul_enhance_dominates_guaranteed``.
+    """
+    for seed in range(10):
+        gen = np.random.default_rng(seed)
+        p = 4
+        cov = np.diag(np.geomspace(0.5, 3.0, p))
+        a = _shrinkage_kernel(gen, p)
+        b, binv, d, _ = _canonical_frame(cov, np.eye(p), None)
+        assert not np.allclose(d, d[0])  # heteroscedastic
+        a_star = b @ a @ binv
+        dmat = np.diag(d)
+        dmat_inv = np.diag(1.0 / d)
+        dmat_half = np.diag(1.0 / np.sqrt(d))
+        a2 = (a_star - np.eye(p)).T @ (a_star - np.eye(p))
+        evals, evecs = np.linalg.eigh(dmat @ a2 @ dmat)
+        s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
+        cond = np.linalg.eigvalsh(dmat_half @ s @ dmat_half)[-1]
+        assert cond <= 1.0 + 1e-9  # dominance condition holds
+        a_enh = np.eye(p) - s @ dmat_inv
+        # variance not increased
+        var_plain = float(np.trace(a_star @ dmat @ a_star.T))
+        var_enh = float(np.trace(a_enh @ dmat @ a_enh.T))
+        assert var_enh <= var_plain
+        for _ in range(5):
+            theta_star = gen.normal(size=p)
+            bias_plain = float(np.sum(((a_star - np.eye(p)) @ theta_star) ** 2))
+            bias_enh = float(np.sum(((a_enh - np.eye(p)) @ theta_star) ** 2))
+            assert bias_enh == pytest.approx(bias_plain, abs=1e-12)  # bias identical
+
+
+def test_matmul_enhance_dominates_guaranteed():
+    """When Sigma is proportional to Q^{-1} the enhanced A dominates for any theta.
+
+    Cohen's (1966) construction leaves the bias term ‖(G - I)θ‖² unchanged
+    pointwise while reducing the variance tr(G^T G), so the dominance is exact.
+    Check it analytically in the canonical coordinates over several seeds.
+    """
+    for seed in range(10):
+        gen = np.random.default_rng(seed)
+        p = 4
+        bmat = gen.normal(size=(p, p))
+        q = bmat @ bmat.T + np.eye(p)
+        cov = 2.0 * np.linalg.inv(q)
+        a = gen.normal(size=(p, p))
+        b, binv, d, _ = _canonical_frame(cov, q, None)
+        assert np.allclose(d, d[0])  # D = c I in the Σ ∝ Q⁻¹ case
+        a_star = b @ a @ binv
+        c = a_star - np.eye(p)
+        evals, evecs = np.linalg.eigh(c.T @ c)
+        a_enh = np.eye(p) - (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
+        assert np.trace(a_enh.T @ a_enh) < np.trace(a_star.T @ a_star)  # variance
+        for _ in range(5):
+            theta_star = gen.normal(size=p)
+            bias_plain = float(np.sum(((a_star - np.eye(p)) @ theta_star) ** 2))
+            bias_enh = float(np.sum(((a_enh - np.eye(p)) @ theta_star) ** 2))
+            assert bias_enh == pytest.approx(bias_plain, abs=1e-12)  # bias identical
+
+
+def test_matmul_enhance_with_cov():
+    """enhance=True works correctly with non-identity covariance."""
+    gen = rng()
+    p = 3
+    x = gen.normal(size=p)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    a = _shrinkage_kernel(gen, p)
+    # Should not raise and should produce a finite result
+    result = _shrinkage.matmul(x, cov=cov, A=a, enhance=True)
+    assert result.shape == (p,)
+    assert np.all(np.isfinite(result))
+
+
+def test_matmul_enhance_with_Q():
+    """enhance=True works correctly with non-identity loss matrix."""
+    gen = rng()
+    p = 3
+    x = gen.normal(size=p)
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    a = _shrinkage_kernel(gen, p)
+    result = _shrinkage.matmul(x, Q=q, A=a, enhance=True)
+    assert result.shape == (p,)
+    assert np.all(np.isfinite(result))
+
+
+def test_matmul_enhance_batched():
+    """enhance=True works with batched input."""
+    gen = rng()
+    p = 3
+    n = 5
+    x = gen.normal(size=(n, p))
+    a = gen.normal(size=(p, p))
+    batched = _shrinkage.matmul(x, A=a, enhance=True)
+    per_row = np.stack([_shrinkage.matmul(x[i], A=a, enhance=True) for i in range(n)])
+    np.testing.assert_allclose(batched, per_row, rtol=1e-12)

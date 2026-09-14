@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- The `matmul` estimator now accepts an `enhance` flag (default `False`) that
+  replaces `A` by a dominating linear estimator in the canonical coordinates
+  (Eldar (2006), Theorem 9): the bias term is left unchanged pointwise while the
+  variance is not increased, provided the dominance condition
+  `lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1` holds in canonical
+  coordinates. When the canonical variances are isotropic (`Σ = c Q⁻¹`) the
+  construction reduces to the classical Cohen (1966) improvement
+  `G -> I - [(G - I)'(G - I)]^{1/2}`, which dominates unconditionally; for
+  genuinely heteroscedastic problems with the condition violated, `enhance`
+  raises `ValueError` instead of silently degrading the estimate.
 - `gamma` now also accepts factory strings like `"max_rel_risk(0.1)"` for the
   size-related estimators, resolving per observation like the callable form
   (built-in factories: `max_rel_risk`/`max_abs_risk`).

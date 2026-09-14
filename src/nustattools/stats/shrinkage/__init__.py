@@ -135,6 +135,15 @@ References
     data," Statistica Sinica 26(3), 1219-1248 (2016),
     https://doi.org/10.5705/ss.202014.0069
 
+.. [Cohen1966] A. Cohen, "All Admissible Linear Estimates of the Mean Vector,"
+    The Annals of Mathematical Statistics 37(2), 458-463 (1966),
+    https://doi.org/10.1214/aoms/1177699528
+
+.. [Eldar2006] Y. C. Eldar, "Comparing Between Estimation Approaches:
+    Admissible and Dominating Linear Estimators," IEEE Transactions on Signal
+    Processing 54(5), 1689-1703 (2006),
+    https://doi.org/10.1109/tsp.2006.870559
+
 """
 
 from __future__ import annotations
