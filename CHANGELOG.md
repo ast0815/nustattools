@@ -132,6 +132,12 @@ and this project adheres to
 
 ### Fixed
 
+- `max_rel_risk`/`max_abs_risk` no longer stall at a zero prior scale (or enter
+  a limit cycle) on small and medium data: the prior-scale refinement is now
+  driven by an optional relative-residual tolerance (`rtol`, default no
+  refinement) using a globally convergent Newton update instead of an unguarded
+  Halley step, so a finite `rtol` converges to the true root of the risk-cap
+  equation everywhere.
 - The `prior_cov` diagonalization now recognises `prior_cov` proportional to
   `Q^{-1}` at the `sqrt(eps)`-relative roundoff level (e.g. a single
   `prior_cov = inv(Q)` for an ill-conditioned loss matrix) as the homoscedastic

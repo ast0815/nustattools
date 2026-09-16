@@ -78,7 +78,12 @@ and :func:`tan_bayes` — and of the gamma-based minimax estimators
   ``gamma = ||d * y / pi||_2 / sqrt(alpha * sum(d))``; the built-in factory
   ``"max_abs_risk(alpha)"`` (with ``alpha > 0``) caps the per-observation
   *absolute* increase of the risk at ``alpha``, using the prior scale
-  ``gamma = ||d * y / pi||_2 / sqrt(alpha)``.  Factories resolve per
+  ``gamma = ||d * y / pi||_2 / sqrt(alpha)``.  Both factories accept an
+  optional second argument ``rtol`` giving a relative-residual tolerance for
+  the prior-scale refinement (the scale is then iterated, by a globally
+  convergent Newton method, toward the true root of the risk-cap equation);
+  the default no-tolerance form returns the closed-form scale above exactly.
+  Factories resolve per
   observation exactly like the callable form below, including the same shape
   and non-negativity validation;
 - a callable ``f(d, pi, y)`` that computes the prior scales from the canonical

@@ -13,163 +13,18 @@ the sibling modules build on it.
 
 from __future__ import annotations
 
-import ast
-import re
 from collections.abc import Callable
 from typing import Any, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-# np.finfo(float).eps trips a known pylint numpy false positive (E1101).
-_EPSILON: float = np.finfo(float).eps  # pylint: disable=no-member
-
-
-def _empirical_gamma(
-    d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]
-) -> NDArray[Any]:
-    """Return the per-observation empirical prior scale ``||y / sqrt(pi)||^2 / p_eff``.
-
-    ``y`` has shape ``(..., p_eff)`` (the centered canonical data) and ``pi``
-    has shape ``(p_eff,)`` (the canonical diagonal of the prior covariance,
-    all ones for the default homoscedastic prior).  The result has shape
-    ``(...,)``: one prior scale for each observation, computed from the
-    squared norm over the trailing (coordinate) axis only, after normalising
-    each coordinate by the corresponding prior scale ``sqrt(pi_j)``.
-
-    """
-
-    p_eff = len(d)
-    safe_pi = np.where(pi > 0, pi, 1.0)
-    return cast(NDArray[Any], np.sum(y**2 / safe_pi, axis=-1) / p_eff)
-
-
-_EMPIRICAL_GAMMA_PRESETS: dict[
-    str, Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]
-] = {
-    "empirical": _empirical_gamma,
-}
-
-
-def _max_rel_risk_gamma(
-    alpha: float,
-) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
-    """Return a per-observation prior scale capping the relative risk increase.
-
-    The returned callable ``g(d, pi, y)`` infers, for each observation, the
-    prior scale that caps the per-observation *increase* of the relative risk
-    at ``alpha`` (i.e. the relative risk itself is at most ``1 + alpha``):
-
-    .. math::
-
-        g = \\frac{1}{\\sqrt{\\alpha \\sum_j d_j}}
-            \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
-
-    with ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` (the canonical
-    diagonal of the prior covariance) and ``y`` of shape ``(..., p)`` (the
-    centered canonical data).  The result has shape ``(...,)``: one prior scale
-    per observation.  Raises :class:`ValueError` unless ``alpha > 0``.
-
-    """
-
-    if alpha <= 0:
-        msg = "alpha must be > 0."
-        raise ValueError(msg)
-
-    def gamma(d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
-        return cast(
-            NDArray[Any],
-            np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (np.sum(d) * alpha)),
-        )
-
-    return gamma
-
-
-def _max_abs_risk_gamma(
-    alpha: float,
-) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
-    """Return a per-observation prior scale capping the absolute risk increase.
-
-    The returned callable ``g(d, pi, y)`` infers, for each observation, the
-    prior scale that caps the per-observation *absolute* increase of the risk
-    at ``alpha``:
-
-    .. math::
-
-        g = \\frac{1}{\\sqrt{\\alpha}}
-            \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
-
-    with ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` (the canonical
-    diagonal of the prior covariance) and ``y`` of shape ``(..., p)`` (the
-    centered canonical data).  The result has shape ``(...,)``: one prior scale
-    per observation.  Raises :class:`ValueError` unless ``alpha > 0``.
-
-    """
-
-    if alpha <= 0:
-        msg = "alpha must be > 0."
-        raise ValueError(msg)
-
-    def gamma(d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]) -> NDArray[Any]:
-        return np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / alpha)
-
-    return gamma
-
-
-_GAMMA_FACTORIES: dict[
-    str,
-    Callable[..., Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]],
-] = {
-    "max_rel_risk": _max_rel_risk_gamma,
-    "max_abs_risk": _max_abs_risk_gamma,
-}
-
-_FACTORY_PATTERN = re.compile(r"^(\w+)\(([^()]*)\)$")
-
-
-def _parse_gamma_factory(
-    spec: str,
-) -> Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]:
-    """Build a per-observation gamma callable from a factory string.
-
-    ``spec`` has the form ``name(arg, ...)`` where ``name`` identifies a
-    registered factory in :data:`_GAMMA_FACTORIES` and the arguments are
-    numeric literals (e.g. ``"max_rel_risk(0.1)"``).  Raises
-    :class:`ValueError` for a malformed specification or an unregistered name,
-    and :class:`TypeError` for a literal argument that is not numeric or whose
-    arity does not match the factory.
-
-    """
-
-    match = _FACTORY_PATTERN.match(spec)
-    if match is None:
-        msg = f"Unknown gamma specification '{spec}'."
-        raise ValueError(msg)
-    name, args_text = match.groups()
-    if name not in _GAMMA_FACTORIES:
-        names = ", ".join(_GAMMA_FACTORIES)
-        msg = f"Unknown gamma factory '{name}'; available factories: {names}."
-        raise ValueError(msg)
-    args: list[float] = []
-    for token in args_text.split(","):
-        tok = token.strip()
-        if not tok:
-            msg = f"Invalid gamma factory argument in '{spec}'."
-            raise ValueError(msg)
-        try:
-            value = ast.literal_eval(tok)
-        except (ValueError, SyntaxError) as e:
-            msg = (
-                f"Gamma factory argument '{tok}' in '{spec}' must be a numeric literal."
-            )
-            raise ValueError(msg) from e
-        if not isinstance(value, (int, float)):
-            msg = (
-                f"Gamma factory argument '{tok}' in '{spec}' must be a numeric literal."
-            )
-            raise TypeError(msg)
-        args.append(float(value))
-    return _GAMMA_FACTORIES[name](*args)
+from ._empirical_prior import (
+    _EMPIRICAL_GAMMA_PRESETS,
+    _EPSILON,
+    _FACTORY_PATTERN,
+    _parse_gamma_factory,
+)
 
 
 def _resolve_data_gamma(

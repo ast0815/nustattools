@@ -11,12 +11,14 @@ from nustattools.stats.shrinkage._core import (
     _canonical_frame,
     _canonicalize,
     _cov_proportional_to_qinv,
+)
+from nustattools.stats.shrinkage._empirical_prior import (
+    _empirical_gamma as _core_empirical_gamma,
+)
+from nustattools.stats.shrinkage._empirical_prior import (
     _max_abs_risk_gamma,
     _max_rel_risk_gamma,
     _parse_gamma_factory,
-)
-from nustattools.stats.shrinkage._core import (
-    _empirical_gamma as _core_empirical_gamma,
 )
 from nustattools.stats.shrinkage._estimators import (
     _bayes_canonical,
@@ -3049,6 +3051,147 @@ def test_max_risk_gamma_alpha_validation(builder):
             builder(bad)
 
 
+@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
+def test_max_risk_gamma_rtol_validation(builder):
+    # The refinement tolerance must be none/inf (no refinement) or a
+    # non-negative number; negatives, -inf and nan are rejected.
+    for bad in (-1.0, -np.inf, np.nan):
+        with pytest.raises(ValueError, match="rtol"):
+            builder(0.1, rtol=bad)
+
+
+@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
+def test_max_risk_gamma_rtol_default_matches_closed_form(builder):
+    # rtol = None (the default) and rtol = np.inf both return the historical
+    # closed form exactly, bit for bit: no refinement is performed.
+    gen = rng()
+    p = 5
+    d = np.linspace(0.5, 2.0, p)
+    pi = np.linspace(0.5, 1.5, p)
+    y = gen.normal(size=(3, p))
+    target = np.sum(d) if builder is _max_rel_risk_gamma else 1.0
+    gamma0 = np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (0.1 * target))
+    for rtol in (None, np.inf):
+        np.testing.assert_array_equal(builder(0.1, rtol=rtol)(d, pi, y), gamma0)
+
+
+@pytest.mark.parametrize(
+    ("builder", "alpha"),
+    [
+        (_max_abs_risk_gamma, 5.0),
+        (_max_rel_risk_gamma, 0.2),
+    ],
+)
+def test_max_risk_gamma_rtol_converges_at_small_x(builder, alpha):
+    # Regression: at small and medium data the closed-form seed is far above
+    # the root, and a plain Halley refinement then stalls at the gamma = 0
+    # clamp even though the norm equation has a positive root.  The wide
+    # dynamic range of pi makes the seed a gross overestimate for a
+    # "noise-scale" observation; a finite rtol must converge so that gamma > 0
+    # and the relative residual |F/gamma - B| / B is within rtol.  The chosen
+    # observation is one that reproduces the stall deterministically.
+    p = 10
+    d = np.ones(p)
+    pi = np.array([8.2e6, 1.7e2, 69.0, 30.0, 9.5, 3.8, 1.1, 0.34, 0.28, 0.056])
+    y = np.array(
+        [
+            0.34877973194692047,
+            0.7061137861208042,
+            0.2164637062487031,
+            1.5711101324552066,
+            1.2141630011284508,
+            -0.8255823758714205,
+            0.1244823387674686,
+            -0.8355260085446332,
+            0.5795559473559303,
+            -0.8671482042911687,
+        ]
+    )
+    rtol = 1e-12
+    target = alpha if builder is _max_abs_risk_gamma else alpha * np.sum(d)
+    scale = builder(alpha, rtol=rtol)(d, pi, y)
+    assert scale > 0.0
+    residual = np.sum((d * y) ** 2 / (d + scale * pi) ** 2) - target
+    assert abs(residual) / target <= rtol
+    # The no-tolerance default still returns the (far-off) closed-form seed.
+    np.testing.assert_array_equal(
+        builder(alpha)(d, pi, y),
+        np.sqrt(np.sum((d * y / pi) ** 2) / target),
+    )
+
+
+@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
+def test_max_risk_gamma_rtol_batch_matches_newton_reference(builder):
+    # Refinement is a vectorized batch of globally convergent Newton iterates:
+    # with a finite rtol the batch matches a scalar Newton reference driven to
+    # the root for every observation at once, including those whose only valid
+    # solution is gamma = 0.
+    gen = rng()
+    p = 8
+    d = np.linspace(0.5, 2.0, p)
+    pi = 10.0 ** np.linspace(4.0, -1.0, p)
+    y = gen.normal(size=(2000, p))
+    alpha = 1.7
+    target = alpha if builder is _max_abs_risk_gamma else alpha * np.sum(d)
+    g = builder(alpha, rtol=1e-12)(d, pi, y)
+
+    def root(obs):
+        # Scalar Newton reference with the same closed-form start and clamp.
+        if np.sum(obs**2) <= target:
+            return 0.0
+        g0 = float(np.sqrt(np.sum((d * obs / pi) ** 2) / target))
+        for _ in range(200):
+            dpg = d + g0 * pi
+            num = (d * obs) ** 2
+            f = float(np.sum(num / dpg**2) - target)
+            g0 = max(g0 - f / float(-2.0 * np.sum(num * pi / dpg**3)), 0.0)
+            if abs(f) <= 1e-14:
+                break
+        return g0
+
+    ref = np.array([root(o) for o in y])
+    np.testing.assert_allclose(g, ref, rtol=1e-9, atol=1e-12)
+
+
+@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
+def test_max_risk_gamma_rtol_cap_warns_and_returns_iterate(builder, monkeypatch):
+    # The iteration is a pure safety net: with the cap forced to one step, a
+    # data-dependent restart cannot meet a finite rtol, so the call returns
+    # the best iterate and warns instead of raising or stalling.  The iterate
+    # is the single Newton step taken from the closed-form seed.
+    monkeypatch.setattr(
+        "nustattools.stats.shrinkage._empirical_prior._MAX_BAYES_NORM_ITERS", 1
+    )
+    p = 10
+    d = np.ones(p)
+    pi = np.array([8.2e6, 1.7e2, 69.0, 30.0, 9.5, 3.8, 1.1, 0.34, 0.28, 0.056])
+    y = np.array(
+        [
+            0.34877973194692047,
+            0.7061137861208042,
+            0.2164637062487031,
+            1.5711101324552066,
+            1.2141630011284508,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
+    )
+    alpha = 0.2
+    target = alpha if builder is _max_abs_risk_gamma else alpha * np.sum(d)
+    gamma0 = np.sqrt(np.sum((d * y / pi) ** 2) / target)
+    dpg = d + gamma0 * pi
+    num = (d * y) ** 2
+    f = np.sum(num / dpg**2) - target
+    f1 = -2.0 * np.sum(num * pi / dpg**3)
+    one_step = max(gamma0 - f / f1, 0.0)
+    with pytest.warns(RuntimeWarning, match="best iterate"):
+        scale = builder(alpha, rtol=1e-12)(d, pi, y)
+    np.testing.assert_allclose(scale, one_step, rtol=1e-9)
+
+
 @pytest.mark.parametrize(
     ("factory", "builder"),
     [
@@ -3076,6 +3219,28 @@ def test_parse_gamma_factory_bad_spec():
 def test_parse_gamma_factory_unknown_name():
     with pytest.raises(ValueError, match="factory"):
         _parse_gamma_factory("bogus(0.1)")
+
+
+@pytest.mark.parametrize(
+    ("factory", "builder"),
+    [
+        ("max_rel_risk", _max_rel_risk_gamma),
+        ("max_abs_risk", _max_abs_risk_gamma),
+    ],
+)
+def test_parse_gamma_factory_two_args(factory, builder):
+    # A factory string with a numeric rtol argument builds the callable
+    # with refinement enabled.
+    gen = rng()
+    p = 5
+    d = np.linspace(0.5, 2.0, p)
+    pi = np.ones(p)
+    y = gen.normal(size=p)
+    spec = f"{factory}( 0.1, 1e-6 )"
+    np.testing.assert_allclose(
+        _parse_gamma_factory(spec)(d, pi, y),
+        builder(0.1, rtol=1e-6)(d, pi, y),
+    )
 
 
 @pytest.mark.parametrize(
@@ -3249,10 +3414,11 @@ def test_factory_gamma_malformed_raises(bad, match):
 @pytest.mark.parametrize("factory", ["max_rel_risk", "max_abs_risk"])
 def test_factory_gamma_bad_arity_or_type_raises(factory):
     # Arity that does not fit the registered factory, or a valid literal that
-    # is not a number, is rejected with TypeError.
+    # is not a number, is rejected with TypeError.  (Two numeric arguments --
+    # risk cap and refinement tolerance -- are a valid specification.)
     gen = rng()
     x = gen.normal(size=5)
-    for bad in (f"{factory}(1, 2)", f"{factory}('0.1')"):
+    for bad in (f"{factory}(1, 2, 3)", f"{factory}('0.1')"):
         with pytest.raises(TypeError):
             _shrinkage.bayes(x, gamma=bad)
 
