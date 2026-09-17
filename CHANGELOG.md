@@ -149,6 +149,25 @@ and this project adheres to
   caused by a double inversion (e.g. `Q = inv(prior_cov)` with
   `prior_cov = inv(M)`) and points to the fix: pass `Q = M` (the matrix whose
   inverse is `prior_cov`), or omit `prior_cov` (which defaults to `Q^{-1}`).
+- With `dirs` given, `prior_cov` is now restricted to the residual subspace by
+  the covariance-metric projection (instead of a plain basis restriction), so a
+  prior proportional to the covariance no longer fails to diagonalize in the
+  residual canonical coordinates (it reproduces the residual variances exactly);
+  an isotropic canonical prior (proportional to `Q^{-1}`) keeps its
+  homoscedastic form and still reproduces the no-`prior_cov` default. A
+  non-isotropic prior whose projection couples the residual coordinates with
+  differing variances now raises a directed `ValueError` naming the supported
+  cases instead of leaking the raw canonicalization failure. The same fix
+  applies to a singular loss `Q`, whose null space is treated as additional
+  no-shrink directions (matching the strictly-positive-definite `Q + eps I`
+  limit), including the degenerate fully-no-shrink case.
+- The `dirs` subspace reduction is factored into a single internal helper
+  (`_reduce_dirs`) shared by the canonical and general-covariance paths, with a
+  common covariance-metric projector (`_projector`) replacing the separate
+  diagonal-only projection and subspace-reduction utilities. The helper drops
+  the numerical-zero residual coordinates with the same scale-aware tolerance
+  used by the general path (previously the canonical path used a hard-coded
+  `1e-12` absolute cutoff).
 - Integer "axis j" directions in `estimate_risk_curve` are now resolved using
   the shared frame's prior ordering: within blocks of (numerically-)equal
   canonical variance `d` the frame orders coordinates by decreasing prior

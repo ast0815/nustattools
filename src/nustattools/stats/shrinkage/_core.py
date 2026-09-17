@@ -409,58 +409,60 @@ def _validate_dirs(dirs: ArrayLike, p: int) -> NDArray[Any]:
     return dv
 
 
-def _dirs_projection(v: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
+def _projector(v: NDArray[Any], cov: NDArray[Any]) -> NDArray[Any]:
     """Covariance-metric projector onto the column space of ``v``.
 
-    In canonical coordinates (diagonal covariance ``D = diag(d)``, identity
-    loss), returns ``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``, where ``V = v``
-    is the ``(p, k)`` spanning matrix, the projection orthogonal in the
-    precision metric ``D^{-1}``.  Such a projection makes
-    ``P y`` and ``(I - P) y`` uncorrelated for ``y ~ (I, D)``, so their risks
+    Returns ``P = V (V^T C^{-1} V)^{-1} V^T C^{-1}``, where ``V = v`` is the
+    ``(p, k)`` spanning matrix and ``C = cov`` the covariance: the projection
+    orthogonal in the precision metric ``C^{-1}``.  Such a projection makes
+    ``P y`` and ``(I - P) y`` uncorrelated for ``y ~ (0, C)``, so their risks
     separate (see [Tan2016]_, Section 3.3).
 
     """
 
-    dinv: NDArray[Any] = np.diag(1.0 / d)
-    g: NDArray[Any] = v.T @ dinv @ v
-    inv_g: NDArray[Any] = np.linalg.inv(g)
-    return cast(NDArray[Any], v @ inv_g @ v.T @ dinv)
+    cinv: NDArray[Any] = np.linalg.inv(cov)
+    g: NDArray[Any] = v.T @ cinv @ v
+    return v @ np.linalg.solve(g, v.T @ cinv)
 
 
-def _subspace_reduce(
-    y: NDArray[Any], d: NDArray[Any], v: NDArray[Any]
-) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
+def _reduce_dirs(
+    y: NDArray[Any], cov: NDArray[Any], v: NDArray[Any]
+) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
     """Decompose ``y`` relative to the affine direction spanned by ``v``.
 
-    Returns ``(kept, eta, d_perp, l2)``.  ``kept = P y`` is the component lying
-    in the direction (kept unshrunk), with ``P`` the covariance-metric
-    projector of :func:`_dirs_projection`.  The residual ``(I - P) y`` lives in
-    the complement ``S_perp``; ``l2`` is an orthonormal basis of ``S_perp`` in
-    which the residual covariance is diagonal, ``eta`` the coordinates of the
-    residual in that basis and ``d_perp`` the reduced (diagonal) variances.
-    This reduces the effective dimension of the shrinkage problem from ``len(d)``
-    to ``len(d_perp)``.
+    ``cov`` is the covariance of ``y`` in its current coordinates (general
+    symmetric positive definite, e.g. ``diag(d)`` in canonical coordinates).
+    Returns ``(kept, eta, d_perp, l2, pmat)``.  ``kept = P y`` is the
+    component lying in the direction (kept unshrunk), with ``P = pmat`` the
+    covariance-metric projector of :func:`_projector`.  The residual
+    ``(I - P) y`` lives in the complement ``S_perp``; ``l2`` is an
+    orthonormal basis of ``S_perp`` in which the residual covariance is
+    diagonal, ``eta`` the coordinates of the residual in that basis and
+    ``d_perp`` the reduced (diagonal) variances.  This reduces the effective
+    dimension of the shrinkage problem from ``p`` to ``len(d_perp)``.
 
     Since ``l2`` holds the orthonormal eigenvectors of the symmetric residual
-    covariance ``(I - P) D (I - P)^T``, ``l2^T l2 = I``: the change of basis is
+    covariance ``(I - P) C (I - P)^T``, ``l2^T l2 = I``: the change of basis is
     an isometry of the squared-error loss, so shrinking ``eta`` conserves the
-    full-dimensional loss exactly.
+    full-dimensional loss exactly.  Coordinates whose residual variance is
+    numerically zero (the kept subspace itself) are dropped with the
+    scale-aware tolerance of :func:`_zero_eigenvalue_tolerance`.
 
     """
 
-    p = _dirs_projection(v, d)
-    p_perp = np.eye(d.shape[0]) - p
-    # Residual covariance (I - P) D (I - P)^T; its range is S_perp.  Its
+    pmat = _projector(v, cov)
+    p_perp = np.eye(cov.shape[0]) - pmat
+    # Residual covariance (I - P) C (I - P)^T; its range is S_perp.  Its
     # positive eigenvalues give the reduced variances and its (orthonormal)
     # eigenvectors a basis that diagonalizes the residual.
-    m = p_perp @ np.diag(d) @ p_perp.T
+    m = p_perp @ cov @ p_perp.T
     lam, vecs = np.linalg.eigh(m)
-    keep = lam > 1e-12
+    keep = lam > _zero_eigenvalue_tolerance(lam, cov.shape[0])
     l2 = vecs[:, keep]
     d_perp = lam[keep]
-    kept = y @ p.T
+    kept = y @ pmat.T
     eta = (y - kept) @ l2
-    return kept, eta, d_perp, l2
+    return kept, eta, d_perp, l2, pmat
 
 
 def _merge_dirs(dirs: ArrayLike | None, q: NDArray[Any], p: int) -> NDArray[Any]:
@@ -491,6 +493,45 @@ def _merge_dirs(dirs: ArrayLike | None, q: NDArray[Any], p: int) -> NDArray[Any]
     return u[:, keep]
 
 
+def _check_prior_diagonalizable(
+    prior: NDArray[Any],
+    cov: NDArray[Any],
+    q: NDArray[Any],
+) -> None:
+    """Reject a residual prior that the recursive solve cannot diagonalize.
+
+    The ``dirs`` (and singular-loss) paths reduce the problem to a residual
+    canonical normal problem that is solved by recursing into
+    :func:`_estimate_pd`, which canonicalizes the reduced ``prior`` together
+    with the residual covariance ``cov`` and loss ``q`` (see
+    :func:`_canonical_frame`).  A ``prior`` that couples the residual
+    coordinates with differing variances would surface there as the generic
+    coupling :class:`ValueError`; this helper runs the identical check up front
+    so the caller can raise a message that names the interaction with the
+    no-shrink directions instead.  A residual problem of at most one coordinate
+    is trivially diagonalizable and needs no check.
+
+    """
+
+    if prior.shape[0] <= 1:
+        return
+    try:
+        _canonical_frame(cov, q, prior)
+    except ValueError as e:
+        msg = (
+            "the prior covariance matrix restricted to the residual "
+            "(complement of the no-shrink directions) subspace cannot be "
+            "diagonalized: it couples residual canonical coordinates with "
+            "differing variances once the covariance-metric projection of the "
+            "no-shrink directions has been removed.  This is automatic when "
+            "`prior_cov` is proportional to `cov` or to `Q**-1`, or when `cov` "
+            "is proportional to `Q**-1`; otherwise choose a `prior_cov` whose "
+            "canonical diagonal respects the residual coupling (e.g. fewer "
+            "no-shrink directions)."
+        )
+        raise ValueError(msg) from e
+
+
 def _estimate_split(
     x: NDArray[Any],
     cov: NDArray[Any],
@@ -519,47 +560,44 @@ def _estimate_split(
 
     p = cov.shape[0]
     v_all = np.asarray(dirs, dtype=float)
-    cinv = np.linalg.inv(cov)
-    g = v_all.T @ cinv @ v_all
-    p_mat = v_all @ np.linalg.solve(g, v_all.T @ cinv)
     if offset is None:
-        kept_off = np.zeros(p)
         y = x
     else:
         o = np.asarray(offset, dtype=float)
         if o.shape != (p,):
             msg = f"offset must have shape {(p,)}, got {o.shape}."
             raise ValueError(msg)
-        kept_off = o @ p_mat.T
         y = x - o
-    kept = y @ p_mat.T
-    p_perp = np.eye(p) - p_mat
-    m = p_perp @ cov @ p_perp.T
-    lam, vecs = np.linalg.eigh(m)
-    tol = _zero_eigenvalue_tolerance(lam, p)
-    keep = lam > tol
-    l2 = vecs[:, keep]
-    d_perp = lam[keep]
+    kept, eta, d_perp, l2, pmat = _reduce_dirs(y, cov, v_all)
+    kept_off = np.zeros(p) if offset is None else o @ pmat.T
     q_comp = l2.T @ q @ l2
-    eta = (y - kept) @ l2
     # The prior only acts where shrinkage happens: restrict it to the
-    # covariance-metric complement of the no-shrink directions.  Since l2 is
-    # an orthonormal basis spanning that complement, the restricted covariance
-    # is l2^T prior_cov l2 (the covariance-metric projection of the prior onto
-    # the complement is its restriction there).
+    # covariance-metric complement of the no-shrink directions.  The residuals
+    # live in ``range(l2)``, an orthonormal basis of that complement, so the
+    # residual prior is the covariance-metric projection of ``prior_cov`` onto
+    # the complement, expressed in the residual coordinates
+    # ``l2^T (I - P) prior_cov (I - P)^T l2`` (a plain restriction ``l2^T
+    # prior_cov l2`` would ignore the projected geometry).  A projection that
+    # couples the residual canonical coordinates with differing variances is
+    # rejected with a directed message before the recursive solve.
     if prior_cov is not None:
         pc = _validate_sympd(prior_cov, (p, p), "prior covariance matrix")
-        prior_comp = l2.T @ pc @ l2
+        p_perp = np.eye(p) - pmat
+        prior_comp = l2.T @ p_perp @ pc @ p_perp.T @ l2
+        _check_prior_diagonalizable(prior_comp, np.diag(d_perp), q_comp)
     else:
         prior_comp = None
-    delta_comp = _estimate_pd(
-        eta,
-        np.diag(d_perp),
-        q_comp,
-        canonical_estimator,
-        prior_cov=prior_comp,
-        **kwargs,
-    )
+    if d_perp.shape[0] == 0:
+        delta_comp = np.zeros_like(eta)
+    else:
+        delta_comp = _estimate_pd(
+            eta,
+            np.diag(d_perp),
+            q_comp,
+            canonical_estimator,
+            prior_cov=prior_comp,
+            **kwargs,
+        )
     return cast(NDArray[Any], kept_off + kept + delta_comp @ l2.T)
 
 
@@ -592,15 +630,22 @@ def _estimate_pd(
     implementation.
 
     In the latter case the projection is built in the covariance (precision)
-    metric (see :func:`_subspace_reduce`), so the fitted and residual components
+    metric (see :func:`_reduce_dirs`), so the fitted and residual components
     are uncorrelated, and the residual ``(I - P) (x - offset)`` is shrunk in the
     complement.  The residual problem is itself a canonical normal problem with
     diagonal covariance ``d_perp`` and identity loss, so it is solved by
     recursing into :func:`_estimate_pd`; the effective dimension of the
     shrinkage problem becomes ``len(d_perp)``.  In that recursion the prior is
-    restricted to the complement, i.e. passed as the covariance-metric
-    projection of ``prior_cov`` onto the residual subspace, and canonicalized
-    again by the recursive solve.
+    restricted to the residual subspace to become the reduced prior, and
+    canonicalized again by the recursive solve: for an isotropic canonical
+    prior (``prior_cov`` proportional to ``Q^{-1}``) it is passed as the
+    homoscedastic ``s I`` in the orthonormal residual basis, otherwise as the
+    covariance-metric projection
+    ``l2^T (I - P) diag(pi) (I - P)^T l2`` of the canonical prior onto the
+    residual subspace.  A non-isotropic prior whose projection couples the
+    residual coordinates with differing variances cannot be diagonalized there
+    and is rejected with a :class:`ValueError` (see
+    :func:`_check_prior_diagonalizable`).
 
     When ``gamma`` is a named preset (currently only ``"empirical"``, inferred
     per observation as ``||y / sqrt(pi)||^2 / p_eff``) or a callable
@@ -663,28 +708,47 @@ def _estimate_pd(
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
         v = b @ _validate_dirs(dirs, p)
-        kept, eta, d_perp, l2 = _subspace_reduce(y, d, v)
-        # The reduced problem's prior covariance: the canonical prior
-        # diag(pi) restricted to the residual subspace in the orthonormal
-        # residual basis l2 is l2^T diag(pi) l2; pass it on so the recursive
-        # solve canonicalizes (and where possible diagonalizes) it.  With no
-        # explicit prior the reduced problem inherits none (the homoscedastic
-        # default).
-        reduced_prior: NDArray[Any] | None = (
-            None if prior_cov is None else l2.T @ np.diag(pi) @ l2
-        )
+        kept, eta, d_perp, l2, pmat = _reduce_dirs(y, np.diag(d), v)
+        # The reduced problem's prior, restricted to the residual subspace in
+        # the orthonormal residual basis l2.  The data residuals (I - P) y
+        # live in the covariance-metric complement of span(dirs), so the
+        # residual prior is the covariance-metric projection
+        # l2^T (I - P) diag(pi) (I - P)^T l2 of the canonical prior onto that
+        # subspace; the recursive solve canonicalizes it again.  An isotropic
+        # canonical prior (prior_cov proportional to Q^{-1}) is the
+        # homoscedastic residual prior s I in the orthonormal residual basis
+        # (matching the no-dirs homoscedastic default), so it needs no
+        # projection.  A non-isotropic prior whose projection couples the
+        # residual coordinates with differing variances cannot be diagonalized
+        # by the recursive solve and is rejected up front.  With no explicit
+        # prior the reduced problem inherits none (the homoscedastic default).
+        reduced_prior: NDArray[Any] | None
+        if prior_cov is None:
+            reduced_prior = None
+        elif np.max(np.abs(pi - pi[0])) <= np.sqrt(_EPSILON) * float(np.mean(pi)):
+            reduced_prior = np.eye(d_perp.shape[0]) * float(np.mean(pi))
+        else:
+            pp = np.eye(p) - pmat
+            proj = l2.T @ pp @ np.diag(pi) @ pp.T @ l2
+            _check_prior_diagonalizable(proj, np.diag(d_perp), np.eye(d_perp.shape[0]))
+            reduced_prior = proj
         # The residual (eta, diag(d_perp), identity loss) is itself a canonical
         # normal problem with no subspace and no offset; solve it recursively.
         # gamma="empirical" is intentionally left unresolved so the recursive
         # solve derives it from the residual actually shrunk (eta, len(d_perp)).
-        reduced = _estimate_pd(
-            eta,
-            np.diag(d_perp),
-            np.eye(d_perp.shape[0]),
-            canonical_estimator,
-            prior_cov=reduced_prior,
-            **kwargs,
-        )
+        # When the no-shrink directions span everything there is no residual to
+        # shrink and the reduced estimate vanishes.
+        if d_perp.shape[0] == 0:
+            reduced = np.zeros_like(eta)
+        else:
+            reduced = _estimate_pd(
+                eta,
+                np.diag(d_perp),
+                np.eye(d_perp.shape[0]),
+                canonical_estimator,
+                prior_cov=reduced_prior,
+                **kwargs,
+            )
         delta_star = offset_star + kept + reduced @ l2.T
     return cast(NDArray[Any], delta_star @ binv.T)
 

@@ -160,12 +160,12 @@ from ._core import (
     # rely on them outside this package's tests.
     _canonicalize,  # noqa: F401
     _canonicalize_prior,  # noqa: F401
-    _dirs_projection,  # noqa: F401
     _estimate,  # noqa: F401
     _estimate_split,  # noqa: F401
     _group_degenerate,  # noqa: F401
     _merge_dirs,  # noqa: F401
-    _subspace_reduce,  # noqa: F401
+    _projector,  # noqa: F401
+    _reduce_dirs,  # noqa: F401
 )
 from ._estimators import (
     bayes,

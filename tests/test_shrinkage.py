@@ -11,6 +11,10 @@ from nustattools.stats.shrinkage._core import (
     _canonical_frame,
     _canonicalize,
     _cov_proportional_to_qinv,
+    _merge_dirs,
+    _projector,
+    _reduce_dirs,
+    _validate_dirs,
 )
 from nustattools.stats.shrinkage._empirical_prior import (
     _empirical_gamma as _core_empirical_gamma,
@@ -563,7 +567,7 @@ def test_berger_subspace_keeps_projected_component():
     assert np.linalg.norm(resid) <= np.linalg.norm(raw)
 
 
-def test_berger_subspace_reduces_general_cov():
+def test_berger_general_cov_dirs_kept():
     # A nontrivial general covariance / loss pair must still support shrinking
     # towards a subspace. The affine component of the estimate is kept exactly
     # as in the data, and the orthogonal residual is shrunk towards zero.
@@ -579,7 +583,7 @@ def test_berger_subspace_reduces_general_cov():
     b, _, d = _shrinkage._canonicalize(cov, q)
     v_star = b @ v
     x_star = x @ b.T
-    pmat = _shrinkage._dirs_projection(v_star, d)
+    pmat = _shrinkage._projector(v_star, np.diag(d))
 
     delta = _shrinkage.berger(x, cov=cov, Q=q, dirs=v)
     assert delta.shape == (p,)
@@ -625,8 +629,8 @@ def test_berger_offset_shape_error():
         _shrinkage.berger(rng().normal(size=3), offset=np.ones(4))
 
 
-def test_subspace_reduce_structure():
-    # _subspace_reduce must return an orthonormal basis of the complement, the
+def test_reduce_dirs_structure():
+    # _reduce_dirs must return an orthonormal basis of the complement, the
     # kept (projected) part, reduced variances, and residual coordinates such
     # that the residual is reconstructed as eta @ l2.T.
     gen = rng()
@@ -634,7 +638,7 @@ def test_subspace_reduce_structure():
     y = gen.normal(size=p)
     d = np.sort(gen.uniform(0.5, 3.0, p))[::-1]
     v = gen.normal(size=(p, 2))
-    kept, eta, d_perp, l2 = _shrinkage._subspace_reduce(y, d, v)
+    kept, eta, d_perp, l2, _pmat = _reduce_dirs(y, np.diag(d), v)
     assert l2.shape == (p, 4)
     assert d_perp.shape == (4,)
     np.testing.assert_allclose(l2.T @ l2, np.eye(4), atol=1e-12)
@@ -643,7 +647,7 @@ def test_subspace_reduce_structure():
     assert np.all(d_perp > 0)
 
 
-def test_dirs_projection_uncorrelates():
+def test_projector_uncorrelates():
     # The covariance-metric projector must make fitted and residual
     # uncorrelated: P D (I - P)^T = 0. Without this, the risk of the two
     # components would not separate and independent shrinkage would be invalid.
@@ -651,14 +655,14 @@ def test_dirs_projection_uncorrelates():
     p = 7
     d = np.sort(gen.uniform(0.5, 4.0, p))[::-1]
     v = gen.normal(size=(p, 3))
-    pmat = _shrinkage._dirs_projection(v, d)
+    pmat = _projector(v, np.diag(d))
     cross = pmat @ np.diag(d) @ (np.eye(p) - pmat).T
     np.testing.assert_allclose(cross, np.zeros((p, p)), atol=1e-10)
     # The projector is idempotent.
     np.testing.assert_allclose(pmat @ pmat, pmat, atol=1e-10)
 
 
-def test_subspace_reduce_loss_isometry():
+def test_reduce_dirs_loss_isometry():
     # The reduced problem must be isometric to the full-space residual loss:
     # l2 orthonormal AND eta's covariance exactly diag(d_perp). Together these
     # guarantee the recursion minimizes the same squared-error loss as the
@@ -667,16 +671,54 @@ def test_subspace_reduce_loss_isometry():
     p = 7
     d = np.sort(gen.uniform(0.5, 4.0, p))[::-1]
     v = gen.normal(size=(p, 2))
-    _kept, _eta, d_perp, l2 = _shrinkage._subspace_reduce(gen.normal(size=p), d, v)
+    _kept, _eta, d_perp, l2, pmat = _reduce_dirs(gen.normal(size=p), np.diag(d), v)
     # l2 orthonormal -> change of basis is an isometry of the Euclidean loss.
     np.testing.assert_allclose(l2.T @ l2, np.eye(l2.shape[1]), atol=1e-12)
     # eta has exactly the diagonal covariance reported as d_perp.
-    pmat = _shrinkage._dirs_projection(v, d)
     m = (np.eye(p) - pmat) @ np.diag(d) @ (np.eye(p) - pmat).T
     np.testing.assert_allclose(l2.T @ m @ l2, np.diag(d_perp), atol=1e-10)
 
 
-def test_subspace_loss_conserved_by_recursion():
+def test_reduce_dirs_general_cov():
+    # _reduce_dirs must expose the same structure (orthonormal complement
+    # basis, kept part, cov-metric projector, isometric residual loss) for a
+    # general non-diagonal covariance as it does in canonical coordinates.
+    # This is the path _estimate_split and the singular-Q-with-dirs recursion
+    # rely on. The result is compared against the canonical-coordinates
+    # computation via the frame transform (kept @ b.T == kept_star,
+    # eta @ l2.T @ b.T == eta_star @ l2_star.T).
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    cov = a @ a.T + np.eye(p)
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    v = gen.normal(size=(p, 2))
+
+    b, _, d = _shrinkage._canonicalize(cov, q)
+    kept_s, eta_s, _d_perp_s, l2_s, _ = _reduce_dirs(x @ b.T, np.diag(d), b @ v)
+
+    kept, eta, d_perp, l2, pmat = _reduce_dirs(x, cov, v)
+    # l2 orthonormal -> change of basis is an isometry of the Euclidean loss.
+    np.testing.assert_allclose(l2.T @ l2, np.eye(l2.shape[1]), atol=1e-12)
+    # The frame transform carries the kept part and residual to canonical
+    # coordinates (note: non-orthogonal b, so the reduced variances are not
+    # frame-invariant; their covariance content is asserted below).
+    np.testing.assert_allclose(kept @ b.T, kept_s, atol=1e-10)
+    np.testing.assert_allclose(eta @ l2.T @ b.T, eta_s @ l2_s.T, atol=1e-10)
+    # eta has exactly the diagonal covariance reported as d_perp in general
+    # coordinates (loss conservation for the _estimate_split path).
+    m = (np.eye(p) - pmat) @ cov @ (np.eye(p) - pmat).T
+    np.testing.assert_allclose(l2.T @ m @ l2, np.diag(d_perp), atol=1e-10)
+    # The projector is idempotent and makes fitted/residual uncorrelated.
+    np.testing.assert_allclose(pmat @ pmat, pmat, atol=1e-10)
+    np.testing.assert_allclose(
+        pmat @ cov @ (np.eye(p) - pmat).T, np.zeros((p, p)), atol=1e-10
+    )
+
+
+def test_loss_conserved_by_recursion():
     # Loss conservation (independence): because the covariance-metric
     # projection is used, the affine (kept) component and the residual are
     # uncorrelated, so the total loss of the estimator is exactly the sum of
@@ -2131,7 +2173,7 @@ def test_psd_Q_range_subspace_component_is_kept():
             cov_r = u_r.T @ cov @ u_r
             q_r = np.diag(w[w > 1e-10])
             b_r, _, d_r = _shrinkage._canonicalize(cov_r, q_r)
-            p_mat = _shrinkage._dirs_projection(b_r @ dirs_r, d_r)
+            p_mat = _shrinkage._projector(b_r @ dirs_r, np.diag(d_r))
             x_r = x @ u_r
             delta_r = (delta - (x - x @ (u_r @ u_r.T))) @ u_r
             np.testing.assert_allclose(
@@ -4382,6 +4424,120 @@ def test_prior_cov_with_dirs():
     got = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=prior, dirs=dirs)
     expect = np.array([x[0], 3.0 / 4.0 * x[1], 4.0 / 5.0 * x[2], 1.0 / 2.0 * x[3]])
     np.testing.assert_allclose(got, expect, rtol=1e-8, atol=1e-10)
+
+
+def test_prior_cov_equal_cov_with_dirs():
+    # prior_cov == cov: the residual (no-shrink-complement) prior is the
+    # covariance-metric projection l2^T (I-P) diag(pi) (I-P)^T l2 of the
+    # canonical prior.  For pi == d it is exactly the residual variances
+    # d_perp, so every residual coordinate shrinks by 1/2 under bayes
+    # gamma=1.  A non-axis-aligned dirs direction used to fail here: the old
+    # plain restriction l2^T diag(pi) l2 is not diagonal in the residual
+    # canonical frame, so the recursive solve raised ValueError.
+    gen = rng()
+    cov = np.diag([1.0, 2.0, 4.0])
+    q = np.eye(3)  # distinct canonical variances, no free rotation
+    x = gen.normal(size=3)
+    dirs = np.array([[1.0], [2.0], [3.0]])
+    got = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=cov, dirs=dirs)
+    b, binv, d, _ = _canonical_frame(cov, q, cov)
+    kept, _, _, _, _ = _reduce_dirs(x @ b.T, np.diag(d), b @ dirs)
+    # In canonical coordinates delta_star = kept + (y - kept)/2 = (y+kept)/2,
+    # since each residual coordinate has prior pi == d and tau = 1.
+    expect = ((x @ b.T + kept) / 2.0) @ binv.T
+    np.testing.assert_allclose(got, expect, rtol=1e-10, atol=1e-12)
+
+
+def test_prior_cov_equal_cov_with_dirs_tan_inf():
+    # The user-facing configuration (Q = diag(1/diag(cov)), tan with
+    # gamma=inf, an off-axis dirs vector) must run instead of raising the
+    # residual-prior coupling ValueError.
+    gen = rng()
+    cov = np.diag([1.0, 2.0, 3.0])
+    q = np.diag(1.0 / np.diag(cov))
+    x = gen.normal(size=3)
+    got = _shrinkage.tan(
+        x,
+        cov,
+        Q=q,
+        gamma=np.inf,
+        prior_cov=cov,
+        dirs=np.array([[1.0], [2.0], [3.0]]),
+    )
+    assert np.all(np.isfinite(got))
+    assert got.shape == x.shape
+
+
+def test_prior_cov_invq_with_dirs_equals_default():
+    # An isotropic canonical prior (prior_cov proportional to Q^{-1}) is the
+    # homoscedastic residual prior and must reproduce the no-prior default
+    # exactly even with dirs.
+    gen = rng()
+    cov = np.diag([1.0, 2.0, 4.0])
+    q = cov  # prior_cov = inv(Q) = diag(1/[1,2,4])
+    x = gen.normal(size=3)
+    dirs = np.array([[1.0], [2.0], [3.0]])
+    default = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, dirs=dirs)
+    with_prior = _shrinkage.bayes(
+        x, cov, Q=q, gamma=1.0, prior_cov=np.linalg.inv(q), dirs=dirs
+    )
+    np.testing.assert_allclose(with_prior, default, rtol=1e-10, atol=1e-12)
+
+
+def test_prior_cov_coupled_residual_raises_with_dirs():
+    # A non-isotropic canonical prior that is not proportional to cov and whose
+    # covariance-metric projection couples the residual coordinates with
+    # differing variances cannot be diagonalized by the recursive solve; the
+    # error must name the interaction with the no-shrink directions rather than
+    # leak the raw canonicalization failure.
+    gen = rng()
+    cov = np.diag([1.0, 2.0, 5.0])
+    q = np.eye(3)
+    x = gen.normal(size=3)
+    prior = np.diag([3.0, 5.0, 8.0])
+    dirs = np.array([[1.0], [2.0], [3.0]])
+    msg = "no-shrink directions"
+    with pytest.raises(ValueError, match=msg):
+        _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=prior, dirs=dirs)
+    # The same prior without dirs canonicalizes fine (distinct variances, no
+    # coupling in the full frame).
+    out = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=prior)
+    assert out.shape == x.shape
+
+
+def test_prior_cov_with_singular_Q_and_dirs_matches_merged_reference():
+    # A singular Q must behave exactly as if null(Q) were merged into the
+    # user's dirs: the result equals the strictly-positive-definite problem
+    # Q + eps I solved with the merged (user + null(Q)) directions, over many
+    # random geometries.  Each geometry keeps p in [2, 6).
+    gen = rng()
+    eps = 1e-10
+    for _ in range(12):
+        p = int(gen.integers(2, 6))
+        a = gen.normal(size=(p, p))
+        cov = a @ a.T + p
+        lam = gen.uniform(0.5, 3.0, size=p)
+        lam[: int(gen.integers(1, p))] = 0.0
+        o, _ = np.linalg.qr(gen.normal(size=(p, p)))
+        q = (o * lam) @ o.T
+        q = (q + q.T) / 2.0
+        x = gen.normal(size=p)
+        dirs = gen.normal(size=(p, 1))
+        merged = _merge_dirs(_validate_dirs(dirs, p), q, p)
+        ref = _shrinkage.bayes(
+            x, cov, Q=q + eps * np.eye(p), gamma=1.0, prior_cov=cov, dirs=merged
+        )
+        got = _shrinkage.bayes(x, cov, Q=q, gamma=1.0, prior_cov=cov, dirs=dirs)
+        np.testing.assert_allclose(got, ref, rtol=1e-8, atol=1e-10)
+    # Fully no-shrink degenerate: merged dirs span everything (null(Q) +
+    # one off-null direction), nothing to shrink, the estimate is the data.
+    cov = np.diag([1.0, 2.0, 3.0, 4.0])
+    q = np.diag([0.0, 0.0, 0.0, 1.0])
+    x = gen.normal(size=4)
+    got = _shrinkage.bayes(
+        x, cov, Q=q, gamma=1.0, prior_cov=cov, dirs=np.eye(4)[:, 3:4]
+    )
+    np.testing.assert_allclose(got, x)
 
 
 def test_risk_helpers_pass_prior_cov():
