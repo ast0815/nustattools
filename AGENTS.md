@@ -3,6 +3,10 @@
 - If you learn something about the code base that is not reflected in the
   `AGENTs.md` file, add it to the file.
 - If there are inconsistencies, ask the user for clarification and fix them
+- Do not silence warnings or errors (e.g. Sphinx `nitpick_ignore`, linter
+  ignores, `# noqa`, `mypy: ignore`) by adding ignore rules as a first resort —
+  the root cause should be fixed instead. If you believe an ignore rule is
+  genuinely justified, check with the user before adding it.
 
 # Build/Lint/Test:
 
@@ -44,6 +48,10 @@
 - All tests must have 100% coverage
 - All user-facing changes must be documented in `CHANGELOG.md`
   - These entried should be short and not go into details
+- mypy quirk: in an exhaustiveness `else` branch after `isinstance(...)` /
+  `callable(...)` narrows a union to `Never`, mypy strict flags a preceding
+  `msg = ...` local assignment as unreachable. Use an inline module-level
+  message constant with `raise TypeError(_MSG)` instead.
 
 # Testing Best Practices:
 
