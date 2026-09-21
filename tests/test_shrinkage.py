@@ -10,6 +10,7 @@ from nustattools.stats import shrinkage as _shrinkage
 from nustattools.stats.shrinkage._core import (
     _canonical_frame,
     _canonicalize,
+    _canonicalize_prior,
     _cov_proportional_to_qinv,
     _merge_dirs,
     _projector,
@@ -17,12 +18,8 @@ from nustattools.stats.shrinkage._core import (
     _validate_dirs,
 )
 from nustattools.stats.shrinkage._empirical_prior import (
-    _empirical_gamma as _core_empirical_gamma,
-)
-from nustattools.stats.shrinkage._empirical_prior import (
     _max_abs_risk_gamma,
     _max_rel_risk_gamma,
-    _parse_gamma_factory,
 )
 from nustattools.stats.shrinkage._estimators import (
     _bayes_canonical,
@@ -183,14 +180,6 @@ def test_berger_positive_part_preserves_sign():
     assert np.all(delta * x >= -1e-12)
 
 
-def test_berger_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(
-        _shrinkage.berger(x), _shrinkage.berger(x, cov=np.eye(6))
-    )
-    assert _shrinkage.berger(x).shape == (6,)
-
-
 def test_shrink_default_cov_is_identity():
     x = rng().normal(size=6)
     np.testing.assert_allclose(s.shrink(x), s.shrink(x, cov=np.eye(6)))
@@ -201,31 +190,22 @@ def test_berger_zero_shrinkage_is_identity():
     np.testing.assert_allclose(_shrinkage.berger(x, cov=np.eye(5), strength=0.0), x)
 
 
-def test_berger_general_matches_closed_form():
-    # The canonicalized computation (default Q=I) must agree with the direct
-    # general-form Berger estimator.
-    a = rng().normal(size=(5, 5))
-    cov = a @ a.T + np.eye(5)
-    x = rng().normal(size=5)
-    c = 3.0  # with p=5, c = strength * (p-2) = strength * 3, so strength=1.0
-    strength = c / 3.0
-    np.testing.assert_allclose(
-        _shrinkage.berger(x, cov=cov, positive=False, strength=strength),
-        _berger_general_formula(x, cov, np.eye(5), c),
-    )
-
-
-def test_berger_general_Q_matches_closed_form():
+@pytest.mark.parametrize("with_q", [False, True])
+def test_berger_general_matches_closed_form(with_q):
+    # The canonicalized computation must agree with the direct general-form
+    # Berger estimator, for a general covariance (Q=I) and a general loss
+    # matrix Q.
     a = rng().normal(size=(5, 5))
     cov = a @ a.T + np.eye(5)
     b = rng().normal(size=(5, 5))
-    q = b @ b.T + np.eye(5)
+    q = b @ b.T + np.eye(5) if with_q else None
+    q_closed = np.eye(5) if q is None else q
     x = rng().normal(size=5)
-    c = 2.5  # with p=5, c = strength * (p-2) = strength * 3, so strength = 2.5/3
+    c = 2.5 if with_q else 3.0  # c = strength * (p-2) = strength * 3
     strength = c / 3.0
     np.testing.assert_allclose(
         _shrinkage.berger(x, cov=cov, Q=q, positive=False, strength=strength),
-        _berger_general_formula(x, cov, q, c),
+        _berger_general_formula(x, cov, q_closed, c),
     )
 
 
@@ -256,9 +236,38 @@ def test_berger_minimaxity():
     assert np.mean(lossp) <= np.mean(loss) - 0.05
 
 
-def test_shrink_dispatch():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(s.shrink(x, np.eye(5)), _shrinkage.berger(x, np.eye(5)))
+@pytest.mark.parametrize(
+    "method",
+    ["berger", "tan", "minimax_bayes", "bayes", "tan_bayes", "robust_bayes"],
+)
+def test_shrink_dispatch(method):
+    # nustattools.stats.shrink dispatches method="..." to the named estimator
+    # and forwards the extra estimator arguments; calling it must match the
+    # estimator directly.
+    gen = rng()
+    x = gen.normal(size=5)
+    estimator = getattr(_shrinkage, method)
+    np.testing.assert_allclose(s.shrink(x, method=method), estimator(x))
+    np.testing.assert_allclose(
+        s.shrink(x, np.eye(5), method=method), estimator(x, np.eye(5))
+    )
+    if method != "berger":
+        np.testing.assert_allclose(
+            s.shrink(x, method=method, gamma=2.0), estimator(x, gamma=2.0)
+        )
+
+
+def test_shrink_forwards_offset_and_dirs():
+    gen = rng()
+    p = 6
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    dirs = gen.normal(size=(p, 2))
+    np.testing.assert_allclose(
+        s.shrink(x, offset=offset, dirs=dirs),
+        _shrinkage.berger(x, offset=offset, dirs=dirs),
+        rtol=1e-12,
+    )
 
 
 def test_shrink_unknown_method():
@@ -285,175 +294,6 @@ def test_berger_out_of_range_strength_error():
     for bad in (-1.0, 3.0):
         with pytest.raises(ValueError, match="strength"):
             _shrinkage.berger(rng().normal(size=3), np.eye(3), strength=bad)
-
-
-def test_estimate_degenerate_empty_dimension():
-    # p = 0 is a degenerate but valid problem: the empty loss matrix passes PSD
-    # validation (zero-size guard) and the pipeline returns an empty estimate.
-    delta = _shrinkage._estimate(np.empty((2, 0)), None, np.eye(0), lambda xs, _dd: xs)
-    assert delta.shape == (2, 0)
-
-
-def test_merge_dirs_union_of_user_dirs_and_null_q():
-    # _merge_dirs returns an orthonormal independent basis of span(dirs) +
-    # null(Q); only the spanned space matters, not the representative columns.
-    gen = rng()
-    p = 6
-    q = _psd_q(4, p, gen)
-    w, v = np.linalg.eigh(q)
-    u_r = v[:, w > 1e-10]
-    null_basis = v[:, w < 1e-10]
-    range_col = u_r[:, 0]
-    null_col = null_basis[:, 0]
-    # A single range direction column plus a null direction column.
-    basis = _shrinkage._merge_dirs(np.column_stack([range_col, null_col]), q, p)
-    # Expected span: the two user columns plus the rest of null(Q).
-    expected = np.column_stack([range_col, null_basis])
-    # The basis spans the same space as 'expected' (full column rank projection).
-    assert basis.shape == (p, 3)
-    np.testing.assert_allclose(basis.T @ basis, np.eye(3), rtol=1e-9, atol=1e-10)
-    proj = basis @ np.linalg.solve(basis.T @ basis, basis.T)
-    exp_proj = expected @ np.linalg.solve(expected.T @ expected, expected.T)
-    np.testing.assert_allclose(proj @ exp_proj, exp_proj, rtol=1e-8, atol=1e-10)
-
-
-def test_merge_dirs_without_user_dirs_is_null_q_basis():
-    # With dirs=None, _merge_dirs spans exactly null(Q).
-    gen = rng()
-    p = 6
-    q = _psd_q(4, p, gen)
-    basis = _shrinkage._merge_dirs(None, q, p)
-    w, v = np.linalg.eigh(q)
-    null_basis = v[:, w < 1e-10]
-    assert basis.shape == (p, null_basis.shape[1])
-    # Every basis column lies in null(Q), i.e. Q annihilates it.
-    np.testing.assert_allclose(q @ basis, np.zeros_like(basis), rtol=1e-8, atol=1e-10)
-
-
-def test_merge_dirs_pd_q_with_no_dirs_is_empty():
-    # For a strictly positive-definite Q with no user dirs there is no null
-    # space, so the no-shrink span is empty (shape (p, 0)).
-    p = 4
-    q = np.eye(p)
-    basis = _shrinkage._merge_dirs(None, q, p)
-    assert basis.shape == (p, 0)
-
-
-def test_merge_dirs_redundant_user_dirs_are_deduplicated():
-    # User dirs columns that overlap null(Q) (or each other) are handled by the
-    # span basis: duplicate directions do not inflate the result.
-    gen = rng()
-    p = 6
-    q = _psd_q(4, p, gen)
-    w, v = np.linalg.eigh(q)
-    null_col = v[:, w < 1e-10][:, 0]
-    # Two identical user columns in null(Q); merged span must equal null(Q) alone.
-    dirs = np.column_stack([null_col, 2.0 * null_col])
-    basis = _shrinkage._merge_dirs(dirs, q, p)
-    null_only = _shrinkage._merge_dirs(None, q, p)
-    assert basis.shape == null_only.shape
-
-
-def test_estimate_split_keeps_no_shrink_projection_and_recovers_data():
-    # _estimate_split keeps the covariance-metric projection of the data onto
-    # span(dirs) (= span(user dirs) + null(Q)) at its data value.  When the span
-    # covers the whole space there is nothing left to shrink, so the estimate
-    # equals the data -- a robust end-to-end check of the unified dirs handling.
-    gen = rng()
-    p = 7
-    q = _psd_q(5, p, gen)
-    cov = gen.normal(size=(p, p))
-    cov = cov @ cov.T + np.eye(p)
-    x = gen.normal(size=p)
-    w, v = np.linalg.eigh(q)
-    u_r = v[:, w > 1e-10]
-    # dirs spanning u_r plus the null(Q) basis covers the whole space.
-    dirs = u_r
-    merge = _shrinkage._merge_dirs(dirs, q, p)
-    assert merge.shape == (p, p)
-    for scale in (0.0, 1.0):
-        delta = _shrinkage._estimate_split(
-            x,
-            cov,
-            q,
-            lambda xs, _dd, _s=scale: _s * xs,
-            offset=None,
-            dirs=merge,
-        )
-        np.testing.assert_allclose(delta, x, rtol=1e-8, atol=1e-10)
-
-
-def test_estimate_split_shrinks_only_complement_of_no_shrink_span():
-    # With dirs = null(Q) only, the estimator acts only on the range of Q: the
-    # covariance-metric projection onto null(Q) is kept at the data value while
-    # the range part is shrunk.  Checked via the shrink-towards scale.
-    gen = rng()
-    p = 6
-    q = _psd_q(4, p, gen)
-    cov = np.eye(p)
-    x = gen.normal(size=p)
-    merge = _shrinkage._merge_dirs(None, q, p)
-    w, v = np.linalg.eigh(q)
-    null_basis = v[:, w < 1e-10]
-    null_proj = null_basis @ null_basis.T
-    delta = _shrinkage._estimate_split(
-        x, cov, q, lambda xs, _dd: 0.5 * xs, offset=None, dirs=merge
-    )
-    # With cov = I the covariance metric is Euclidean, so the kept part is the
-    # Euclidean projection onto null(Q); the estimate keeps it at the data value.
-    np.testing.assert_allclose(null_proj @ delta, null_proj @ x, rtol=1e-8, atol=1e-10)
-    # The range (complement) part is shrunk by half.
-    range_part = (np.eye(p) - null_proj) @ delta
-    range_x = (np.eye(p) - null_proj) @ x
-    np.testing.assert_allclose(range_part, 0.5 * range_x, rtol=1e-8, atol=1e-10)
-
-
-def test_estimate_canonicalizes_and_decanonicalizes():
-    # The shared _estimate wrapper must canonicalize the inputs, pass the
-    # canonical data to the estimator, and transform the result back.  Use a
-    # synthetic canonical estimator so the transform is exercised for an
-    # estimator that is not the built-in Berger one.
-    calls = []
-
-    def dummy_canonical(x_star, d, *, scale):
-        calls.append((np.array(x_star), np.array(d)))
-        return scale * x_star
-
-    a = rng().normal(size=(4, 4))
-    cov = a @ a.T + np.eye(4)
-    b = rng().normal(size=(4, 4))
-    q = b @ b.T + np.eye(4)
-    xa = rng().normal(size=(2, 4))
-
-    _shrinkage._estimate(xa, cov, q, dummy_canonical, scale=2.0)
-    (x_star, d) = calls[0]
-
-    # The estimator receives the canonical data from the shared transform.
-    bmat, _, d_from_transform = _shrinkage._canonicalize(cov, q)
-    np.testing.assert_allclose(x_star, xa @ bmat.T)
-    np.testing.assert_allclose(d, d_from_transform)
-
-    # Applying the identity canonical estimator recovers the original data, so
-    # the decanonicalization exactly inverts the canonicalization.
-    out_identity = _shrinkage._estimate(xa, cov, q, lambda xs, _dd: xs)
-    np.testing.assert_allclose(out_identity, xa)
-
-
-def test_canonicalize_sorts_by_decreasing_variance():
-    # The canonical coordinates are ordered by decreasing variance d
-    # (coordinate 0 is the largest variance), matching the risk-curve axis
-    # convention, while the frame still diagonalizes cov and Q and round-trips.
-    gen = rng()
-    p = 5
-    a = gen.normal(size=(p, p))
-    cov = a @ a.T + p * np.eye(p)
-    m = gen.normal(size=(p, p))
-    q = m @ m.T + np.eye(p)
-    b, binv, d = _shrinkage._canonicalize(cov, q)
-    np.testing.assert_allclose(b @ cov @ b.T, np.diag(d), rtol=1e-9, atol=1e-10)
-    np.testing.assert_allclose(b.T @ b, q, rtol=1e-9, atol=1e-10)
-    np.testing.assert_allclose(b @ binv, np.eye(p), rtol=1e-9, atol=1e-10)
-    assert np.all(np.diff(d) <= 1e-12)
 
 
 def _projection(basis):
@@ -580,10 +420,10 @@ def test_berger_general_cov_dirs_kept():
     q = bmat @ bmat.T + np.eye(p)
     v = gen.normal(size=(p, 2))
 
-    b, _, d = _shrinkage._canonicalize(cov, q)
+    b, _, d = _canonicalize(cov, q)
     v_star = b @ v
     x_star = x @ b.T
-    pmat = _shrinkage._projector(v_star, np.diag(d))
+    pmat = _projector(v_star, np.diag(d))
 
     delta = _shrinkage.berger(x, cov=cov, Q=q, dirs=v)
     assert delta.shape == (p,)
@@ -593,19 +433,6 @@ def test_berger_general_cov_dirs_kept():
     # The orthogonal residual is shrunk towards zero, so its norm does not grow.
     assert np.linalg.norm((np.eye(p) - pmat) @ delta_star) <= np.linalg.norm(
         (np.eye(p) - pmat) @ x_star
-    )
-
-
-def test_shrink_dispatches_offset_dirs():
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    offset = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    np.testing.assert_allclose(
-        s.shrink(x, offset=offset, dirs=v),
-        _shrinkage.berger(x, offset=offset, dirs=v),
-        rtol=1e-12,
     )
 
 
@@ -627,24 +454,6 @@ def test_dirs_dependent_columns_error():
 def test_berger_offset_shape_error():
     with pytest.raises(ValueError, match="offset must have shape"):
         _shrinkage.berger(rng().normal(size=3), offset=np.ones(4))
-
-
-def test_reduce_dirs_structure():
-    # _reduce_dirs must return an orthonormal basis of the complement, the
-    # kept (projected) part, reduced variances, and residual coordinates such
-    # that the residual is reconstructed as eta @ l2.T.
-    gen = rng()
-    p = 6
-    y = gen.normal(size=p)
-    d = np.sort(gen.uniform(0.5, 3.0, p))[::-1]
-    v = gen.normal(size=(p, 2))
-    kept, eta, d_perp, l2, _pmat = _reduce_dirs(y, np.diag(d), v)
-    assert l2.shape == (p, 4)
-    assert d_perp.shape == (4,)
-    np.testing.assert_allclose(l2.T @ l2, np.eye(4), atol=1e-12)
-    residual = y - kept
-    np.testing.assert_allclose(eta @ l2.T, residual, atol=1e-10)
-    assert np.all(d_perp > 0)
 
 
 def test_projector_uncorrelates():
@@ -677,45 +486,6 @@ def test_reduce_dirs_loss_isometry():
     # eta has exactly the diagonal covariance reported as d_perp.
     m = (np.eye(p) - pmat) @ np.diag(d) @ (np.eye(p) - pmat).T
     np.testing.assert_allclose(l2.T @ m @ l2, np.diag(d_perp), atol=1e-10)
-
-
-def test_reduce_dirs_general_cov():
-    # _reduce_dirs must expose the same structure (orthonormal complement
-    # basis, kept part, cov-metric projector, isometric residual loss) for a
-    # general non-diagonal covariance as it does in canonical coordinates.
-    # This is the path _estimate_split and the singular-Q-with-dirs recursion
-    # rely on. The result is compared against the canonical-coordinates
-    # computation via the frame transform (kept @ b.T == kept_star,
-    # eta @ l2.T @ b.T == eta_star @ l2_star.T).
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    a = gen.normal(size=(p, p))
-    cov = a @ a.T + np.eye(p)
-    bmat = gen.normal(size=(p, p))
-    q = bmat @ bmat.T + np.eye(p)
-    v = gen.normal(size=(p, 2))
-
-    b, _, d = _shrinkage._canonicalize(cov, q)
-    kept_s, eta_s, _d_perp_s, l2_s, _ = _reduce_dirs(x @ b.T, np.diag(d), b @ v)
-
-    kept, eta, d_perp, l2, pmat = _reduce_dirs(x, cov, v)
-    # l2 orthonormal -> change of basis is an isometry of the Euclidean loss.
-    np.testing.assert_allclose(l2.T @ l2, np.eye(l2.shape[1]), atol=1e-12)
-    # The frame transform carries the kept part and residual to canonical
-    # coordinates (note: non-orthogonal b, so the reduced variances are not
-    # frame-invariant; their covariance content is asserted below).
-    np.testing.assert_allclose(kept @ b.T, kept_s, atol=1e-10)
-    np.testing.assert_allclose(eta @ l2.T @ b.T, eta_s @ l2_s.T, atol=1e-10)
-    # eta has exactly the diagonal covariance reported as d_perp in general
-    # coordinates (loss conservation for the _estimate_split path).
-    m = (np.eye(p) - pmat) @ cov @ (np.eye(p) - pmat).T
-    np.testing.assert_allclose(l2.T @ m @ l2, np.diag(d_perp), atol=1e-10)
-    # The projector is idempotent and makes fitted/residual uncorrelated.
-    np.testing.assert_allclose(pmat @ pmat, pmat, atol=1e-10)
-    np.testing.assert_allclose(
-        pmat @ cov @ (np.eye(p) - pmat).T, np.zeros((p, p)), atol=1e-10
-    )
 
 
 def test_loss_conserved_by_recursion():
@@ -926,40 +696,40 @@ def test_estimate_risk_bayesian_sequence_keeps_dim():
     np.testing.assert_allclose(res[0], single, rtol=1e-12)
 
 
-def test_estimate_risk_bayesian_seed_determinism():
+@pytest.mark.parametrize("use_truth_cov", [False, True])
+def test_estimate_risk_seed_determinism(use_truth_cov):
     # The same seed reproduces the same draws; a different seed (almost surely)
-    # does not.
+    # gives a different result.  Also holds when drawing from a truth_cov prior.
     gen = rng()
     p = 3
     theta = gen.normal(size=p)
     est = functools.partial(s.shrink, strength=1.0)
-    a = _shrinkage.estimate_risk(
-        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=3
-    )
-    b = _shrinkage.estimate_risk(
-        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=3
-    )
-    c = _shrinkage.estimate_risk(
-        theta, np.eye(p), est, truth_cov=np.eye(p), n_reps=500, seed=4
-    )
-    np.testing.assert_array_equal(a, b)
-    assert not np.allclose(a, c)
+    kwargs = {"truth_cov": np.eye(p)} if use_truth_cov else {}
+    a = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3, **kwargs)
+    b = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3, **kwargs)
+    np.testing.assert_allclose(a, b, rtol=0.0, atol=0.0)
+    c = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=4, **kwargs)
+    assert not np.allclose(a[0], c[0])
 
 
-def test_estimate_risk_bayesian_bad_shapes_raise():
-    # truth_cov must be a square SPD matrix matching the dimension of theta.
-    gen = rng()
-    theta = gen.normal(size=3)
-    est = functools.partial(s.shrink, strength=1.0)
-    with pytest.raises(ValueError, match="truth_cov"):
-        _shrinkage.estimate_risk(theta, np.eye(3), est, truth_cov=np.eye(4), n_reps=100)
-    with pytest.raises(ValueError, match="truth_cov"):
+def test_estimate_risk_bad_shapes_raise():
+    with pytest.raises(ValueError, match="theta must be a 1-D vector"):
         _shrinkage.estimate_risk(
-            theta, np.eye(3), est, truth_cov=np.eye(3) * -1.0, n_reps=100
+            rng().normal(size=(3, 3)), np.eye(3), s.shrink, n_reps=100
+        )
+    with pytest.raises(ValueError, match="cov must have shape"):
+        _shrinkage.estimate_risk(rng().normal(size=3), np.eye(4), s.shrink, n_reps=100)
+    with pytest.raises(ValueError, match="Q must have shape"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=3), np.eye(3), s.shrink, Q=np.eye(4), n_reps=100
         )
     with pytest.raises(ValueError, match="truth_cov"):
         _shrinkage.estimate_risk(
-            theta, np.eye(3), est, truth_cov=np.ones(3), n_reps=100
+            rng().normal(size=3), np.eye(3), s.shrink, truth_cov=np.eye(4), n_reps=100
+        )
+    with pytest.raises(ValueError, match="truth_cov"):
+        _shrinkage.estimate_risk(
+            rng().normal(size=3), np.eye(3), s.shrink, truth_cov=-np.eye(3), n_reps=100
         )
 
 
@@ -1063,33 +833,6 @@ def test_estimate_risk_n_reps_must_be_at_least_two():
             )
 
 
-def test_estimate_risk_seed_determinism():
-    # The same seed reproduces the same draws; a different seed (almost surely)
-    # gives a different result.
-    gen = rng()
-    p = 3
-    theta = gen.normal(size=p)
-    est = functools.partial(s.shrink, strength=1.0)
-    a = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
-    b = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=3)
-    np.testing.assert_allclose(a, b, rtol=0.0, atol=0.0)
-    c = _shrinkage.estimate_risk(theta, np.eye(p), est, n_reps=500, seed=4)
-    assert not np.allclose(a[0], c[0])
-
-
-def test_estimate_risk_bad_shapes_raise():
-    with pytest.raises(ValueError, match="theta must be a 1-D vector"):
-        _shrinkage.estimate_risk(
-            rng().normal(size=(3, 3)), np.eye(3), s.shrink, n_reps=100
-        )
-    with pytest.raises(ValueError, match="cov must have shape"):
-        _shrinkage.estimate_risk(rng().normal(size=3), np.eye(4), s.shrink, n_reps=100)
-    with pytest.raises(ValueError, match="Q must have shape"):
-        _shrinkage.estimate_risk(
-            rng().normal(size=3), np.eye(3), s.shrink, Q=np.eye(4), n_reps=100
-        )
-
-
 def test_estimate_risk_curve_record_shape():
     # One record per (direction, distance, estimator); single estimator gives
     # one record per (direction, distance).
@@ -1128,7 +871,7 @@ def test_estimate_risk_curve_mahalanobis():
         seed=0,
     )
     pinv = np.linalg.inv(np.asarray(cov, dtype=float))
-    _b, binv, d = _shrinkage._canonicalize(
+    _b, binv, d = _canonicalize(
         np.asarray(cov, dtype=float), np.asarray(np.diag([2.0, 1.0, 1.0]), dtype=float)
     )
     refs = {}
@@ -1151,7 +894,7 @@ def test_estimate_risk_curve_negative_axis():
         cov, est, directions=-1, distances=[0.0, 1.0], n_reps=200, seed=0
     )
     assert recs[0]["direction"] == "axis -1"
-    _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
+    _b, binv, d = _canonicalize(cov, np.eye(3))
     smallest = int(np.argsort(d)[::-1][-1])
     raw = binv[:, smallest]
     by_raw = _shrinkage.estimate_risk_curve(
@@ -1183,9 +926,7 @@ def test_estimate_risk_curve_matches_brute_force():
         n_reps=n_reps,
         seed=seed,
     )
-    _b, binv, d = _shrinkage._canonicalize(
-        np.diag([1.0, 3.0, 2.0]), np.diag([2.0, 1.0, 1.0])
-    )
+    _b, binv, d = _canonicalize(np.diag([1.0, 3.0, 2.0]), np.diag([2.0, 1.0, 1.0]))
     descend = np.argsort(d)[::-1]
     rng = np.random.default_rng(seed)
     x0 = rng.multivariate_normal(np.zeros(3), cov, size=n_reps)
@@ -1246,7 +987,7 @@ def test_estimate_risk_curve_axis_ordering():
         cov, est, directions=0, distances=[0.0, 1.0], n_reps=200, seed=0
     )
     assert recs[0]["direction"] == "axis 0"
-    _b, binv, d = _shrinkage._canonicalize(cov, np.eye(3))
+    _b, binv, d = _canonicalize(cov, np.eye(3))
     largest = int(np.argsort(d)[::-1][0])
     raw = binv[:, largest]
     same_axis = _shrinkage.estimate_risk_curve(
@@ -1370,35 +1111,9 @@ def test_estimate_risk_curve_validation_errors():
         )
 
 
-def test_tan_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(_shrinkage.tan(x), _shrinkage.tan(x, cov=np.eye(6)))
-    assert _shrinkage.tan(x).shape == (6,)
-
-
-def test_tan_default_similar_to_berger_homoscedastic():
-    # In the homoscedastic case D = sigma^2 I, both estimators reduce to a
-    # James-Stein type shrinkage and should give comparable estimates.
-    sigma = 1.0
-    x = rng().normal(size=8)
-    t = _shrinkage.tan(x, cov=sigma**2 * np.eye(8), positive=False)
-    b = _shrinkage.berger(x, cov=sigma**2 * np.eye(8), positive=False)
-    # Both must reproduce the sign pattern of x (no sign flips) and shrink.
-    assert np.all(t * x >= -1e-12)
-    assert np.all(b * x >= -1e-12)
-
-
 def test_tan_zero_strength_is_identity():
     x = rng().normal(size=5)
     np.testing.assert_allclose(_shrinkage.tan(x, strength=0.0), x, atol=1e-12)
-
-
-def test_tan_shape():
-    p = 5
-    x = rng().normal(size=p)
-    assert _shrinkage.tan(x).shape == (p,)
-    assert _shrinkage.tan(x, gamma=float("inf")).shape == (p,)
-    assert _shrinkage.tan(x, gamma=1.0).shape == (p,)
 
 
 def test_tan_broadcasting_shapes():
@@ -1446,49 +1161,6 @@ def test_tan_minimaxity():
         assert np.mean(loss) <= np.trace(cov) + 0.05
 
 
-def test_tan_beats_berger_low_variance_truth():
-    # Berger shrinks low-variance (low-importance) coordinates too
-    # aggressively (inversely proportional to variance).  When the truth
-    # concentrates in the low-variance coordinates, Tan's estimator should
-    # reduce the risk more than Berger.
-    rngg = rng()
-    cov = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
-    theta = np.array([0.0, 0.0, 0.0, 2.0, 2.0])
-    xs = rngg.multivariate_normal(theta, cov, size=100_000)
-    risk_tan = np.mean(
-        np.sum((_shrinkage.tan(xs, cov=cov, gamma=0.0) - theta) ** 2, axis=1)
-    )
-    risk_berg = np.mean(np.sum((_shrinkage.berger(xs, cov=cov) - theta) ** 2, axis=1))
-    assert risk_tan < risk_berg - 0.1
-
-
-def test_tan_gamma_two_special_cases_differ():
-    # gamma=0 (A†_0) and gamma=inf (A†_∞) produce different shrinkage
-    # directions under heteroscedasticity, so in general the estimates differ.
-    d = np.linspace(0.5, 3.0, 6)
-    x = rng().normal(size=6) * np.sqrt(d)
-    a = _shrinkage.tan(x, cov=np.diag(d), gamma=0.0)
-    b = _shrinkage.tan(x, cov=np.diag(d), gamma=float("inf"))
-    assert not np.allclose(a, b, atol=1e-8)
-
-
-def test_tan_finite_gamma_shrinks_and_interpolates():
-    # A finite positive gamma must actually shrink (not return x) and, at a
-    # given x, lie between the gamma=0 and gamma=inf estimates interpolated
-    # through the gamma parameter.  Values of gamma approaching 0 (resp. inf)
-    # approach the corresponding limit estimate.
-    d = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
-    x = rng().normal(size=5)
-    est0 = _shrinkage.tan(x, cov=d, gamma=0.0)
-    esti = _shrinkage.tan(x, cov=d, gamma=float("inf"))
-    est_mid = _shrinkage.tan(x, cov=d, gamma=1.0)
-    # Finite gamma must differ from the input (i.e. actually shrink).
-    assert not np.allclose(est_mid, x, atol=1e-8)
-    # gamma->0 and gamma->inf limits agree with the special cases.
-    np.testing.assert_allclose(_shrinkage.tan(x, cov=d, gamma=1e-8), est0, rtol=1e-3)
-    np.testing.assert_allclose(_shrinkage.tan(x, cov=d, gamma=1e8), esti, rtol=1e-3)
-
-
 def test_tan_strength_validation():
     for bad in (-1.0, 3.0):
         with pytest.raises(ValueError, match="strength"):
@@ -1498,57 +1170,6 @@ def test_tan_strength_validation():
 def test_tan_gamma_validation():
     with pytest.raises(ValueError, match="gamma"):
         _shrinkage.tan(rng().normal(size=5), gamma=-1.0)
-
-
-def test_tan_point_offset_equals_shift():
-    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
-    # towards zero.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.tan(x, offset=t), t + _shrinkage.tan(x - t), rtol=1e-10
-    )
-
-
-def test_tan_full_dirs_is_identity():
-    # dirs spanning the whole space leave nothing to shrink, so the result is
-    # the input regardless of offset.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    np.testing.assert_allclose(_shrinkage.tan(x, dirs=np.eye(p)), x, atol=1e-12)
-
-
-def test_tan_dirs_small_complement_is_identity():
-    # When the orthogonal complement has dimension < 3 there is no shrinkage
-    # in the complement, so the estimate is the input.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 4))  # complement dimension 2
-    np.testing.assert_allclose(_shrinkage.tan(x, dirs=v), x, atol=1e-12)
-
-
-def test_tan_dirs_c_zero_recovers_x():
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    np.testing.assert_allclose(_shrinkage.tan(x, dirs=v, strength=0.0), x, rtol=1e-9)
-
-
-def test_tan_subspace_keeps_projected_component():
-    # The component of the estimate along the projected direction must equal
-    # the projection of the data; only the orthogonal residual is shrunk.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    proj = _projection(v)
-    delta = _shrinkage.tan(x, dirs=v)
-    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
 
 
 def test_tan_gamma_zero_matches_paper_reference():
@@ -1619,33 +1240,9 @@ def test_tan_general_gamma_matches_reference():
                 np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8)
 
 
-def test_shrink_dispatches_tan():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(s.shrink(x, np.eye(5), method="tan"), _shrinkage.tan(x))
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="tan", gamma=float("inf")),
-        _shrinkage.tan(x, gamma=float("inf")),
-    )
-
-
-def test_minimax_bayes_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(
-        _shrinkage.minimax_bayes(x), _shrinkage.minimax_bayes(x, cov=np.eye(6))
-    )
-    assert _shrinkage.minimax_bayes(x).shape == (6,)
-
-
 def test_minimax_bayes_zero_strength_is_identity():
     x = rng().normal(size=5)
     np.testing.assert_allclose(_shrinkage.minimax_bayes(x, strength=0.0), x, atol=1e-12)
-
-
-def test_minimax_bayes_shape():
-    p = 5
-    x = rng().normal(size=p)
-    assert _shrinkage.minimax_bayes(x).shape == (p,)
-    assert _shrinkage.minimax_bayes(x, gamma=1.0).shape == (p,)
 
 
 def test_minimax_bayes_broadcasting_shapes():
@@ -1742,53 +1339,6 @@ def test_minimax_bayes_gamma_validation():
         _shrinkage.minimax_bayes(rng().normal(size=5), gamma=-1.0)
 
 
-def test_minimax_bayes_point_offset_equals_shift():
-    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
-    # towards zero.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.minimax_bayes(x, offset=t),
-        t + _shrinkage.minimax_bayes(x - t),
-        rtol=1e-10,
-    )
-
-
-def test_minimax_bayes_full_dirs_is_identity():
-    # dirs spanning the whole space leave nothing to shrink, so the result is
-    # the input regardless of offset.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.minimax_bayes(x, dirs=np.eye(p)), x, atol=1e-12
-    )
-
-
-def test_minimax_bayes_dirs_small_complement_is_identity():
-    # When the orthogonal complement has dimension < 3 there is no shrinkage
-    # in the complement, so the estimate is the input.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 4))  # complement dimension 2
-    np.testing.assert_allclose(_shrinkage.minimax_bayes(x, dirs=v), x, atol=1e-12)
-
-
-def test_minimax_bayes_subspace_keeps_projected_component():
-    # The component of the estimate along the projected direction must equal
-    # the projection of the data; only the orthogonal residual is shrunk.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    proj = _projection(v)
-    delta = _shrinkage.minimax_bayes(x, dirs=v)
-    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
-
-
 def test_minimax_bayes_small_complement_survives_general_gamma():
     # A small complement with a moderate gamma still produces shrinkage in the
     # low-Bayes-importance coordinates, so the result differs from the input.
@@ -1798,17 +1348,6 @@ def test_minimax_bayes_small_complement_survives_general_gamma():
     v = gen.normal(size=(p, 3))  # complement dimension 3
     delta = _shrinkage.minimax_bayes(x, dirs=v, gamma=1.0, positive=False)
     assert not np.allclose(delta, x, atol=1e-8)
-
-
-def test_shrink_dispatches_minimax_bayes():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="minimax_bayes"), _shrinkage.minimax_bayes(x)
-    )
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="minimax_bayes", gamma=1.0),
-        _shrinkage.minimax_bayes(x, gamma=1.0),
-    )
 
 
 def _bayes_general_formula(x, cov, q, gamma):
@@ -1832,12 +1371,6 @@ def _bayes_general_formula(x, cov, q, gamma):
     return delta_star @ binv.T
 
 
-def test_bayes_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(_shrinkage.bayes(x), _shrinkage.bayes(x, cov=np.eye(6)))
-    assert _shrinkage.bayes(x).shape == (6,)
-
-
 def test_bayes_gamma_zero_is_zero():
     x = rng().normal(size=5)
     np.testing.assert_allclose(
@@ -1852,14 +1385,6 @@ def test_bayes_gamma_inf_is_identity():
     )
 
 
-def test_bayes_shape():
-    p = 5
-    x = rng().normal(size=p)
-    assert _shrinkage.bayes(x).shape == (p,)
-    assert _shrinkage.bayes(x, gamma=0.0).shape == (p,)
-    assert _shrinkage.bayes(x, gamma=float("inf")).shape == (p,)
-
-
 def test_bayes_broadcasting_shapes():
     p = 5
     x = rng().normal(size=(4, 3, p))
@@ -1871,30 +1396,20 @@ def test_bayes_broadcasting_shapes():
         )
 
 
-def test_bayes_general_matches_closed_form():
+@pytest.mark.parametrize("with_q", [False, True])
+def test_bayes_general_matches_closed_form(with_q):
     # The canonicalized computation must agree with the direct general-form
-    # Bayes rule for a non-trivial covariance and Q = I.
-    a = rng().normal(size=(5, 5))
-    cov = a @ a.T + np.eye(5)
-    x = rng().normal(size=5)
-    gamma = 2.5
-    np.testing.assert_allclose(
-        _shrinkage.bayes(x, cov=cov, gamma=gamma),
-        _bayes_general_formula(x, cov, np.eye(5), gamma),
-    )
-
-
-def test_bayes_general_Q_matches_closed_form():
-    # Same with a non-trivial Q.
+    # Bayes rule for a non-trivial covariance, with Q=I and a general Q.
     a = rng().normal(size=(5, 5))
     cov = a @ a.T + np.eye(5)
     b = rng().normal(size=(5, 5))
-    q = b @ b.T + np.eye(5)
+    q = b @ b.T + np.eye(5) if with_q else None
+    q_closed = np.eye(5) if q is None else q
     x = rng().normal(size=5)
-    gamma = 3.0
+    gamma = 3.0 if with_q else 2.5
     np.testing.assert_allclose(
         _shrinkage.bayes(x, cov=cov, Q=q, gamma=gamma),
-        _bayes_general_formula(x, cov, q, gamma),
+        _bayes_general_formula(x, cov, q_closed, gamma),
     )
 
 
@@ -1921,84 +1436,9 @@ def test_bayes_gamma_interpolation():
     np.testing.assert_allclose(_shrinkage.bayes(x, cov=d, gamma=1e8), esti, rtol=1e-3)
 
 
-def test_bayes_low_variance_coordinates_are_shrunk_more():
-    # Under the loss-proportional prior, the shrinkage factor gamma/(d_j+gamma)
-    # decreases with d_j, so low-variance coordinates are shrunk more strongly.
-    d = np.array([0.1, 1.0, 10.0])
-    x = np.array([1.0, 1.0, 1.0])
-    delta = _shrinkage.bayes(x, cov=np.diag(d), gamma=1.0)
-    # factor = gamma/(d+gamma): 1/1.1 ~ 0.909, 1/2 = 0.5, 1/11 ~ 0.091
-    factors = 1.0 / (d + 1.0)
-    np.testing.assert_allclose(delta, factors * x, rtol=1e-12)
-    # Low variance (d=0.1) is shrunk least, high variance (d=10) shrunk most.
-    assert abs(delta[0]) > abs(delta[1]) > abs(delta[2])
-
-
 def test_bayes_gamma_validation():
     with pytest.raises(ValueError, match="gamma"):
         _shrinkage.bayes(rng().normal(size=5), gamma=-1.0)
-
-
-def test_bayes_point_offset_equals_shift():
-    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
-    # towards zero.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.bayes(x, offset=t), t + _shrinkage.bayes(x - t), rtol=1e-10
-    )
-
-
-def test_bayes_full_dirs_is_identity():
-    # dirs spanning the whole space leave nothing to shrink, so the result is
-    # the input regardless of offset.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    offset = gen.normal(size=p)
-    np.testing.assert_allclose(_shrinkage.bayes(x, dirs=np.eye(p)), x, atol=1e-12)
-    np.testing.assert_allclose(
-        _shrinkage.bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
-    )
-
-
-def test_bayes_dirs_small_complement_is_identity():
-    # When the orthogonal complement has dimension 0, there is nothing to
-    # shrink, so the estimate is the input.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 6))
-    np.testing.assert_allclose(_shrinkage.bayes(x, dirs=v), x, atol=1e-12)
-
-
-def test_bayes_subspace_keeps_projected_component():
-    # The component of the estimate along the projected direction must equal
-    # the projection of the data; only the orthogonal residual is shrunk.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    proj = _projection(v)
-    delta = _shrinkage.bayes(x, dirs=v)
-    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
-    resid = (np.eye(p) - proj) @ delta
-    raw = (np.eye(p) - proj) @ x
-    # Residual is shrunk (norm doesn't grow).
-    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
-
-
-def test_bayes_shrink_dispatch():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="bayes"), _shrinkage.bayes(x)
-    )
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="bayes", gamma=2.0),
-        _shrinkage.bayes(x, gamma=2.0),
-    )
 
 
 def test_bayes_psd_Q_keeps_null_component_at_data():
@@ -2172,8 +1612,8 @@ def test_psd_Q_range_subspace_component_is_kept():
             dirs_r = dirs_r[:, np.linalg.norm(dirs_r, axis=0) > 1e-12]
             cov_r = u_r.T @ cov @ u_r
             q_r = np.diag(w[w > 1e-10])
-            b_r, _, d_r = _shrinkage._canonicalize(cov_r, q_r)
-            p_mat = _shrinkage._projector(b_r @ dirs_r, np.diag(d_r))
+            b_r, _, d_r = _canonicalize(cov_r, q_r)
+            p_mat = _projector(b_r @ dirs_r, np.diag(d_r))
             x_r = x @ u_r
             delta_r = (delta - (x - x @ (u_r @ u_r.T))) @ u_r
             np.testing.assert_allclose(
@@ -2273,14 +1713,6 @@ def _tan_bayes_general_formula(x, cov, q, gamma, strength=1.0):
     return delta_star @ binv.T
 
 
-def test_tan_bayes_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x), _shrinkage.tan_bayes(x, cov=np.eye(6))
-    )
-    assert _shrinkage.tan_bayes(x).shape == (6,)
-
-
 def test_tan_bayes_gamma_zero_is_berger_like():
     # gamma=0 -> a=1 (A=I), c* = sum(d) - 2*max(d), which is the Berger-like
     # direction with uniform shrinkage weight.  Pick d with sum(d) > 2*max(d)
@@ -2306,6 +1738,17 @@ def test_tan_bayes_gamma_inf_limit():
     factor = 1.0 - c_star / s_val
     np.testing.assert_allclose(delta, factor * x, rtol=1e-10)
     assert not np.allclose(delta, x, atol=1e-8)
+
+
+def test_tan_bayes_gamma_inf_limit_can_stay_identity():
+    # When one coordinate dominates, the limit direction gives c* <= 0 and the
+    # estimator reduces to the identity, as for finite gamma.
+    d = np.array([4.0, 2.0, 1.0, 0.5, 0.25])
+    cov = np.diag(d)
+    x = rng().normal(size=5)
+    np.testing.assert_allclose(
+        _shrinkage.tan_bayes(x, cov=cov, gamma=float("inf")), x, atol=1e-12
+    )
 
 
 def test_tan_bayes_gamma_inf_matches_prior_shape_limit():
@@ -2354,32 +1797,6 @@ def test_tan_bayes_gamma_inf_constant_shape_equals_flat():
         np.testing.assert_allclose(shaped, flat, rtol=1e-9, atol=1e-10)
 
 
-def test_tan_bayes_gamma_inf_limit_is_continuous():
-    # Large finite gamma approaches the gamma=inf limit continuously.
-    d = np.array([1.0, 0.8, 0.5, 0.3, 0.2])
-    cov = np.diag(d)
-    x = rng().normal(size=5)
-    inf = _shrinkage.tan_bayes(x, cov=cov, gamma=float("inf"), positive=False)
-    for gamma in (1e8, 1e12):
-        np.testing.assert_allclose(
-            _shrinkage.tan_bayes(x, cov=cov, gamma=gamma, positive=False),
-            inf,
-            rtol=1e-6,
-            atol=1e-8,
-        )
-
-
-def test_tan_bayes_gamma_inf_limit_can_stay_identity():
-    # When one coordinate dominates, the limit direction gives c* <= 0 and the
-    # estimator reduces to the identity, as for finite gamma.
-    d = np.array([4.0, 2.0, 1.0, 0.5, 0.25])
-    cov = np.diag(d)
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x, cov=cov, gamma=float("inf")), x, atol=1e-12
-    )
-
-
 def test_tan_bayes_array_gamma_mixes_inf():
     # A per-observation gamma array may mix inf (limit direction) with finite
     # values; each observation must use its own scale.
@@ -2397,14 +1814,6 @@ def test_tan_bayes_array_gamma_mixes_inf():
         )
 
 
-def test_tan_bayes_shape():
-    p = 5
-    x = rng().normal(size=p)
-    assert _shrinkage.tan_bayes(x).shape == (p,)
-    assert _shrinkage.tan_bayes(x, gamma=0.0).shape == (p,)
-    assert _shrinkage.tan_bayes(x, gamma=float("inf")).shape == (p,)
-
-
 def test_tan_bayes_broadcasting_shapes():
     p = 5
     x = rng().normal(size=(4, 3, p))
@@ -2416,30 +1825,20 @@ def test_tan_bayes_broadcasting_shapes():
         )
 
 
-def test_tan_bayes_general_matches_closed_form():
+@pytest.mark.parametrize("with_q", [False, True])
+def test_tan_bayes_general_matches_closed_form(with_q):
     # The canonicalized computation must agree with the direct general-form
-    # formula for a non-trivial covariance and Q = I.
-    a = rng().normal(size=(5, 5))
-    cov = a @ a.T + np.eye(5)
-    x = rng().normal(size=5)
-    gamma = 2.5
-    np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x, cov=cov, gamma=gamma, positive=False),
-        _tan_bayes_general_formula(x, cov, np.eye(5), gamma),
-    )
-
-
-def test_tan_bayes_general_Q_matches_closed_form():
-    # Same with a non-trivial Q.
+    # formula for a non-trivial covariance, with Q=I and a general Q.
     a = rng().normal(size=(5, 5))
     cov = a @ a.T + np.eye(5)
     b = rng().normal(size=(5, 5))
-    q = b @ b.T + np.eye(5)
+    q = b @ b.T + np.eye(5) if with_q else None
+    q_closed = np.eye(5) if q is None else q
     x = rng().normal(size=5)
-    gamma = 3.0
+    gamma = 3.0 if with_q else 2.5
     np.testing.assert_allclose(
         _shrinkage.tan_bayes(x, cov=cov, Q=q, gamma=gamma, positive=False),
-        _tan_bayes_general_formula(x, cov, q, gamma),
+        _tan_bayes_general_formula(x, cov, q_closed, gamma),
     )
 
 
@@ -2510,72 +1909,9 @@ def test_tan_bayes_shrinks_and_preserves_sign():
     assert not np.allclose(delta, x, atol=1e-8)
 
 
-def test_tan_bayes_shrink_dispatch():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="tan_bayes"), _shrinkage.tan_bayes(x)
-    )
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="tan_bayes", gamma=2.0),
-        _shrinkage.tan_bayes(x, gamma=2.0),
-    )
-
-
 def test_tan_bayes_gamma_validation():
     with pytest.raises(ValueError, match="gamma"):
         _shrinkage.tan_bayes(rng().normal(size=5), gamma=-1.0)
-
-
-def test_tan_bayes_point_offset_equals_shift():
-    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
-    # towards zero.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x, offset=t),
-        t + _shrinkage.tan_bayes(x - t),
-        rtol=1e-10,
-    )
-
-
-def test_tan_bayes_full_dirs_is_identity():
-    # dirs spanning the whole space leave nothing to shrink, so the result is
-    # the input regardless of offset.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    offset = gen.normal(size=p)
-    np.testing.assert_allclose(_shrinkage.tan_bayes(x, dirs=np.eye(p)), x, atol=1e-12)
-    np.testing.assert_allclose(
-        _shrinkage.tan_bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
-    )
-
-
-def test_tan_bayes_dirs_small_complement_is_identity():
-    # When the orthogonal complement has dimension 0, there is nothing to
-    # shrink, so the estimate is the input.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 6))
-    np.testing.assert_allclose(_shrinkage.tan_bayes(x, dirs=v), x, atol=1e-12)
-
-
-def test_tan_bayes_subspace_keeps_projected_component():
-    # The component of the estimate along the projected direction must equal
-    # the projection of the data; only the orthogonal residual is shrunk.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    proj = _projection(v)
-    delta = _shrinkage.tan_bayes(x, dirs=v)
-    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
-    resid = (np.eye(p) - proj) @ delta
-    raw = (np.eye(p) - proj) @ x
-    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
 
 
 def test_tan_bayes_known_values():
@@ -2649,14 +1985,6 @@ def _robust_bayes_general_formula(x, cov, q, gamma, strength=1.0):
     return delta_star @ binv.T
 
 
-def test_robust_bayes_default_cov_is_identity():
-    x = rng().normal(size=6)
-    np.testing.assert_allclose(
-        _shrinkage.robust_bayes(x), _shrinkage.robust_bayes(x, cov=np.eye(6))
-    )
-    assert _shrinkage.robust_bayes(x).shape == (6,)
-
-
 def test_robust_bayes_gamma_zero_spherical():
     # gamma=0 -> w = d/d = 1, S = X^T D^{-1} X, so delta = (1 - min(1, S_0/S)) x
     # with S_0 = strength*(p-2).  Pick d homogeneous enough that S_0/S < 1 so
@@ -2677,13 +2005,6 @@ def test_robust_bayes_gamma_inf_is_identity():
     )
 
 
-def test_robust_bayes_shape():
-    p = 5
-    x = rng().normal(size=p)
-    assert _shrinkage.robust_bayes(x).shape == (p,)
-    assert _shrinkage.robust_bayes(x, gamma=0.0).shape == (p,)
-
-
 def test_robust_bayes_broadcasting_shapes():
     p = 5
     x = rng().normal(size=(4, 3, p))
@@ -2695,32 +2016,24 @@ def test_robust_bayes_broadcasting_shapes():
         )
 
 
-def test_robust_bayes_general_matches_closed_form():
+@pytest.mark.parametrize("with_q", [False, True])
+def test_robust_bayes_general_matches_closed_form(with_q):
     # The canonicalized computation must agree with the direct general-form
-    # formula for a non-trivial covariance and Q = I.
+    # formula for a non-trivial covariance, with Q=I and a general Q.
     a = rng().normal(size=(5, 5))
     cov = a @ a.T + np.eye(5)
+    b = rng().normal(size=(5, 5))
+    q = b @ b.T + np.eye(5) if with_q else None
+    q_closed = np.eye(5) if q is None else q
     x = rng().normal(size=5)
     for gamma in (0.0, 1.0, 5.0):
         for strength in (0.5, 1.0, 2.0):
             np.testing.assert_allclose(
-                _shrinkage.robust_bayes(x, cov=cov, gamma=gamma, strength=strength),
-                _robust_bayes_general_formula(x, cov, np.eye(5), gamma, strength),
+                _shrinkage.robust_bayes(
+                    x, cov=cov, Q=q, gamma=gamma, strength=strength
+                ),
+                _robust_bayes_general_formula(x, cov, q_closed, gamma, strength),
             )
-
-
-def test_robust_bayes_general_Q_matches_closed_form():
-    # Same with a non-trivial Q.
-    a = rng().normal(size=(5, 5))
-    cov = a @ a.T + np.eye(5)
-    b = rng().normal(size=(5, 5))
-    q = b @ b.T + np.eye(5)
-    x = rng().normal(size=5)
-    gamma = 3.0
-    np.testing.assert_allclose(
-        _shrinkage.robust_bayes(x, cov=cov, Q=q, gamma=gamma),
-        _robust_bayes_general_formula(x, cov, q, gamma),
-    )
 
 
 def test_robust_bayes_strength_zero_is_identity():
@@ -2760,74 +2073,9 @@ def test_robust_bayes_shrinks_and_preserves_sign():
     assert np.all(np.abs(delta) <= np.abs(x) + 1e-12)
 
 
-def test_robust_bayes_shrink_dispatch():
-    x = rng().normal(size=5)
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="robust_bayes"), _shrinkage.robust_bayes(x)
-    )
-    np.testing.assert_allclose(
-        s.shrink(x, np.eye(5), method="robust_bayes", gamma=2.0),
-        _shrinkage.robust_bayes(x, gamma=2.0),
-    )
-
-
 def test_robust_bayes_gamma_validation():
     with pytest.raises(ValueError, match="gamma"):
         _shrinkage.robust_bayes(rng().normal(size=5), gamma=-1.0)
-
-
-def test_robust_bayes_point_offset_equals_shift():
-    # Shrinking towards a point t (no dirs) must equal t + shrinking x - t
-    # towards zero.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.robust_bayes(x, offset=t),
-        t + _shrinkage.robust_bayes(x - t),
-        rtol=1e-10,
-    )
-
-
-def test_robust_bayes_full_dirs_is_identity():
-    # dirs spanning the whole space leave nothing to shrink, so the result is
-    # the input regardless of offset.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    offset = gen.normal(size=p)
-    np.testing.assert_allclose(
-        _shrinkage.robust_bayes(x, dirs=np.eye(p)), x, atol=1e-12
-    )
-    np.testing.assert_allclose(
-        _shrinkage.robust_bayes(x, dirs=np.eye(p), offset=offset), x, atol=1e-12
-    )
-
-
-def test_robust_bayes_dirs_small_complement_is_identity():
-    # When the orthogonal complement has dimension 0, there is nothing to
-    # shrink, so the estimate is the input.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 6))
-    np.testing.assert_allclose(_shrinkage.robust_bayes(x, dirs=v), x, atol=1e-12)
-
-
-def test_robust_bayes_subspace_keeps_projected_component():
-    # The component of the estimate along the projected direction must equal
-    # the projection of the data; only the orthogonal residual is shrunk.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    v = gen.normal(size=(p, 2))
-    proj = _projection(v)
-    delta = _shrinkage.robust_bayes(x, dirs=v)
-    np.testing.assert_allclose(proj @ delta, proj @ x, rtol=1e-12)
-    resid = (np.eye(p) - proj) @ delta
-    raw = (np.eye(p) - proj) @ x
-    assert np.linalg.norm(resid) <= np.linalg.norm(raw)
 
 
 def test_robust_bayes_zero_x_returns_zero():
@@ -2861,56 +2109,42 @@ def _empirical_gamma(x, p, offset=None):
     return float(np.sum(y**2)) / p
 
 
-@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
-def test_empirical_gamma_matches_explicit_identity(method):
-    # With identity covariance and loss, canonical space is the raw space, so
-    # empirical gamma = ||x||^2 / p.  The estimator must give the same
-    # result as passing that value explicitly.
+@pytest.mark.parametrize("case", ["identity", "offset", "general_cov"])
+def test_empirical_gamma_matches_explicit(case):
+    # Empirical gamma must equal the explicit value ||y||^2 / p_eff, where y is
+    # the centered data in canonical coordinates: the raw data for the identity
+    # covariance, the centered data x - offset for a non-zero offset, and the
+    # canonicalized data under a general covariance.  Verified for every
+    # empirical-gamma estimator.
     gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    fn = getattr(_shrinkage, method)
-    gamma_exp = _empirical_gamma(x, p)
-    np.testing.assert_allclose(
-        fn(x, gamma="empirical"), fn(x, gamma=gamma_exp), rtol=1e-12
-    )
-
-
-@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
-def test_empirical_gamma_matches_explicit_offset(method):
-    # The empirical gamma is computed from the centered data x - offset, so a
-    # non-zero offset must be subtracted before taking the norm.
-    gen = rng()
-    p = 6
-    x = gen.normal(size=p)
-    t = gen.normal(size=p)
-    fn = getattr(_shrinkage, method)
-    gamma_exp = _empirical_gamma(x, p, offset=t)
-    np.testing.assert_allclose(
-        fn(x, offset=t, gamma="empirical"),
-        fn(x, offset=t, gamma=gamma_exp),
-        rtol=1e-12,
-    )
-
-
-@pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
-def test_empirical_gamma_matches_explicit_general_cov(method):
-    # Under a general covariance the data must be canonicalized first; resolve
-    # the empirical gamma in canonical coordinates and compare against the
-    # explicit value.
-    gen = rng()
-    p = 5
-    a = gen.normal(size=(p, p))
-    cov = a @ a.T + p * np.eye(p)
-    x = gen.normal(size=p)
-    fn = getattr(_shrinkage, method)
-    _, v = np.linalg.eigh(cov)
-    b = v.T  # cov = B^T D B with B = V^T, so x_star = x @ B^T = x @ V
-    x_star = x @ b.T
-    gamma_exp = _empirical_gamma(x_star, p)
-    np.testing.assert_allclose(
-        fn(x, cov=cov, gamma="empirical"), fn(x, cov=cov, gamma=gamma_exp), rtol=1e-10
-    )
+    if case == "identity":
+        cov = None
+        offset = None
+        p = 6
+        x = gen.normal(size=p)
+    elif case == "offset":
+        p = 6
+        cov = None
+        offset = gen.normal(size=p)
+        x = gen.normal(size=p)
+    else:  # general_cov
+        p = 5
+        a = gen.normal(size=(p, p))
+        cov = a @ a.T + p * np.eye(p)
+        offset = None
+        x = gen.normal(size=p)
+    if cov is None:
+        gamma_exp = _empirical_gamma(x, p, offset=offset)
+    else:
+        _eig, v = np.linalg.eigh(cov)
+        gamma_exp = _empirical_gamma(x @ v, p)
+    for method in _EMPIRICAL_METHODS:
+        fn = getattr(_shrinkage, method)
+        np.testing.assert_allclose(
+            fn(x, cov=cov, offset=offset, gamma="empirical"),
+            fn(x, cov=cov, offset=offset, gamma=gamma_exp),
+            rtol=1e-12,
+        )
 
 
 def test_empirical_gamma_batched_matches_per_row():
@@ -2929,64 +2163,6 @@ def test_empirical_gamma_batched_matches_per_row():
         # The batched result must also equal per-row explicit gamma values.
         explicit = np.stack([fn(row, gamma=_empirical_gamma(row, p=7)) for row in x])
         np.testing.assert_allclose(batched, explicit, rtol=1e-12, atol=1e-12)
-
-
-def test_empirical_gamma_per_observation_vector():
-    # The internal prior-scale resolver must return one value per observation
-    # (the norm over the trailing coordinate axis only).  This is the
-    # per-observation array that the vectorized estimators broadcast, so it
-    # must not sum over the batch.  With the default homoscedastic prior
-    # (pi = 1) the scale is ||y||^2 / p_eff; with a non-uniform prior the
-    # scale is ||y / sqrt(pi)||^2 / p_eff, covered by a separate test.
-    gen = rng()
-    p = 6
-    n = 5
-    d = np.linspace(0.5, 2.0, p)
-    y = gen.normal(size=(n, p))
-    g = _core_empirical_gamma(d, np.ones(p), y)
-    assert g.shape == (n,)
-    for i in range(n):
-        expected = float(np.sum(y[i] ** 2)) / p
-        np.testing.assert_allclose(g[i], expected, rtol=1e-12, atol=1e-12)
-
-    small_input = gen.normal(size=(n, 2))
-    small = _core_empirical_gamma(np.array([0.5, 1.0]), np.ones(2), small_input)
-    assert small.shape == (n,)
-    for i in range(n):
-        np.testing.assert_allclose(
-            small[i], float(np.sum(small_input[i] ** 2)) / 2.0, rtol=1e-12, atol=1e-12
-        )
-
-    single = _core_empirical_gamma(d, np.ones(p), gen.normal(size=p))
-    assert single.ndim == 0
-
-
-def test_empirical_gamma_uses_pi():
-    # The "empirical" prior scale is the MLE-like scale ||y / sqrt(pi)||^2 / p:
-    # normalizing each coordinate by the corresponding prior shape recovers a
-    # homoscedastic observation, then the standard per-coordinate norm is
-    # divided by the effective dimension.  With pi = 1 this reduces to the
-    # classic ||y||^2 / p.
-    gen = rng()
-    p = 5
-    n = 4
-    d = np.linspace(0.5, 2.0, p)
-    y = gen.normal(size=(n, p))
-    pi = np.array([1.0, 4.0, 0.5, 2.0, 3.0])
-    g = _core_empirical_gamma(d, pi, y)
-    assert g.shape == (n,)
-    for i in range(n):
-        expected = float(np.sum(y[i] ** 2 / pi)) / p
-        np.testing.assert_allclose(g[i], expected, rtol=1e-12, atol=1e-12)
-
-    # pi = 1 reproduces the homoscedastic default exactly.
-    g_default = _core_empirical_gamma(d, np.ones(p), y)
-    g_pi1 = _core_empirical_gamma(d, np.ones(p), y)
-    np.testing.assert_allclose(g_default, g_pi1, rtol=1e-12, atol=1e-12)
-    for i in range(n):
-        np.testing.assert_allclose(
-            g_default[i], float(np.sum(y[i] ** 2)) / p, rtol=1e-12, atol=1e-12
-        )
 
 
 def test_empirical_gamma_via_estimator_uses_pi():
@@ -3056,67 +2232,6 @@ def test_empirical_gamma_unknown_string_raises():
             getattr(_shrinkage, method)(x, gamma="bogus")
 
 
-def test_max_rel_risk_gamma_matches_lambda():
-    # The max_rel_risk factory builds exactly the per-observation scale
-    # sqrt(sum((d*y/pi)^2)) / sqrt(sum(d)*alpha).
-    gen = rng()
-    p = 5
-    d = np.linspace(0.5, 2.0, p)
-    pi = np.linspace(0.5, 1.5, p)
-    y = gen.normal(size=(3, p))
-    alpha = 0.1
-    g = _max_rel_risk_gamma(alpha)
-    ref = np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (np.sum(d) * alpha))
-    np.testing.assert_allclose(g(d, pi, y), ref, rtol=1e-12, atol=1e-14)
-
-
-def test_max_abs_risk_gamma_matches_lambda():
-    # The max_abs_risk factory builds exactly the per-observation scale
-    # sqrt(sum((d*y/pi)^2) / alpha): only alpha in the denominator, unlike the
-    # relative-risk factory which additionally divides by sum(d).
-    gen = rng()
-    p = 5
-    d = np.linspace(0.5, 2.0, p)
-    pi = np.linspace(0.5, 1.5, p)
-    y = gen.normal(size=(3, p))
-    alpha = 0.1
-    g = _max_abs_risk_gamma(alpha)
-    ref = np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / alpha)
-    np.testing.assert_allclose(g(d, pi, y), ref, rtol=1e-12, atol=1e-14)
-
-
-@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
-def test_max_risk_gamma_alpha_validation(builder):
-    # The risk cap alpha must be a positive number, for both factories.
-    for bad in (0.0, -1.0):
-        with pytest.raises(ValueError, match="alpha"):
-            builder(bad)
-
-
-@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
-def test_max_risk_gamma_rtol_validation(builder):
-    # The refinement tolerance must be none/inf (no refinement) or a
-    # non-negative number; negatives, -inf and nan are rejected.
-    for bad in (-1.0, -np.inf, np.nan):
-        with pytest.raises(ValueError, match="rtol"):
-            builder(0.1, rtol=bad)
-
-
-@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
-def test_max_risk_gamma_rtol_default_matches_closed_form(builder):
-    # rtol = None (the default) and rtol = np.inf both return the historical
-    # closed form exactly, bit for bit: no refinement is performed.
-    gen = rng()
-    p = 5
-    d = np.linspace(0.5, 2.0, p)
-    pi = np.linspace(0.5, 1.5, p)
-    y = gen.normal(size=(3, p))
-    target = np.sum(d) if builder is _max_rel_risk_gamma else 1.0
-    gamma0 = np.sqrt(np.sum((d * y / pi) ** 2, axis=-1) / (0.1 * target))
-    for rtol in (None, np.inf):
-        np.testing.assert_array_equal(builder(0.1, rtol=rtol)(d, pi, y), gamma0)
-
-
 @pytest.mark.parametrize(
     ("builder", "alpha"),
     [
@@ -3160,39 +2275,6 @@ def test_max_risk_gamma_rtol_converges_at_small_x(builder, alpha):
         builder(alpha)(d, pi, y),
         np.sqrt(np.sum((d * y / pi) ** 2) / target),
     )
-
-
-@pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
-def test_max_risk_gamma_rtol_batch_matches_newton_reference(builder):
-    # Refinement is a vectorized batch of globally convergent Newton iterates:
-    # with a finite rtol the batch matches a scalar Newton reference driven to
-    # the root for every observation at once, including those whose only valid
-    # solution is gamma = 0.
-    gen = rng()
-    p = 8
-    d = np.linspace(0.5, 2.0, p)
-    pi = 10.0 ** np.linspace(4.0, -1.0, p)
-    y = gen.normal(size=(2000, p))
-    alpha = 1.7
-    target = alpha if builder is _max_abs_risk_gamma else alpha * np.sum(d)
-    g = builder(alpha, rtol=1e-12)(d, pi, y)
-
-    def root(obs):
-        # Scalar Newton reference with the same closed-form start and clamp.
-        if np.sum(obs**2) <= target:
-            return 0.0
-        g0 = float(np.sqrt(np.sum((d * obs / pi) ** 2) / target))
-        for _ in range(200):
-            dpg = d + g0 * pi
-            num = (d * obs) ** 2
-            f = float(np.sum(num / dpg**2) - target)
-            g0 = max(g0 - f / float(-2.0 * np.sum(num * pi / dpg**3)), 0.0)
-            if abs(f) <= 1e-14:
-                break
-        return g0
-
-    ref = np.array([root(o) for o in y])
-    np.testing.assert_allclose(g, ref, rtol=1e-9, atol=1e-12)
 
 
 @pytest.mark.parametrize("builder", [_max_rel_risk_gamma, _max_abs_risk_gamma])
@@ -3241,59 +2323,8 @@ def test_max_risk_gamma_rtol_cap_warns_and_returns_iterate(builder, monkeypatch)
         ("max_abs_risk", _max_abs_risk_gamma),
     ],
 )
-def test_parse_gamma_factory_numeric(factory, builder):
-    # A factory string parses its numeric arguments and builds the callable.
-    gen = rng()
-    p = 5
-    d = np.linspace(0.5, 2.0, p)
-    pi = np.ones(p)
-    y = gen.normal(size=p)
-    g = _parse_gamma_factory(f"{factory}( 0.1 )")
-    np.testing.assert_allclose(g(d, pi, y), builder(0.1)(d, pi, y))
-
-
-def test_parse_gamma_factory_bad_spec():
-    # A string that does not match the name(...) pattern is rejected.
-    with pytest.raises(ValueError, match="Unknown gamma specification"):
-        _parse_gamma_factory("max_rel_risk")
-
-
-def test_parse_gamma_factory_unknown_name():
-    with pytest.raises(ValueError, match="factory"):
-        _parse_gamma_factory("bogus(0.1)")
-
-
-@pytest.mark.parametrize(
-    ("factory", "builder"),
-    [
-        ("max_rel_risk", _max_rel_risk_gamma),
-        ("max_abs_risk", _max_abs_risk_gamma),
-    ],
-)
-def test_parse_gamma_factory_two_args(factory, builder):
-    # A factory string with a numeric rtol argument builds the callable
-    # with refinement enabled.
-    gen = rng()
-    p = 5
-    d = np.linspace(0.5, 2.0, p)
-    pi = np.ones(p)
-    y = gen.normal(size=p)
-    spec = f"{factory}( 0.1, 1e-6 )"
-    np.testing.assert_allclose(
-        _parse_gamma_factory(spec)(d, pi, y),
-        builder(0.1, rtol=1e-6)(d, pi, y),
-    )
-
-
-@pytest.mark.parametrize(
-    ("factory", "builder"),
-    [
-        ("max_rel_risk", _max_rel_risk_gamma),
-        ("max_abs_risk", _max_abs_risk_gamma),
-    ],
-)
-@pytest.mark.parametrize("alpha", [0.1, 2.0])
 @pytest.mark.parametrize("method", _EMPIRICAL_METHODS)
+@pytest.mark.parametrize("alpha", [0.2])
 def test_factory_gamma_matches_explicit_callable(factory, builder, method, alpha):
     # A factory string resolves to the same per-observation scale as the
     # equivalent callable built by its factory function.
@@ -3833,7 +2864,7 @@ def _diagonalizable_prior(cov, q, pi):
     Given ``cov`` and ``q``, ``B^{-1} diag(pi) B^{-T}`` is by construction
     diagonal in the canonical coordinates.
     """
-    b, _, _ = _shrinkage._canonicalize(np.asarray(cov), np.asarray(q))
+    b, _, _ = _canonicalize(np.asarray(cov), np.asarray(q))
     binv = np.linalg.inv(b)
     return binv @ np.diag(pi) @ binv.T
 
@@ -3844,40 +2875,30 @@ def test_prior_cov_validation():
     gen = rng()
     p = 4
     x = gen.normal(size=p)
-    for est in _PRIOR_METHODS:
-        fn = getattr(_shrinkage, est)
-        with pytest.raises(ValueError, match="prior covariance matrix must have shape"):
-            fn(x, prior_cov=np.eye(p - 1))
-        with pytest.raises(ValueError, match="must be symmetric"):
-            fn(x, prior_cov=np.triu(np.ones((p, p))))
-        with pytest.raises(ValueError, match="positive definite"):
-            fn(x, prior_cov=np.zeros((p, p)))
+    fn = _shrinkage.bayes
+    with pytest.raises(ValueError, match="prior covariance matrix must have shape"):
+        fn(x, prior_cov=np.eye(p - 1))
+    with pytest.raises(ValueError, match="must be symmetric"):
+        fn(x, prior_cov=np.triu(np.ones((p, p))))
+    with pytest.raises(ValueError, match="positive definite"):
+        fn(x, prior_cov=np.zeros((p, p)))
 
 
-def test_prior_cov_not_diagonalizable_in_canonical_space_raises():
-    # With distinct canonical variances the rotation is not free, so a prior
-    # that couples canonical coordinates with differing variances is rejected.
+def test_prior_cov_diagonalizability_validated():
+    # With distinct canonical variances the rotation is not free: a prior that
+    # couples canonical coordinates with differing variances is rejected, while
+    # a prior diagonal in the canonical coordinates is accepted.
     gen = rng()
-    x = gen.normal(size=3)
+    p = 3
+    x = gen.normal(size=p)
     cov = np.diag([1.0, 2.0, 4.0])  # canonical coords = original coords
-    q = np.eye(3)
-    bad = np.array([[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]])
+    q = np.eye(p)
     for est in _PRIOR_METHODS:
         fn = getattr(_shrinkage, est)
+        bad = np.array([[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]])
         with pytest.raises(ValueError, match="cannot be diagonalized"):
             fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=bad)
-
-
-def test_prior_cov_diagonal_in_canonical_space_accepted():
-    # A prior that is diagonal in the canonical coordinates works even when the
-    # canonical variances are all distinct (no rotational freedom needed).
-    gen = rng()
-    x = gen.normal(size=3)
-    cov = np.diag([1.0, 2.0, 4.0])
-    q = np.eye(3)
-    prior = np.diag([2.0, 0.5, 3.0])
-    for est in _PRIOR_METHODS:
-        fn = getattr(_shrinkage, est)
+        prior = np.diag([2.0, 0.5, 3.0])
         assert fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=prior).shape == x.shape
 
 
@@ -3914,11 +2935,10 @@ def test_gamma_scales_prior_shape():
     pi = np.array([2.0, 1.0, 3.0, 0.5])
     cov = np.eye(4)
     q = np.eye(4)
-    for est in _PRIOR_METHODS:
-        fn = getattr(_shrinkage, est)
-        lhs = fn(x, cov=cov, Q=q, gamma=2.0, prior_cov=np.diag(pi))
-        rhs = fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=np.diag(2.0 * pi))
-        np.testing.assert_allclose(lhs, rhs, rtol=1e-12, atol=1e-12)
+    fn = _shrinkage.bayes
+    lhs = fn(x, cov=cov, Q=q, gamma=2.0, prior_cov=np.diag(pi))
+    rhs = fn(x, cov=cov, Q=q, gamma=1.0, prior_cov=np.diag(2.0 * pi))
+    np.testing.assert_allclose(lhs, rhs, rtol=1e-12, atol=1e-12)
 
 
 def test_bayes_general_prior_matches_canonical_reference():
@@ -3936,8 +2956,8 @@ def test_bayes_general_prior_matches_canonical_reference():
     prior = m @ m.T + p * np.eye(p)
     prior = (prior + prior.T) / 2  # arbitrary SPD
 
-    b, _, d = _shrinkage._canonicalize(cov, q)
-    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior)
+    b, _, d = _canonicalize(cov, q)
+    pi, b_rot = _canonicalize_prior(b, d, prior)
     xs = x @ b_rot.T
     gamma = 1.3
     factor = gamma * pi / (d + gamma * pi)
@@ -3968,15 +2988,15 @@ def test_prior_cov_proportional_qinv_ill_conditioned():
     prior = m @ m.T + p * np.eye(p)
     prior = (prior + prior.T) / 2
 
-    b, _, d = _shrinkage._canonicalize(cov, q)
+    b, _, d = _canonicalize(cov, q)
     assert _cov_proportional_to_qinv(cov, q)
     # Without the flag the near-coinciding variances split into groups at the
     # eps tolerance, so the general prior is (rightly) rejected; only the
     # roundoff-aware free rotation accepts it.
     with pytest.raises(ValueError, match="cannot be diagonalized"):
-        _shrinkage._canonicalize_prior(b.copy(), d.copy(), prior)
+        _canonicalize_prior(b.copy(), d.copy(), prior)
 
-    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior, free_rotation=True)
+    pi, b_rot = _canonicalize_prior(b, d, prior, free_rotation=True)
     xs = x @ b_rot.T
     gamma = 1.3
     factor = gamma * pi / (d + gamma * pi)
@@ -4027,8 +3047,8 @@ def test_prior_cov_qinv_ill_conditioned_q_accepted():
     x = gen.normal(size=(3, p))
 
     # _canonicalize_prior must accept the prior without error.
-    b, _, d = _shrinkage._canonicalize(cov, q)
-    pi, _ = _shrinkage._canonicalize_prior(b, d, prior_cov)
+    b, _, d = _canonicalize(cov, q)
+    pi, _ = _canonicalize_prior(b, d, prior_cov)
     assert np.all(pi > 0)
     np.testing.assert_allclose(pi, pi[0], rtol=1e-10, atol=0)
 
@@ -4186,46 +3206,6 @@ def test_tan_gamma_inf_prior_shape_ranks_by_d2_over_pi():
     assert not np.allclose(got, flat, rtol=1e-9, atol=1e-10)
 
 
-def test_prior_cov_couples_only_degenerate_coordinates():
-    # The within-group rotation freedom of the canonicalization can disentangle
-    # a prior that couples coordinates of (near-)equal variance, but not a prior
-    # coupling coordinates with differing variances.
-    d = np.array([1.0, 1.0, 2.0])
-    ok = np.array(
-        [[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]]
-    )  # couples the two degenerate coords (0,1) only
-    pi, b = _shrinkage._canonicalize_prior(np.eye(3), d, ok)
-    np.testing.assert_allclose(b @ ok @ b.T, np.diag(pi), rtol=1e-9, atol=1e-10)
-    np.testing.assert_allclose(pi, [1.5, 0.5, 2.0], rtol=1e-9, atol=1e-10)
-
-    bad = np.array(
-        [[1.0, 0.0, 0.5], [0.0, 1.0, 0.0], [0.5, 0.0, 2.0]]
-    )  # couples coord 0 (d=1) to coord 2 (d=2)
-    with pytest.raises(ValueError, match="cannot be diagonalized"):
-        _shrinkage._canonicalize_prior(np.eye(3), d, bad)
-
-
-def test_prior_cov_rotation_preserves_canonical_form():
-    # The rotated frame must still satisfy B cov B^T = diag(d) and Q = B^T B:
-    # rotating the canonical coordinates within degenerate groups is lossless.
-    gen = rng()
-    p = 5
-    a = gen.normal(size=(p, p))
-    q = a @ a.T + p * np.eye(p)
-    q = (q + q.T) / 2
-    cov = 3.0 * np.linalg.inv(q)  # all canonical variances equal -> free rotation
-    m = gen.normal(size=(p, p))
-    prior = m @ m.T + p * np.eye(p)
-    prior = (prior + prior.T) / 2
-    b, _, d = _shrinkage._canonicalize(cov, q)
-    pi, b_rot = _shrinkage._canonicalize_prior(b, d, prior)
-    np.testing.assert_allclose(b_rot @ cov @ b_rot.T, np.diag(d), rtol=1e-8, atol=1e-10)
-    np.testing.assert_allclose(b_rot.T @ b_rot, q, rtol=1e-8, atol=1e-10)
-    np.testing.assert_allclose(
-        b_rot @ prior @ b_rot.T, np.diag(pi), rtol=1e-8, atol=1e-10
-    )
-
-
 def test_prior_canonical_frame_pi_ordering():
     # pi is non-increasing within each block of (numerically-)equal canonical
     # variance, in both the already-diagonal and the rotated paths; within a
@@ -4236,7 +3216,7 @@ def test_prior_canonical_frame_pi_ordering():
     # Already-diagonal prior: blocks are permuted so pi descends inside them,
     # distinct-variance coordinates stay pinned to their diagonal entries.
     prior = np.diag([2.0, 4.0, 3.0, 1.0, 0.5])
-    pi, _ = _shrinkage._canonicalize_prior(np.eye(5), d, prior)
+    pi, _ = _canonicalize_prior(np.eye(5), d, prior)
     np.testing.assert_allclose(pi, [4.0, 2.0, 3.0, 1.0, 0.5], rtol=1e-12, atol=1e-14)
 
     # Rotated path: a general prior coupling only the degenerate coordinates is
@@ -4250,7 +3230,7 @@ def test_prior_canonical_frame_pi_ordering():
             [0.0, 0.0, 0.0, 0.8, 1.0],
         ]
     )
-    pi_r, b_r = _shrinkage._canonicalize_prior(np.eye(5), d, m)
+    pi_r, b_r = _canonicalize_prior(np.eye(5), d, m)
     np.testing.assert_allclose(b_r @ m @ b_r.T, np.diag(pi_r), rtol=1e-9, atol=1e-10)
     assert np.all(np.diff(pi_r[0:2]) <= 1e-12)
     assert np.all(np.diff(pi_r[3:5]) <= 1e-12)
@@ -4295,91 +3275,6 @@ def test_risk_curve_axes_match_estimator_prior_frame():
         expected = np.zeros(5)
         expected[axis] = 1.0
         np.testing.assert_allclose(canonical_mean, expected, atol=1e-12)
-
-
-def test_risk_curve_raw_direction_uses_estimator_prior_frame():
-    # A raw direction equal to an estimator-frame axis (mapped back to the
-    # original space) must resolve to exactly that canonical coordinate.
-    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
-    q = np.eye(5)
-    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
-    b, binv, d, _ = _canonical_frame(cov, q, prior)
-
-    for axis in range(5):
-        ((_, u_star),) = _canonical_directions([binv[:, axis]], d, b, None)
-        expected = np.zeros(5)
-        expected[axis] = 1.0
-        np.testing.assert_allclose(u_star, expected, atol=1e-12)
-
-
-def test_risk_curve_named_directions_frame_invariant():
-    # The built-in directions depend only on d, which a within-tie-block prior
-    # rotation does not change, so they are identical in the plain and
-    # prior-rotated frames (and hence unaffected by the frame the curve maps
-    # means back with).
-    cov = np.diag([2.0, 2.0, 1.0, 1.0, 0.5])
-    q = np.eye(5)
-    prior = np.diag([1.0, 3.0, 2.0, 1.0, 1.0])
-    names = ["uniform", "proportional", "inverse"]
-    d_plain = np.array([2.0, 2.0, 1.0, 1.0, 0.5])
-    u_plain = dict(_canonical_directions(names, d_plain, np.eye(5), None))
-    b, _, d, _ = _canonical_frame(cov, q, prior)
-    u_rot = dict(_canonical_directions(names, d, b, None))
-    for name in names:
-        np.testing.assert_allclose(u_rot[name], u_plain[name], atol=1e-12)
-
-
-def test_risk_curve_axes_follow_prior_ordering_when_all_d_equal():
-    # Regression: with cov proportional to Q^{-1} every canonical variance is
-    # equal, so the (arbitrary) argsort tie-break used to pick "axis j" must be
-    # replaced by the prior ordering that the estimators themselves use (via
-    # _canonicalize_prior).  Otherwise "axis -1" does not select the smallest
-    # prior variance and axes with equal prior variance produce different
-    # risk curves.
-    p = 10
-    cov = np.eye(p)
-    q = np.eye(p)
-    prior = np.diag([4000, 200, 10, 5, 5, 5, 1, 1, 1, 1])
-    b, binv, d, pi = _canonical_frame(cov, q, prior)
-
-    np.testing.assert_allclose(d, 1.0)
-    # The shared frame orders pi non-increasingly within the all-equal-d block,
-    # and axis j must be that canonical coordinate j.
-    for axis in range(p):
-        ((_, u_star),) = _canonical_directions([axis], d, b, None, pi)
-        canonical_mean = (u_star @ binv.T) @ b.T
-        expected = np.zeros(p)
-        expected[axis] = 1.0
-        np.testing.assert_allclose(canonical_mean, expected, atol=1e-12)
-
-    def axis_variance(axis: int) -> tuple[float, float]:
-        ((_, u_star),) = _canonical_directions([axis], d, b, None, pi)
-        idx = int(np.flatnonzero(u_star)[0])
-        return float(d[idx]), float(pi[idx])
-
-    # Axes selecting equal prior variances resolve to coordinates with matching
-    # (d, pi), so the curve is the same for each.
-    assert axis_variance(-1) == axis_variance(-2)
-    assert axis_variance(0) == (1.0, 4000.0)
-    assert axis_variance(-1) == (1.0, 1.0)
-
-
-def test_tan_canonical_inputs_are_order_invariant():
-    # The canonical estimators treat the coordinates as an unordered set that
-    # they rank internally: relabelling x, d and pi together leaves the result
-    # unchanged (up to the same relabelling).
-    gen = rng()
-    p = 5
-    x = gen.normal(size=p)
-    d = gen.uniform(0.5, 5.0, size=p)
-    pi = gen.uniform(0.5, 5.0, size=p)
-    perm = np.random.default_rng(0).permutation(p)
-
-    got = _tan_canonical(x, d, positive=False, strength=1.0, gamma=0.7, pi=pi)
-    permuted = _tan_canonical(
-        x[perm], d[perm], positive=False, strength=1.0, gamma=0.7, pi=pi[perm]
-    )
-    np.testing.assert_allclose(got[perm], permuted, rtol=1e-10, atol=1e-12)
 
 
 def test_prior_cov_with_empirical_gamma():

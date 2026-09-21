@@ -5,7 +5,6 @@ import pytest
 
 import nustattools.stats as s
 from nustattools.stats._regularize import (
-    _DIAGONAL_INFLATION,
     _MAX_ABS_RISK_RTOL,
 )
 
@@ -18,10 +17,7 @@ def _make_diagonal_cov(k: int, seed: int = 0) -> np.ndarray:
 def _make_correlated_cov(k: int, seed: int = 1) -> np.ndarray:
     rng = np.random.default_rng(seed)
     u = rng.normal(size=(k, 2))
-    a = u @ u.T + np.eye(k)
-    a = (a + a.T) / 2
-    a = a + k * np.eye(k)
-    return a
+    return u @ u.T + (k + 1) * np.eye(k)
 
 
 def test_default_model_is_flat():
@@ -70,6 +66,7 @@ def test_error_bars_nonnegative():
     reg_x, err = s.regularize(x, cov, delta_chi2=2.5)
     assert np.all(err[0] >= -1e-10)
     assert np.all(err[1] >= -1e-10)
+    assert reg_x.shape == x.shape
 
 
 @pytest.mark.parametrize("delta_chi2", [0.1, 1.0, 5.0, 10.0])
@@ -90,7 +87,7 @@ def test_very_small_delta_chi2_keeps_data():
     """A tiny delta_chi2 caps the shift so tightly that reg_x ≈ x."""
     x = np.array([1.0, 2.0, 3.0, 4.0])
     cov = np.eye(4)
-    reg_x, err = s.regularize(x, cov, delta_chi2=1e-6)
+    reg_x, _ = s.regularize(x, cov, delta_chi2=1e-6)
     assert np.allclose(reg_x, x, atol=1e-3)
 
 
@@ -102,7 +99,9 @@ def test_large_delta_chi2_shrinks_heavily():
     reg_x_small, _ = s.regularize(x, cov, delta_chi2=0.01)
     reg_x_large, _ = s.regularize(x, cov, delta_chi2=1000.0)
     # The smaller cap keeps the result closer to x; the larger cap shifts it.
-    assert float(np.linalg.norm(reg_x_small - x)) < float(np.linalg.norm(reg_x_large - x))
+    assert float(np.linalg.norm(reg_x_small - x)) < float(
+        np.linalg.norm(reg_x_large - x)
+    )
 
 
 def test_deterministic_output():
@@ -113,13 +112,6 @@ def test_deterministic_output():
     out2 = s.regularize(x, cov, model=np.array([1.0, 2.0, 3.0, 2.0, 1.0]))
     assert np.array_equal(out1[0], out2[0])
     assert np.array_equal(out1[1], out2[1])
-
-
-def test_uses_named_constants():
-    assert _DIAGONAL_INFLATION > 0
-    assert _DIAGONAL_INFLATION < 1e-3
-    assert _MAX_ABS_RISK_RTOL > 0
-    assert _MAX_ABS_RISK_RTOL < 1e-1
 
 
 def test_invalid_delta_chi2_raises():

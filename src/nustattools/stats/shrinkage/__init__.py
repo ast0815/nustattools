@@ -127,7 +127,9 @@ the affine-subspace projector and the ``_estimate`` front-end),
 ``berger``, ``tan``, ``minimax_bayes``, ``tan_bayes``, ``robust_bayes`` and
 ``bayes``, the ``shrink`` front-end and the ``_METHODS`` registry)
 and ``nustattools.stats.shrinkage._risk`` (the Monte-Carlo risk-estimation
-helpers ``estimate_risk`` and ``estimate_risk_curve``).
+helpers ``estimate_risk`` and ``estimate_risk_curve``).  Everything in these
+modules is private: names, signatures and behaviour may change without notice.
+The public API is limited to the names in ``__all__``.
 
 References
 ----------
@@ -153,20 +155,6 @@ References
 
 from __future__ import annotations
 
-from ._core import (
-    # The underscore-prefixed helpers are re-exported for internal use only
-    # (the test-suite exercises them directly).  They are NOT public API:
-    # names, signatures and behaviour may change without notice, so do not
-    # rely on them outside this package's tests.
-    _canonicalize,  # noqa: F401
-    _canonicalize_prior,  # noqa: F401
-    _estimate,  # noqa: F401
-    _estimate_split,  # noqa: F401
-    _group_degenerate,  # noqa: F401
-    _merge_dirs,  # noqa: F401
-    _projector,  # noqa: F401
-    _reduce_dirs,  # noqa: F401
-)
 from ._estimators import (
     bayes,
     berger,

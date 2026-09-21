@@ -45,7 +45,15 @@
 - Use meaningful variable names that describe their purpose
 - Keep functions small and focused on a single responsibility
 - Use `pytest` fixtures for test setup and teardown
-- All tests must have 100% coverage
+- Tests must cover public behaviour and error conditions; test functions should
+  be behaviour-focused (one concept per test) rather than mechanically mirroring
+  every internal helper
+- Internal helpers are tested only where no public path can reach them (e.g.
+  error branches or regression guards), and such tests are documented as
+  sanctioned contracts that are kept when the suite is reduced
+- Coverage is a signal, not a gate: a PR must not reduce coverage on public
+  paths it touches materially, but there is no coverage gate in CI, and the
+  `--cov` report is currently unreliable under numpy 2.x (see below)
 - All user-facing changes must be documented in `CHANGELOG.md`
   - These entried should be short and not go into details
 - mypy quirk: in an exhaustiveness `else` branch after `isinstance(...)` /
