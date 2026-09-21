@@ -102,7 +102,9 @@ def test_large_delta_chi2_shrinks_heavily():
     reg_x_small, _ = s.regularize(x, cov, delta_chi2=0.01)
     reg_x_large, _ = s.regularize(x, cov, delta_chi2=1000.0)
     # The smaller cap keeps the result closer to x; the larger cap shifts it.
-    assert float(np.linalg.norm(reg_x_small - x)) < float(np.linalg.norm(reg_x_large - x))
+    assert float(np.linalg.norm(reg_x_small - x)) < float(
+        np.linalg.norm(reg_x_large - x)
+    )
 
 
 def test_deterministic_output():
