@@ -108,23 +108,30 @@ def regularize(
         \\vec y = D_M^{-1} \\vec{x}
 
     where `D_M` is a diagonal matrix with the entries of the ``model`` as the
-    diagonal elements, first scales all data points relative to the model, so
-    that data with all ``y_i`` identical has the same shape as the model.
+    diagonal elements, first scales all data points relative to the model. So
+    data with all ``y_i`` identical has the same shape as the model.
 
-    Then, with ``k = x.shape[-1]``, the projection
-
-    .. math::
-
-        P \\vec y = \\left(I_k - \\tfrac{1}{k} \\mathbf{1}\\mathbf{1}^T\\right) \\vec y
-
-    yields a vector that is the difference of the actual ``y`` with the model
-    with the average scaling factor over all data points.
-
-    The penalty term is the L_2 norm of that vector so the full penalty matrix is
+    Then, with ``k = x.shape[-1]``, the penalaty term is set to the squared
+    differences between data points:
 
     .. math::
 
-        Q = D_M^{-1} P^T P D_M^{-1}
+        \\sum_{i<j} (y_i - y_j)^2 = \\sum_{i<j} y_i^2 + y_j^2 - 2 y_i y_j
+            = \\vec{y}^T Q \\vec{y},
+
+    with
+
+    .. math::
+
+        Q = k I_k - \\vec{1} \\vec{1}^T = \\left( \\begin{array}{cccc}
+                k-1 & -1 & -1 & \\cdots \\\\
+                -1 & k-1 & -1 & \\cdots \\\\
+                -1 & -1 & k-1 & \\cdots \\\\
+                \\vdots & \\vdots & \\vdots & \\ddots
+            \\end{array}\\right) .
+
+    This penalises differences between all possible combinations of data bins,
+    so it works with unordered or N-dimensional data.
 
     The regularization strength is chosen such that the squared
     Mahalanobis distance of the regularized result from the unregularized
@@ -172,9 +179,10 @@ def regularize(
             raise ValueError(_MSG_FINITE)
 
     # Penalise shape differences from the model, but not normalisation
-    # differences: project out the all-ones direction from diag(1/model).
-    shape_diff_projection = (np.eye(k) - 1.0 / k) @ np.diag(1.0 / model_arr)
-    penalty_matrix = shape_diff_projection.T @ shape_diff_projection
+    # differences
+    penalty_matrix = (
+        np.diag(1.0 / model_arr) @ (k * np.eye(k) - 1.0) @ np.diag(1.0 / model_arr)
+    )
 
     # Inflate the diagonal a tiny bit to keep the matrix numerically
     # invertible when the projection is rank-deficient.
