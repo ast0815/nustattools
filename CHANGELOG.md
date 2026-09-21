@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- Convenience function `regularize` to regularize data sets towards a model
+  shape, returning the regularized data together with the asymmetric error bars
+  of the original covariance around the regularized point so the result is ready
+  for plotting.
 - `estimate_risk` now accepts a `truth_cov` argument to estimate the Bayesian
   risk: the true mean is drawn as `N(theta, truth_cov)` and the data as
   `N(theta_i, cov)` in the same `n_reps` Monte Carlo budget, averaging the loss
@@ -68,6 +72,9 @@ and this project adheres to
 
 ### Changed
 
+- `regularize` now validates its inputs (square / symmetric / positive definite
+  covariance, matching `model` shape, positive `delta_chi2`, finite values) and
+  returns typed asymmetric error bars shaped like the regularized data.
 - The `gamma` parameter of the `bayes`, `robust_bayes` and `tan_bayes`
   estimators accepts a numeric `float`, a one-dimensional `numpy.ndarray` with
   one prior scale per observation (its shape must match the leading batch

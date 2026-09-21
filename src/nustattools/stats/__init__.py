@@ -19,13 +19,16 @@ References
     The American Statistician 2018, Vol. 72, No. 4, pp. 309-314,
     Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
 
+.. [Koch2022] L. Koch, "Post-hoc regularization of unfolded binned data
+    distributions," https://arxiv.org/abs/2207.02125
+
 """
 
 from __future__ import annotations
 
 # ``shrinkage`` is imported so that the ``nustattools.stats.shrinkage``
 # submodule is available, while only ``shrink`` is re-exported at package level.
-from . import _derate, _dist, _fmax, shrinkage  # noqa: F401
+from . import _derate, _dist, _fmax, _regularize, shrinkage  # noqa: F401
 from ._derate import *
 from ._dist import *
 from ._fmax import *

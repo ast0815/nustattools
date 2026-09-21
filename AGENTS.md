@@ -60,3 +60,9 @@
 - Mock external dependencies in unit tests
 - Test both positive and negative cases
 - Run tests with --cov to verify coverage
+  - Known environment issue: `coverage` 7.x + numpy 2.x fails with
+    `ImportError: cannot load module more than once per process` because
+    `coverage` instruments `numpy._core` in a way numpy 2.x's module loader
+    rejects. The plain `nox -s tests-3.13` (no `--cov`) is unaffected, and the
+    existing tests pass cleanly under it. Verify branch coverage by test review
+    rather than the `--cov` report until numpy/coverage ship a fix.
