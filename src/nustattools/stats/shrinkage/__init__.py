@@ -1,135 +1,134 @@
 """Shrinkage estimators for a multivariate normal mean.
 
-This subpackage implements shrinkage estimators for the problem of estimating
-the mean ``theta`` of :math:`X \\sim N(\\theta, \\Sigma)` under the loss
-:math:`(\\delta - \\theta)^\\mathrm{T} Q (\\delta - \\theta)`.
+This module implements shrinkage estimators for the problem of estimating
+the mean :math:`\\theta` of :math:`\\vec x \\sim N(\\vec\\theta, \\Sigma)`
+under the quadratic loss :math:`(\\vec\\delta - \\vec\\theta)^\\mathrm{T} Q
+(\\vec\\delta - \\vec\\theta)`, where :math:`\\vec\\delta` is the estimatate.
+The aim of shrinkage estimators is to reduce the expectation value of the loss,
+the risk, for some or all possible values of :math:`\\vec\\theta`, compared to
+the risk of the Maximum Likelihood Estimator (MLE) :math:`\\vec\\delta = \\vec
+x`.
 
 Following [Tan2015]_, the general problem can always be transformed into the
-canonical form where ``Sigma`` is diagonal, ``Q`` is the identity matrix and
-the loss reduces to the sum of squared errors.  The public estimators accept a
-general covariance matrix ``cov`` and loss matrix ``Q``, canonicalize the
-problem internally, and transform the result back.  This keeps the
-per-estimator implementations simple: they only ever need to shrink a vector
-towards zero with independent coordinates of varying variance.  The canonical
-coordinates are ordered by *decreasing* variance ``d`` (coordinate ``0`` has
-the largest variance, matching the risk-curve axis convention); the canonical
-prior diagonal ``pi`` follows the same order and is non-increasing within each
-block of (numerically-)equal ``d``.
+canonical form :math:`\\vec y = T \\vec x`, with a suitable transformation
+matrix :math:`T`. In the canonical form, :math:`\\Sigma` is a diagonal matrix
+:math:`D`, :math:`Q` is the identity matrix and the loss reduces to the sum of
+squared errors. The public estimators accept a general covariance matrix
+``cov`` and loss matrix :math:`Q`, canonicalize the problem internally, and
+transform the result back. The canonical coordinates are ordered by
+*decreasing* variance :math:`d_i` (coordinate :math:`i = 0` has the largest
+variance).
 
-The estimators may shrink towards an arbitrary affine subspace
-``offset + span(dirs)``, where ``dirs`` is a matrix whose columns span the
-affine direction.  Following [Tan2016]_, Section 3.3, the projection onto this
-subspace is built in the *covariance* (precision) metric: for a matrix
-``V = dirs_star`` in canonical coordinates, the projector is
-``P = V (V^T D^{-1} V)^{-1} V^T D^{-1}``.  This makes the fitted component
-``P y`` and the residual ``(I - P) y`` statistically uncorrelated, so their
-risks add and each can be improved independently.  The component in the
-subspace is kept and the residual is shrunk towards zero; because the residual
-basis ``l2`` is taken orthonormal (eigenvectors of the symmetric residual
-covariance), the change of coordinates is an isometry of the squared-error
-loss, so the reduced shrinkage conserves the full loss exactly.
+The estimators may shrink towards an arbitrary affine subspace :math:`\\vec o +
+\\operatorname{span}(\\mathcal D)`, where :math:`\\vec o` is an ``offset`` and
+:math:`\\mathcal D` is a set of direction vectors that span the affine subspace
+(providede as a matrix ``dirs`` with the vectors making up the columns).
+Following [Tan2016]_, Section 3.3, the projection onto this subspace is built
+in the data covariance (precision) metric: Let :math:`V` be the matrix of
+direction vectors in the canonical coordinates. Then the projector is :math:`P
+= V (V^T D^{-1} V)^{-1} V^T D^{-1}`.  This makes the fitted component :math:`P
+y` and the residual :math:`(I - P) y` statistically uncorrelated, so their
+risks add and each can be improved independently. The component in the affine
+subspace is kept and the residual is shrunk towards zero.
 
-The *prior* of the Bayes-rule estimators — :func:`bayes`, :func:`robust_bayes`
-and :func:`tan_bayes` — and of the gamma-based minimax estimators
-(:func:`tan` and :func:`minimax_bayes`) is a Gaussian
-:math:`\\theta \\sim N(0, \\gamma \\Theta)`.  It has a *shape* ``Theta`` and a
-*scale* ``gamma``:
+The prior used in some estimators -- e.g. :func:`bayes`, :func:`robust_bayes`,
+:func:`tan_bayes`, and :func:`minimax_bayes` -- is a Gaussian
+:math:`\\vec\\theta \\sim N(\\vec 0, \\gamma \\Gamma)`.  It has a shape
+:math:`\\Gamma` (provided as ``prior_cov`` and a scale :math:`\\gamma`. The
+prior must be diagonal in the canonical space. Its elements :math:`\\pi_i`
+follow the same large-to-small ordering as the data covariance. They are
+non-increasing within each block of (numerically-)equal :math:`d_i`.
 
-- ``Theta`` — the prior covariance, of shape ``(p, p)`` in the same
-  coordinates as ``x`` — is either left at its default ``Q^{-1}`` (the
-  current homoscedastic prior in canonical coordinates) or set explicitly via
-  the ``prior_cov`` argument of the estimators.  When given, the
-  canonicalization *rotates the canonical frame* — always possible when the
-  canonical coordinate variances coincide, in particular when ``cov`` is
-  proportional to ``Q^{-1}`` — so that ``Theta`` is diagonal in the canonical
-  coordinates, and passes that diagonal ``diag(pi)`` to the estimator.  The
-  prior then acts per coordinate: the Bayes-rule direction/weight
-  ``d_j / (d_j + gamma * pi_j)`` and the posterior mean
-  ``gamma * pi_j / (d_j + gamma * pi_j)`` replace their homoscedastic
-  counterparts.  ``Theta`` must be symmetric positive definite and must be
-  diagonalizable in the canonical coordinates (its canonical off-diagonals
-  must vanish up to numerical precision); for ``cov`` proportional to
-  ``Q^{-1}`` this is automatic since the canonical variances then coincide and
-  the rotation is unconstrained, so any positive-definite prior works there.
-  The proportionality is detected with a ``sqrt(eps)``-relative, roundoff-aware
-  check (``_cov_proportional_to_qinv``), so it covers numerically-inverted
-  matrices such as ``Q = inv(cov)`` rather than requiring exact
-  proportionality.
-- ``gamma`` is the prior *scale* — a non-negative number scaling the whole
-  prior.  It can be given in any of five forms:
+There are three cases that ensure that the prior is diagonal in the canonical
+coordinates:
 
-- a non-negative ``float`` giving a single prior scale shared by every
-  coordinate and observation;
-- the string ``"empirical"`` to infer the scale per observation from the data
-  as ``gamma = ||y / sqrt(pi)||^2 / p_eff``, where ``y`` is the centered data in
-  canonical coordinates, ``pi`` is the canonical diagonal of the prior
-  covariance (all ones without ``prior_cov``) and ``p_eff`` is the effective
-  dimension (one scale per observation, so a batched ``x`` — e.g. the draws
-  of a risk sweep — yields one gamma per draw);
-- a one-dimensional ``numpy.ndarray`` giving an explicit prior scale per
-  observation; its shape must match the leading batch dimensions of ``x``
-  (``()`` for a single vector);
-- a factory string ``"name(arg, ...)"`` combining the two previous forms: a
-  registered factory rebuilds a per-observation gamma callable from its
-  arguments, given as numeric literals (e.g. ``"max_rel_risk(0.1)"``).  The
-  built-in factory ``"max_rel_risk(alpha)"`` (with ``alpha > 0``) caps the
-  per-observation *increase* of the relative risk at ``alpha`` (so the
-  relative risk itself is at most ``1 + alpha``), using the prior scale
-  ``gamma = ||d * y / pi||_2 / sqrt(alpha * sum(d))``; the built-in factory
-  ``"max_abs_risk(alpha)"`` (with ``alpha > 0``) caps the per-observation
-  *absolute* increase of the risk at ``alpha``, using the prior scale
-  ``gamma = ||d * y / pi||_2 / sqrt(alpha)``.  Both factories accept an
-  optional second argument ``rtol`` giving a relative-residual tolerance for
-  the prior-scale refinement (the scale is then iterated, by a globally
-  convergent Newton method, toward the true root of the risk-cap equation);
-  the default no-tolerance form returns the closed-form scale above exactly.
-  Factories resolve per
-  observation exactly like the callable form below, including the same shape
-  and non-negativity validation;
-- a callable ``f(d, pi, y)`` that computes the prior scales from the canonical
-  coordinate variances ``d`` (shape ``(p,)``), the canonical diagonal ``pi`` of
-  the prior covariance (shape ``(p,)``; all ones without ``prior_cov``), and
-  the centered canonical data ``y``.  It may return either a singular scalar
-  (a single scale shared by every observation, e.g. when the scale is inferred
-  only from ``d`` / ``pi`` and not the data) or a real-valued, non-negative
-  array whose shape equals ``y.shape[:-1]`` (one prior scale per
+- :math:`\\Gamma \\propto Q^{-1}` -- In this case, :math:`Q = I` in the
+  canonical space, so :math:`\\Gamma \\propto I`. The default assumption when
+  no explicit ``prior_cov`` is specified is :math:`\\Gamma = Q^{-1}`
+
+- :math:`\\Gamma \\propto \\Sigma` -- In this case, :math:`\\Sigma = D` in the
+  canonical space, so :math:`\\Gamma \\propto D`.
+
+- :math:`\\Sigma \\propto Q^{-1}` -- In this case, :math:`\\Sigma \\propto I`
+  in the canonical space, so any :math:`\\Gamma` can be made diagonal by a free
+  rotation.
+
+The scaling factor :math:`\\gamma` can be specified in five ways:
+
+- As a non-negative ``float`` giving a single prior scale shared by every
+  coordinate and observation.
+
+- The string ``"empirical"`` to infer the scale per observation from the data
+  as :math:`\\gamma = \\sum_i y_i^2 / \\pi_i / p_{\\mathrm{eff}}`, where
+  :math:`p_{\\mathrm{eff}}` is the effective number parameters. The latter can
+  be lower than the dimension of the data :math:`\\vec x`, when shrinking
+  towards a subspace.
+
+- A one-dimensional :class:`numpy.ndarray` giving an explicit prior scale per
+  observation; its shape must match the leading batch dimensions of
+  ``x`` (``()`` for a single vector).
+
+- A string ``"max_rel_risk({alpha}, {precision})"`` or ``"max_rel_risk({beta},
+  {precision})"``. The arguments must be given as numeric literals (e.g.
+  ``"max_abs_risk(1, 1e-3)"``).
+
+  These empirical methods chose :math:`\\gamma` such that the application of
+  Bayes' rule (e.g. with :func:`bayes`) will lead to a shift of the data by a
+  vector with a length of at most ``alpha`` in the canonical space. If the
+  data is far away from the shrinkage target, where the reduction of variance
+  is negligible, this bias is equal to the increase of risk. Hence the name
+  ``max_*_risk``.
+  In the case of ``max_rel_risk``, the risk increase ``alpha`` is calculated as
+  a fraction ``beta`` of the MLE risk.
+
+  The value of :math:`gamma` that leads to a data shift of the requested length
+  needs to be approximated numerically. The iterative process is stopped as
+  soon as the actual length is within ``alpha +/- precision``. If no
+  ``precision`` is specified, the first order approximation
+
+  .. math::
+
+    \\gamma =  \\sqrt{ \\frac{\\sum_i \\left(\\frac{d_i y_i}{\\pi_i}\\right)^2}
+                             {\\alpha \\sum_j d_j}}
+
+  is used. This approximation overestimates :math:`\\gamma` for data points
+  close to the shrinkage target, leading to weaker shrinkgge. It is always
+  guaranteed that :math:`\\gamma \\ge 0`, both in the first order approximation
+  and the numerical evaluation. In the latter case, a data point within a
+  distance of ``alpha`` from the shrinkage target will be pulled exactly to the
+  shrinkage target.
+
+- A callable ``f(d, pi, y)`` that computes the prior scales from the canonical
+  coordinate data variances :math:`d_i`, and prior variances :math:`\\pi_i`
+  (both provided as a vector with shape ``(p_eff,)``; and the canonical data
+  :math:`\\vec y`. It may return either a singular scalar (a single scale
+  shared by every observation, e.g. when the scale is inferred only from
+  :math:`d_i`  and :math:`\\pi_i` and not the data) or a real-valued,
+  non-negative array whose shape equals ``y.shape[:-1]`` (one prior scale per
   observation).  Any error from the callable is reported as a
   :class:`TypeError`, and a shape mismatch or negative return as a
   :class:`ValueError`.
 
-Every form resolves to one prior scale per observation, which is passed to the
-estimator as an array broadcast against the batch dims of ``x``; the supported
-estimators vectorize, so the whole batch is solved with no per-observation
-Python loop.  The :func:`tan` and :func:`minimax_bayes` estimators, whose
-gamma-dependent coordinate ranking or segmentation does not (yet) admit a
-per-observation scale, accept only a non-negative ``float``; their ranking
-may still depend on the per-coordinate prior shape ``diag(pi)``, which is
-observation-independent.
+Some estimators do not support per-observation empirical :math:`\\gamma` and
+only accept a single non-negative ``float``.
 
-The loss matrix ``Q`` may be positive *semi*-definite.  Its null space carries
-no loss, so it is treated as an *additional set of no-shrink directions*,
-exactly like the columns of ``dirs``: the null space of ``Q`` is added to the
-no-shrink subspace ``span(dirs)`` and the estimator acts only on the
-covariance-metric complement ``span(dirs) + null(Q)``, where the restricted
-loss is positive definite.  Concretely, the covariance-metric projection of the
-estimate onto ``span(dirs) + null(Q)`` equals that of the observed data (kept
-at its data value), and shrinkage is applied in the complement.  Because only
-the spanned space matters, whether a given direction comes from ``dirs`` or
-from ``null(Q)`` is irrelevant; specifying directions already lying in
-``null(Q)`` via ``dirs`` has no additional effect.  The risk on the full
-problem is unaffected by how the estimate is set in ``null(Q)``: the loss is
+The loss matrix :math:`Q` may be positive *semi*-definite.  Its null space
+carries no loss, so it is treated as an additional set of no-shrink directions,
+exactly like the columns of ``dirs``. The null space of :math:`Q` is added to
+the no-shrink subspace :math:`\\operatorname{span}(\\mathcal D)` and the
+estimator acts only on the covariance-metric complement of
+:math:`\\operatorname{span}(\\mathcal D) + \\operatorname{null}(Q)`, where the
+restricted loss is positive definite.
+
+Concretely, the covariance-metric projection of the estimate onto
+:math:`\\operatorname{span}(\\mathcal D) + \\operatorname{null}(Q)` equals that
+of the observed data (kept at its data value), and shrinkage is applied in the
+complement.  Because only the spanned space matters, whether a given direction
+comes from ``dirs`` or from :math:`\\operatorname{null}(Q)` is irrelevant.
+Specifying directions already lying in :math:`\\operatorname{null}(Q)` via
+``dirs`` has no additional effect.  The risk on the full problem is unaffected
+by how the estimate is set in :math:`\\operatorname{null}(Q)`: the loss is
 blind to that component, so any choice there carries the same risk.
-
-The implementation is split across three private modules,
-``nustattools.stats.shrinkage._core`` (shared validation, canonicalization,
-the affine-subspace projector and the ``_estimate`` front-end),
-``nustattools.stats.shrinkage._estimators`` (the concrete estimators
-``berger``, ``tan``, ``minimax_bayes``, ``tan_bayes``, ``robust_bayes`` and
-``bayes``, the ``shrink`` front-end and the ``_METHODS`` registry)
-and ``nustattools.stats.shrinkage._risk`` (the Monte-Carlo risk-estimation
-helpers ``estimate_risk`` and ``estimate_risk_curve``).  Everything in these
-modules is private: names, signatures and behaviour may change without notice.
-The public API is limited to the names in ``__all__``.
 
 References
 ----------
