@@ -26,6 +26,10 @@ from ._empirical_prior import (
     _parse_gamma_factory,
 )
 
+#: Alias for a gamma prior-scale callable ``f(d, pi, y)``; see the
+#: :mod:`nustattools.stats.shrinkage` module docstring for the contract.
+GammaCallable = Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]]
+
 
 def _resolve_data_gamma(
     f: Callable[[NDArray[Any], NDArray[Any], NDArray[Any]], NDArray[Any]],
@@ -71,13 +75,15 @@ def _canonicalize(
 ) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any]]:
     """Transform to canonical form (diagonal covariance, identity loss).
 
-    Returns ``(B, Binv, D)`` such that ``Q = B^T B``, ``B cov B^T = D`` (with
-    ``D`` diagonal) and ``Binv = inv(B)``.  ``D = diag(d)`` with ``d``
+    Returns :math:`(B, B^{-1}, D)` such that :math:`Q = B^T B`,
+    :math:`B \\, \\mathrm{cov}\\, B^T = D` (with
+    :math:`D` diagonal) and :math:`B^{-1}` the inverse of :math:`B`.
+    :math:`D = \\operatorname{diag}(d)` with :math:`d`
     non-increasing: the canonical coordinates are ordered by *decreasing*
     variance, so coordinate ``0`` has the largest variance (matching the
     risk-curve axis convention).  Row vectors ``x`` transform to the
-    canonical coordinates as ``x_star = x @ B.T`` and back as
-    ``x = x_star @ Binv.T``.  See [Tan2015]_, Section 3.2.
+    canonical coordinates as :math:`x^\\star = x B^T` and back as
+    :math:`x = x^\\star (B^{-1})^T`.  See [Tan2015]_, Section 3.2.
 
     """
 
@@ -96,17 +102,21 @@ def _canonicalize(
 
 
 def _cov_proportional_to_qinv(cova: NDArray[Any], qa: NDArray[Any]) -> bool:
-    """True when ``cov`` is numerically proportional to ``Q^{-1}``.
+    """True when ``cov`` is numerically proportional to :math:`Q^{-1}`.
 
-    With ``C`` the Cholesky/triangular factor ``Q = C^T C``, the canonical
-    matrix ``M = C cov C^T`` is a scalar multiple of the identity exactly when
-    ``cov = c Q^{-1}``, in which case the canonical variances all coincide and
+    With :math:`C` the Cholesky/triangular factor :math:`Q = C^T C`, the
+    canonical matrix :math:`M = C \\, \\mathrm{cov}\\, C^T` is a scalar multiple
+    of the identity exactly when :math:`\\mathrm{cov} = c Q^{-1}`, in which
+    case the canonical variances all coincide and
     the canonical-frame rotation is unconstrained.  When ``cov`` and ``Q`` are
-    supplied as numerically-inverted matrices (e.g. ``Q = inv(cov)``) the
-    computed ``M`` deviates from that identity by the roundoff of the inversion
-    and matrix products (roughly ``eps * cond(cov)``), so the comparison uses a
-    relative tolerance of ``sqrt(eps)``, covering condition numbers up to about
-    ``1/sqrt(eps)``.
+    supplied as numerically-inverted matrices (e.g. :math:`Q =
+    \\mathrm{inv}(\\mathrm{cov})`) the
+    computed :math:`M` deviates from that identity by the roundoff of the
+    inversion
+    and matrix products (roughly :math:`\\varepsilon\\,
+    \\mathrm{cond}(\\mathrm{cov})`), so the comparison uses a
+    relative tolerance of :math:`\\sqrt{\\varepsilon}`, covering condition
+    numbers up to about :math:`1/\\sqrt{\\varepsilon}`.
 
     """
 
@@ -125,7 +135,8 @@ def _group_degenerate(d: NDArray[Any], tol: float) -> list[list[int]]:
     grouped (in descending ``d`` order) when their variance gaps do not exceed
     ``tol``.  Only *within* a such a group is the canonical form defined up to an
     orthogonal rotation: any rotation inside a group of exactly-equal variances
-    keeps ``B cov B^T`` diagonal, so within-group (and only within-group)
+    keeps :math:`B \\, \\mathrm{cov}\\, B^T` diagonal, so within-group (and
+    only within-group)
     freedom can be spent on diagonalizing a second matrix.
 
     """
@@ -154,12 +165,14 @@ def _canonicalize_prior(
     """Rotate the canonical frame so the prior covariance becomes diagonal.
 
     ``b`` and ``d`` are the canonicalization results of :func:`_canonicalize`
-    (``B cov B^T = diag(d)`` and ``Q = B^T B``).  ``prior_cov`` is the
+    (:math:`B \\, \\mathrm{cov}\\, B^T = \\operatorname{diag}(d)` and
+    :math:`Q = B^T B`).  ``prior_cov`` is the
     symmetric positive-definite prior covariance in the *original* coordinates.
     This function spends the rotational freedom of the canonical form -- any
     orthogonal rotation within a group of (near-)equal canonical variances
-    ``d`` leaves ``B cov B^T`` diagonal -- to make
-    ``b_rot @ prior_cov @ b_rot.T`` diagonal as well, and returns that diagonal
+    ``d`` leaves :math:`B \\, \\mathrm{cov}\\, B^T` diagonal -- to make
+    :math:`B_{\\mathrm{rot}}\\, \\mathrm{prior\\_cov}\\, B_{\\mathrm{rot}}^T`
+    diagonal as well, and returns that diagonal
     as ``pi`` together with the rotated ``b_rot``.
 
     The returned ``pi`` is aligned with the ``d`` from :func:`_canonicalize`
@@ -167,20 +180,26 @@ def _canonicalize_prior(
     (numerically-)equal ``d`` that the frame rotates the entries are ordered
     non-increasing as well.  When the prior is already diagonal the same
     ordering is achieved by permuting the runs of *exactly*-equal ``d``
-    (a permutation is an orthogonal rotation, so ``B cov B^T = diag(d)`` is
+    (a permutation is an orthogonal rotation, so
+    :math:`B \\, \\mathrm{cov}\\, B^T = \\operatorname{diag}(d)` is
     preserved); the remaining coordinates keep their given diagonal order.
 
-    A prior proportional to ``Q^{-1}`` (e.g. ``prior_cov = inv(Q)`` for an
+    A prior proportional to :math:`Q^{-1}` (e.g.
+    :math:`\\mathrm{prior\\_cov} = \\mathrm{inv}(Q)` for an
     ill-conditioned and possibly ridge-regularised ``Q``) is the homoscedastic
-    canonical prior: its ``w`` is a scalar multiple of the identity up to the
-    roundoff of the inversion, so ``pi`` is a constant and no rotation is
-    applied.  This is detected from ``w`` with the same ``sqrt(eps)``-relative
+    canonical prior: its :math:`w` is a scalar multiple of the identity up to
+    the
+    roundoff of the inversion, so :math:`\\pi` is a constant and no rotation is
+    applied.  This is detected from :math:`w` with the same
+    :math:`\\sqrt{\\varepsilon}`-relative
     tolerance as :func:`_cov_proportional_to_qinv`, so it covers numerically
-    ill-conditioned ``Q`` whose ``eps * cond(Q)`` roundoff would defeat an
-    eps-scale diagonal test.
+    ill-conditioned ``Q`` whose :math:`\\varepsilon\\,
+    \\mathrm{cond}(Q)` roundoff would defeat an
+    :math:`\\varepsilon`-scale diagonal test.
 
     When all canonical variances coincide (in particular for a data covariance
-    proportional to ``Q^{-1}``, where ``D`` is a scalar multiple of the
+    proportional to :math:`Q^{-1}`, where :math:`D` is a scalar multiple of
+    the
     identity) the rotation is unconstrained and *any* positive-definite
     ``prior_cov`` is accepted.  Otherwise the prior must already be diagonal in
     the canonical coordinates up to the covariance-degenerate groups: it may
@@ -191,7 +210,7 @@ def _canonicalize_prior(
     When ``free_rotation`` is true the rotation is declared unconstrained so
     the prior is diagonalized by a full rotation regardless of the ``d``
     values; the caller should set it only after detecting ``cov``
-    proportional to ``Q^{-1}`` to numerical roundoff via
+    proportional to :math:`Q^{-1}` to numerical roundoff via
     :func:`_cov_proportional_to_qinv`.
 
     """
@@ -412,10 +431,13 @@ def _validate_dirs(dirs: ArrayLike, p: int) -> NDArray[Any]:
 def _projector(v: NDArray[Any], cov: NDArray[Any]) -> NDArray[Any]:
     """Covariance-metric projector onto the column space of ``v``.
 
-    Returns ``P = V (V^T C^{-1} V)^{-1} V^T C^{-1}``, where ``V = v`` is the
-    ``(p, k)`` spanning matrix and ``C = cov`` the covariance: the projection
-    orthogonal in the precision metric ``C^{-1}``.  Such a projection makes
-    ``P y`` and ``(I - P) y`` uncorrelated for ``y ~ (0, C)``, so their risks
+    Returns :math:`P = V (V^T C^{-1} V)^{-1} V^T C^{-1}`, where :math:`V = v`
+    is the
+    :math:`(p, k)` spanning matrix and :math:`C = \\mathrm{cov}` the covariance:
+    the projection
+    orthogonal in the precision metric :math:`C^{-1}`.  Such a projection makes
+    :math:`P y` and :math:`(I - P) y` uncorrelated for
+    :math:`y \\sim (0, C)`, so their risks
     separate (see [Tan2016]_, Section 3.3).
 
     """
@@ -431,18 +453,21 @@ def _reduce_dirs(
     """Decompose ``y`` relative to the affine direction spanned by ``v``.
 
     ``cov`` is the covariance of ``y`` in its current coordinates (general
-    symmetric positive definite, e.g. ``diag(d)`` in canonical coordinates).
-    Returns ``(kept, eta, d_perp, l2, pmat)``.  ``kept = P y`` is the
+    symmetric positive definite, e.g. :math:`\\operatorname{diag}(d)` in
+    canonical coordinates).
+    Returns ``(kept, eta, d_perp, l2, pmat)``.  :math:`\\mathrm{kept} = P y`
+    is the
     component lying in the direction (kept unshrunk), with ``P = pmat`` the
     covariance-metric projector of :func:`_projector`.  The residual
-    ``(I - P) y`` lives in the complement ``S_perp``; ``l2`` is an
+    :math:`(I - P) y` lives in the complement ``S_perp``; ``l2`` is an
     orthonormal basis of ``S_perp`` in which the residual covariance is
     diagonal, ``eta`` the coordinates of the residual in that basis and
     ``d_perp`` the reduced (diagonal) variances.  This reduces the effective
     dimension of the shrinkage problem from ``p`` to ``len(d_perp)``.
 
     Since ``l2`` holds the orthonormal eigenvectors of the symmetric residual
-    covariance ``(I - P) C (I - P)^T``, ``l2^T l2 = I``: the change of basis is
+    covariance :math:`(I - P) C (I - P)^T`, :math:`l_2^T l_2 = I`: the change
+    of basis is
     an isometry of the squared-error loss, so shrinking ``eta`` conserves the
     full-dimensional loss exactly.  Coordinates whose residual variance is
     numerically zero (the kept subspace itself) are dropped with the
@@ -546,12 +571,15 @@ def _estimate_split(
     """Estimate on a singular-loss problem by splitting before canonicalizing.
 
     ``q`` is positive semi-definite but singular.  The directions ``dirs`` span
-    ``span(user dirs) + null(q)`` (see :func:`_merge_dirs`), so ``q`` is
+    :math:`\\operatorname{span}(\\text{user dirs}) + \\operatorname{null}(q)`
+    (see :func:`_merge_dirs`), so ``q`` is
     strictly positive definite on the covariance-metric complement of
-    ``span(dirs)``: any residual there is :math:`\\Sigma^{-1}`-orthogonal to
+    :math:`\\operatorname{span}(\\mathrm{dirs})`: any residual there is
+    :math:`\\Sigma^{-1}`-orthogonal to
     ``null(q)`` and hence cannot itself lie in ``null(q)``.  This function
-    therefore splits the data into the part lying in ``span(dirs)`` (kept at
-    its covariance-metric data value) and the ``Sigma^{-1}``-orthogonal
+    therefore splits the data into the part lying in
+    :math:`\\operatorname{span}(\\mathrm{dirs})` (kept at
+    its covariance-metric data value) and the :math:`\\Sigma^{-1}`-orthogonal
     residual, then solves the strictly-positive-definite residual problem with
     :func:`_estimate_pd` and recombines.  The inputs must already be validated
     (see :func:`_validate`); ``dirs`` must span the full no-shrink set.
@@ -619,36 +647,41 @@ def _estimate_pd(
     canonicalized with :func:`_canonicalize` and ``canonical_estimator`` applied
     directly.  The estimate shrinks towards the point ``offset`` (default zero)
     or, when ``dirs`` (a matrix whose columns span the affine direction) is
-    given, towards the affine subspace ``offset + span(dirs)``.
+    given, towards the affine subspace
+    :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`.
 
     ``prior_cov`` is the prior covariance in the *original* coordinates; when
     given, the canonical frame is rotated (whenever the canonical variances
     allow; see :func:`_canonicalize_prior`) so that the prior is diagonal in the
-    canonical coordinates, and its diagonal ``pi`` is threaded to the
-    canonical estimator as the shape of the prior (scaled by ``gamma``).
-    Without it the prior reduces to the homoscedastic ``gamma I`` of the current
-    implementation.
+    canonical coordinates, and its diagonal :math:`\\pi` is threaded to the
+    canonical estimator as the shape of the prior (scaled by :math:`\\gamma`).
+    Without it the prior reduces to the homoscedastic :math:`\\gamma I` of the
+    current implementation.
 
     In the latter case the projection is built in the covariance (precision)
     metric (see :func:`_reduce_dirs`), so the fitted and residual components
-    are uncorrelated, and the residual ``(I - P) (x - offset)`` is shrunk in the
+    are uncorrelated, and the residual :math:`(I - P) (x - \\mathrm{offset})`
+    is shrunk in the
     complement.  The residual problem is itself a canonical normal problem with
     diagonal covariance ``d_perp`` and identity loss, so it is solved by
     recursing into :func:`_estimate_pd`; the effective dimension of the
     shrinkage problem becomes ``len(d_perp)``.  In that recursion the prior is
     restricted to the residual subspace to become the reduced prior, and
     canonicalized again by the recursive solve: for an isotropic canonical
-    prior (``prior_cov`` proportional to ``Q^{-1}``) it is passed as the
-    homoscedastic ``s I`` in the orthonormal residual basis, otherwise as the
+    prior (``prior_cov`` proportional to :math:`Q^{-1}`) it is passed as the
+    homoscedastic :math:`s I` in the orthonormal residual basis, otherwise as
+    the
     covariance-metric projection
-    ``l2^T (I - P) diag(pi) (I - P)^T l2`` of the canonical prior onto the
+    :math:`l_2^T (I - P) \\operatorname{diag}(\\pi) (I - P)^T l_2` of the
+    canonical prior onto the
     residual subspace.  A non-isotropic prior whose projection couples the
     residual coordinates with differing variances cannot be diagonalized there
     and is rejected with a :class:`ValueError` (see
     :func:`_check_prior_diagonalizable`).
 
     When ``gamma`` is a named preset (currently only ``"empirical"``, inferred
-    per observation as ``||y / sqrt(pi)||^2 / p_eff``) or a callable
+    per observation as :math:`\\| y / \\sqrt{\\pi} \\|^2 / p_{\\mathrm{eff}}`)
+    or a callable
     ``f(d, pi, y)``, it is resolved from the canonical data actually shrunk,
     per observation; see the :mod:`nustattools.stats.shrinkage` module docstring
     for the accepted forms and the per-observation shape contract.  When the
@@ -781,10 +814,13 @@ def _estimate(
 
     The estimate shrinks towards the point ``offset`` (default zero) or, when
     ``dirs`` (a matrix whose columns span the affine direction) is given,
-    towards the affine subspace ``offset + span(dirs)``.  For a singular ``q``
+    towards the affine subspace
+    :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`.  For a
+    singular ``q``
     the null space of ``q`` is treated as an additional set of no-shrink
     directions, so the covariance-metric projection of the estimate onto
-    ``span(dirs) + null(q)`` equals that of the data.  See :func:`_estimate_pd`
+    :math:`\\operatorname{span}(\\mathrm{dirs}) + \\operatorname{null}(q)`
+    equals that of the data.  See :func:`_estimate_pd`
     and :func:`_estimate_split`.
 
     """
@@ -814,4 +850,75 @@ def _estimate(
         dirs=dirs_full,
         prior_cov=prior_cov,
         **kwargs,
+    )
+
+
+def _check_strength(strength: float) -> None:
+    """Raise ``ValueError`` unless ``0 <= strength <= 2``."""
+
+    if strength < 0 or strength > 2:
+        msg = "strength must be in [0, 2]."
+        raise ValueError(msg)
+
+
+def _check_gamma_nonnegative(
+    gamma: float | str | Callable[..., Any] | NDArray[Any],
+) -> None:
+    """Raise ``ValueError`` if ``gamma`` contains negative values.
+
+    String presets and callables are left to be resolved downstream; only
+    numeric (scalar or array) values are validated here.
+
+    """
+
+    if (
+        not isinstance(gamma, str)
+        and not callable(gamma)
+        and np.any(np.asarray(gamma) < 0)
+    ):
+        msg = "gamma must be non-negative."
+        raise ValueError(msg)
+
+
+def _prior_diagonal(d: NDArray[Any], pi: NDArray[Any] | None) -> NDArray[Any]:
+    """Return the canonical prior diagonal ``pi``, defaulting to all ones."""
+
+    return pi if pi is not None else np.ones(d.shape[0])
+
+
+def _estimate_coordinate(
+    x: ArrayLike,
+    cov: ArrayLike | None,
+    q: ArrayLike | None,
+    canonical: Callable[..., NDArray[Any]],
+    *,
+    positive: bool,
+    strength: float,
+    gamma: float | str | Callable[..., NDArray[Any]] | NDArray[Any],
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+    prior_cov: ArrayLike | None = None,
+) -> NDArray[Any]:
+    """Dispatch a coordinate-wise estimator to the shared solver.
+
+    The coordinate-family estimators (``tan``, ``minimax_bayes``,
+    ``tan_bayes`` and ``robust_bayes``) all share this exact set of keyword
+    arguments.  Repackaging them here keeps the wrapper functions thin and
+    lets the public estimators pass ``canonical`` as a plain positional-style
+    argument instead of threading ``canonical_estimator`` backwards through
+    :func:`_estimate`.
+
+    """
+
+    return _estimate(
+        x,
+        cov,
+        q,
+        canonical,
+        strength=strength,
+        gamma=gamma,
+        positive=positive,
+        offset=offset,
+        dirs=dirs,
+        prior_cov=prior_cov,
     )

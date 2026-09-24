@@ -111,7 +111,7 @@ def regularize(
     diagonal elements, first scales all data points relative to the model. So
     data with all ``y_i`` identical has the same shape as the model.
 
-    Then, with ``k = x.shape[-1]``, the penalaty term is set to the squared
+    Then, with ``k = x.shape[-1]``, the penalty term is set to the squared
     differences between data points:
 
     .. math::
@@ -143,9 +143,9 @@ def regularize(
     :func:`nustattools.stats.shrinkage.bayes` with the risk metric being the
     data covariance, and the inverse of ``Q`` as the prior covariance. In order
     to do this, a small relative diagonal jitter is added to make ``Q``
-    numerically invertible.     The ``max_abs_risk`` empirical gamma factory is
-    then used to set the per-observation prior scale from the data and ensure that
-    the shrunk data is moved by the required ``delta_chi2``.
+    numerically invertible.  The ``max_abs_risk`` empirical gamma factory is
+    then used to set the per-observation prior scale from the data and ensure
+    that the shrunk data is moved by the required ``delta_chi2``.
 
     """
 

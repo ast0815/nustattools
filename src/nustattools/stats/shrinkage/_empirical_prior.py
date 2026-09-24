@@ -31,14 +31,16 @@ _EPSILON: float = np.finfo(float).eps  # pylint: disable=no-member
 def _empirical_gamma(
     d: NDArray[Any], pi: NDArray[Any], y: NDArray[Any]
 ) -> NDArray[Any]:
-    """Return the per-observation empirical prior scale ``||y / sqrt(pi)||^2 / p_eff``.
+    """Return the per-observation empirical prior scale
+    :math:`\\| y / \\sqrt{\\pi} \\|^2 / p_{\\mathrm{eff}}`.
 
     ``y`` has shape ``(..., p_eff)`` (the centered canonical data) and ``pi``
     has shape ``(p_eff,)`` (the canonical diagonal of the prior covariance,
     all ones for the default homoscedastic prior).  The result has shape
     ``(...,)``: one prior scale for each observation, computed from the
     squared norm over the trailing (coordinate) axis only, after normalising
-    each coordinate by the corresponding prior scale ``sqrt(pi_j)``.
+    each coordinate by the corresponding prior scale
+    :math:`\\sqrt{\\pi_j}`.
 
     """
 
@@ -72,8 +74,10 @@ def _bayes_norm_root_solve(
 
         \\sum_j \\left(\\frac{d_j y_j}{d_j + \\gamma \\pi_j}\\right)^2 = B
 
-    where ``B`` (``target``) is the per-coordinate model constant of the caller
-    (``alpha`` for the absolute-risk family, ``alpha * sum(d)`` for the
+    where ``target`` (the ``B`` of the equation) is the per-coordinate model
+    constant of the caller
+    (:math:`\\alpha` for the absolute-risk family,
+    :math:`\\alpha \\sum_j d_j` for the
     relative-risk family).  The closed form
 
     .. math::
@@ -81,10 +85,11 @@ def _bayes_norm_root_solve(
         \\gamma_0 = \\left(\\frac{1}{B}
             \\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
 
-    starts the iteration.  ``rtol = inf`` keeps ``\\gamma_0`` exactly (the
+    starts the iteration.  ``rtol = inf`` keeps :math:`\\gamma_0` exactly (the
     factories map a ``None`` tolerance to ``inf``), matching the historical
     closed form bit-for-bit; a finite ``rtol >= 0`` refines with vectorized
-    Newton steps (quadratic convergence) with the scale clamped to ``>= 0``:
+    Newton steps (quadratic convergence) with the scale clamped to
+    :math:`\\ge 0`:
 
     .. math::
 
@@ -92,20 +97,24 @@ def _bayes_norm_root_solve(
             \\gamma_k - \\frac{f(\\gamma_k)}{f'(\\gamma_k)}, 0\\right)
 
     Newton's method is used instead of a higher-order update because
-    ``f`` is strictly convex and strictly decreasing in ``\\gamma``, which
+    :math:`f` is strictly convex and strictly decreasing in
+    :math:`\\gamma`, which
     makes it *globally* convergent (from the right it crosses the root once
     and then approaches monotonically from below; from the left it never
     overshoots).  A plain Halley or higher-order update is only cubically
     convergent near the root and can stall or enter a limit cycle when the
-    closed-form seed ``\\gamma_0`` is far above the root -- which happens
+    closed-form seed :math:`\\gamma_0` is far above the root -- which happens
     precisely at small and medium data, where the asymptotic form is a poor
-    approximation.  The Newton step also escapes the clamped ``\\gamma = 0``
-    boundary toward a positive root (``f(0) > 0`` gives a negative step),
-    while higher-order iterates may stay pinned at ``0``.
+    approximation.  The Newton step also escapes the clamped
+    :math:`\\gamma = 0`
+    boundary toward a positive root (:math:`f(0) > 0` gives a negative step),
+    while higher-order iterates may stay pinned at :math:`0`.
 
     The batch advances together until, for every observation, the relative
-    residual ``|f(\\gamma)| / B`` is at most ``rtol``, the scale is pinned at
-    the boundary ``\\gamma = 0`` with ``f(0) <= 0`` (the analytic optimum when
+    residual :math:`|f(\\gamma)| / B` is at most ``rtol``, the scale is pinned
+    at
+    the boundary :math:`\\gamma = 0` with :math:`f(0) \\le 0` (the analytic
+    optimum when
     there is no positive root), or no further progress is made at
     floating-point roundoff (so ``rtol = 0`` converges to machine precision
     instead of exhausting the iteration cap).  The iteration is capped at
@@ -179,11 +188,13 @@ def _max_rel_risk_gamma(
             \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
 
     Setting ``rtol = None`` (the default, equivalent to ``np.inf``) returns
-    ``\\gamma_0`` exactly, matching the historical closed form bit-for-bit; a
-    finite ``rtol >= 0`` further refines ``\\gamma`` until the relative
-    residual ``|F(\\gamma)/B - 1|`` (with ``B = alpha * sum(d)``, see
+    :math:`\\gamma_0` exactly, matching the historical closed form bit-for-bit;
+    a
+    finite ``rtol >= 0`` further refines :math:`\\gamma` until the relative
+    residual :math:`|F(\\gamma)/B - 1|` (with :math:`B = \\alpha \\sum_j d_j`,
+    see
     :func:`_bayes_norm_root_solve`) does not exceed ``rtol`` for every
-    observation.  Raises :class:`ValueError` unless ``alpha > 0`` and
+    observation.  Raises :class:`ValueError` unless :math:`\\alpha > 0` and
     ``rtol`` is ``None``, ``np.inf``, or a non-negative number.
 
     """
@@ -232,11 +243,12 @@ def _max_abs_risk_gamma(
             \\left(\\sum_j \\left(\\frac{d_j y_j}{\\pi_j}\\right)^2\\right)^{1/2}
 
     Setting ``rtol = None`` (the default, equivalent to ``np.inf``) returns
-    ``\\gamma_0`` exactly, matching the historical closed form bit-for-bit; a
-    finite ``rtol >= 0`` further refines ``\\gamma`` until the relative
-    residual ``|F(\\gamma)/B - 1|`` (with ``B = alpha``, see
+    :math:`\\gamma_0` exactly, matching the historical closed form bit-for-bit;
+    a
+    finite ``rtol >= 0`` further refines :math:`\\gamma` until the relative
+    residual :math:`|F(\\gamma)/B - 1|` (with :math:`B = \\alpha`, see
     :func:`_bayes_norm_root_solve`) does not exceed ``rtol`` for every
-    observation.  Raises :class:`ValueError` unless ``alpha > 0`` and
+    observation.  Raises :class:`ValueError` unless :math:`\\alpha > 0` and
     ``rtol`` is ``None``, ``np.inf``, or a non-negative number.
 
     """

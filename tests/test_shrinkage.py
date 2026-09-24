@@ -7,6 +7,15 @@ import pytest
 
 import nustattools.stats as s
 from nustattools.stats import shrinkage as _shrinkage
+from nustattools.stats.shrinkage._bayes import (
+    _bayes_canonical,
+    _robust_bayes_canonical,
+)
+from nustattools.stats.shrinkage._coordinate import (
+    _minimax_bayes_canonical,
+    _tan_bayes_canonical,
+    _tan_canonical,
+)
 from nustattools.stats.shrinkage._core import (
     _canonical_frame,
     _canonicalize,
@@ -20,13 +29,6 @@ from nustattools.stats.shrinkage._core import (
 from nustattools.stats.shrinkage._empirical_prior import (
     _max_abs_risk_gamma,
     _max_rel_risk_gamma,
-)
-from nustattools.stats.shrinkage._estimators import (
-    _bayes_canonical,
-    _minimax_bayes_canonical,
-    _robust_bayes_canonical,
-    _tan_bayes_canonical,
-    _tan_canonical,
 )
 from nustattools.stats.shrinkage._risk import _canonical_directions
 

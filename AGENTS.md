@@ -7,6 +7,13 @@
   ignores, `# noqa`, `mypy: ignore`) by adding ignore rules as a first resort —
   the root cause should be fixed instead. If you believe an ignore rule is
   genuinely justified, check with the user before adding it.
+- `nustattools.stats.shrinkage` is a subpackage of private modules: `_core`
+  (shared validation/canonicalization and the `_estimate` front-end),
+  `_empirical_prior` (gamma presets/factories), `_risk` (risk estimators),
+  `_dispatch` (`shrink` and the method registry), and one module per estimator
+  family — `_linear` (`matmul`), `_minimax` (`berger`), `_bayes` (`bayes`,
+  `robust_bayes`) and `_coordinate` (`tan`, `minimax_bayes`, `tan_bayes`). The
+  public API is re-exported from `nustattools.stats.shrinkage`.
 
 # Build/Lint/Test:
 

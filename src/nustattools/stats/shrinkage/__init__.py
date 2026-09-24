@@ -154,16 +154,11 @@ References
 
 from __future__ import annotations
 
-from ._estimators import (
-    bayes,
-    berger,
-    matmul,
-    minimax_bayes,
-    robust_bayes,
-    shrink,
-    tan,
-    tan_bayes,
-)
+from ._bayes import bayes, robust_bayes
+from ._coordinate import minimax_bayes, tan, tan_bayes
+from ._dispatch import shrink
+from ._linear import matmul
+from ._minimax import berger
 from ._risk import estimate_risk, estimate_risk_curve
 
 __all__ = [

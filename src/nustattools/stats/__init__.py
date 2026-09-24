@@ -27,7 +27,8 @@ References
 from __future__ import annotations
 
 # ``shrinkage`` is imported so that the ``nustattools.stats.shrinkage``
-# submodule is available, while only ``shrink`` is re-exported at package level.
+# submodule is available, while only ``shrink``, ``estimate_risk`` and
+# ``estimate_risk_curve`` are re-exported at package level.
 from . import _derate, _dist, _fmax, _regularize, shrinkage  # noqa: F401
 from ._derate import *
 from ._dist import *

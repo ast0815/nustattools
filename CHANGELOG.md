@@ -23,7 +23,7 @@ and this project adheres to
   (Eldar (2006), Theorem 9): the bias term is left unchanged pointwise while the
   variance is not increased, provided the dominance condition
   `lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1` holds in canonical
-  coordinates. When the canonical variances are isotropic (`Σ = c Q⁻¹`) the
+  coordinates. When the canonical variances are isotropic (`cov = c Q^{-1}`) the
   construction reduces to the classical Cohen (1966) improvement
   `G -> I - [(G - I)'(G - I)]^{1/2}`, which dominates unconditionally; for
   genuinely heteroscedastic problems with the condition violated, `enhance`
@@ -45,9 +45,9 @@ and this project adheres to
   free when `cov` is proportional to `Q^{-1}`), and `gamma` continues to scale
   the prior per coordinate. `berger`, which involves no prior, rejects
   `prior_cov` with a `TypeError`.
-- `tan`'s infinite-`gamma` limit (`A†_inf`) now respects an explicit prior shape
-  whenever one is given, ranking coordinates by `d_j^2 / pi_j` instead of the
-  flat `d_j^2`; with the default homoscedastic prior both coincide.
+- `tan`'s infinite-`gamma` limit now respects an explicit prior shape whenever
+  one is given, ranking coordinates by `d_j^2 / pi_j` instead of the flat
+  `d_j^2`; with the default homoscedastic prior both coincide.
 - The `prior_cov` diagonalization now recognises `cov` proportional to `Q^{-1}`
   at numerical roundoff (relative `sqrt(eps)`), so any positive-definite prior
   is accepted with `Q = inv(cov)` even for ill-conditioned covariances.
@@ -64,6 +64,43 @@ and this project adheres to
 - New shrinkage estimator `minimax_bayes` (Berger's 1982 `delta^MB`, Tan2015
   Equation 8) with a homoscedastic prior `Gamma = gamma I`, registered in
   `shrink` and exported from `nustattools.stats.shrinkage`.
+- The shrinkage estimators (`shrink`, `berger`, `tan`) and `estimate_risk` now
+  accept a positive semi-definite loss matrix `Q`: the null space of `Q` (where
+  the loss is zero) is treated as an additional set of no-shrink directions, so
+  its covariance-metric projection is kept at the data value while shrinkage
+  acts in the covariance-metric complement.
+- Support for Python 3.14.
+- Documented the `uv`-based development workflow (`uv sync`, `uv lock`) in the
+  README and `AGENTS.md`.
+- CI now checks that `uv.lock` is up to date and uses `uv` to install `nox`.
+- Paper citation in docstrings of `FMaxStatistic`, `QMaxStatistic`,
+  `OptimalFMaxStatistic`, and `Cee2`.
+- Citation of "Plotting correlated data" (Koch 2026, arXiv:2601.20805) in
+  docstrings of `corlines`, `wedgeplot`, and `pcplot`.
+- Citation of the same paper and the original Hinton diagram reference (Hinton &
+  Shallice 1991) in the docstring of `hinton`.
+- Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
+  including Berger's minimax estimator and a canonical-form front-end that
+  handles general covariance and loss matrices.
+- `stats.shrinkage.tan`, Tan's improved minimax shrinkage estimator (Tan 2015),
+  which segments coordinates by Bayes importance and improves on Berger's
+  estimator when the truth concentrates in low-variance coordinates. Supports
+  the `gamma=0` (no prior) and `gamma=inf` (flat prior) special cases.
+- The shrinkage estimators accept `offset` and `dirs` arguments: an arbitrary
+  affine subspace `offset + span(dirs)` is specified by its spanning vectors,
+  and the projection onto it is built in the covariance (precision) metric (per
+  Tan 2016, Section 3.3) so the fitted and residual components are uncorrelated.
+  The residual is then shrunk recursively, conserving the full squared-error
+  loss exactly.
+- Added `stats.estimate_risk`, a Monte-Carlo helper to estimate the risk (and
+  its standard error) of a shrinkage estimator on shared samples, making
+  performance comparisons between estimators easier.
+- Added `stats.estimate_risk_curve`, which sweeps the estimated risk of several
+  shrinkage estimators against the true mean along configurable directions
+  (named, canonical axis, or a raw vector) at increasing distances, returning
+  records ready for a data frame and a seaborn plot. Each record includes the
+  Mahalanobis distance of the true mean, and integer directions accept negative
+  indices (e.g. -1 is the smallest variance).
 
 ### Removed
 
@@ -109,13 +146,22 @@ and this project adheres to
   Monte Carlo noise once as `N(0, cov)` and translates it to each sweep point
   (common random numbers) instead of re-drawing per point. Results are unchanged
   for seeded calls.
-- Only the `shrink` front-end is now exported from the `nustattools.stats`
-  package; the other shrinkage estimators (e.g. `berger` and `tan`) and helpers
-  are available through the `nustattools.stats.shrinkage` submodule.
+- Only `shrink`, `estimate_risk` and `estimate_risk_curve` are now exported from
+  the `nustattools.stats` package; the other shrinkage estimators (e.g. `berger`
+  and `tan`) and helpers are available through the `nustattools.stats.shrinkage`
+  submodule.
 - `nustattools.stats.shrinkage` is now a subpackage: the implementation is split
-  across private `_core`, `_estimators` and `_risk` modules (which keeps
-  individual files well under 2000 lines), with the public API re-exported from
-  `nustattools.stats.shrinkage` unchanged.
+  across the private `_core`, `_empirical_prior`, `_risk` and `_dispatch`
+  modules plus one module per estimator family (`_linear`, `_minimax`, `_bayes`,
+  `_coordinate`), which keeps individual files well under the pylint file-length
+  limit, with the public API re-exported from `nustattools.stats.shrinkage`
+  unchanged.
+- The internal shrinkage modules were reorganized so no module exceeds the
+  pylint file-length limit and no duplicate-code warnings remain: the
+  coordinate-wise estimators `tan`, `minimax_bayes` and `tan_bayes` were
+  regrouped into the `_coordinate` module, and the shared input validation
+  (`_check_strength`, `_check_gamma_nonnegative`, `_prior_diagonal`) was
+  extracted into `_core`. The public API is unchanged.
 - The API docs now render each module on its own page; in particular
   `nustattools.stats.shrinkage` is documented on a separate page below
   `nustattools.stats` (via `sphinx-apidoc --separate`).
@@ -134,8 +180,8 @@ and this project adheres to
   interpolates between the two extreme priors.
 - Rewrote the shrinkage docstrings to be self-contained: they now define the
   canonical-form change of coordinates, the canonical coordinate variances
-  `d_j`, and the shrinkage-direction matrix `A` (and the `A†_0`/`A†_∞` limits),
-  so they are readable without the reference papers.
+  `d_j`, and the shrinkage-direction matrix `A` (and the two extreme `A`-dagger
+  limits), so they are readable without the reference papers.
 
 ### Fixed
 
@@ -193,54 +239,12 @@ and this project adheres to
 - `tan_bayes`'s infinite-`gamma` limit no longer degenerates to the identity:
   since `delta_{A,c}` is invariant under a scalar rescaling of the Bayes-rule
   direction `A`, the `gamma = inf` limit uses the direction `a_j = d_j / pi_j`
-  (shrinkage proportional to variance, like `tan`'s `A†_inf`), reducing to the
-  identity only when the corresponding `c* = c*(D, diag(d/pi))` is non-positive.
+  (shrinkage proportional to variance, like `tan`'s infinite-`gamma` limit),
+  reducing to the identity only when the corresponding `c* = c*(D, diag(d/pi))`
+  is non-positive.
 - The documentation of `estimate_risk_curve` now states that the loss matrix `Q`
   must be positive definite; unlike the estimators and `estimate_risk`, the risk
   curve does not accept a positive semi-definite `Q`.
-
-### Added
-
-- The shrinkage estimators (`shrink`, `berger`, `tan`) and `estimate_risk` now
-  accept a positive semi-definite loss matrix `Q`: the null space of `Q` (where
-  the loss is zero) is treated as an additional set of no-shrink directions, so
-  its covariance-metric projection is kept at the data value while shrinkage
-  acts in the covariance-metric complement.
-- Support for Python 3.14.
-- Documented the `uv`-based development workflow (`uv sync`, `uv lock`) in the
-  README and `AGENTS.md`.
-- CI now checks that `uv.lock` is up to date and uses `uv` to install `nox`.
-- Paper citation in docstrings of `FMaxStatistic`, `QMaxStatistic`,
-  `OptimalFMaxStatistic`, and `Cee2`.
-- Citation of "Plotting correlated data" (Koch 2026, arXiv:2601.20805) in
-  docstrings of `corlines`, `wedgeplot`, and `pcplot`.
-- Citation of the same paper and the original Hinton diagram reference (Hinton &
-  Shallice 1991) in the docstring of `hinton`.
-- Shrinkage estimators for a multivariate normal mean in `stats.shrinkage`,
-  including Berger's minimax estimator and a canonical-form front-end that
-  handles general covariance and loss matrices.
-- `stats.shrinkage.tan`, Tan's improved minimax shrinkage estimator (Tan 2015),
-  which segments coordinates by Bayes importance and improves on Berger's
-  estimator when the truth concentrates in low-variance coordinates. Supports
-  the `gamma=0` (no prior) and `gamma=inf` (flat prior) special cases.
-- The shrinkage estimators accept `offset` and `dirs` arguments: an arbitrary
-  affine subspace `offset + span(dirs)` is specified by its spanning vectors,
-  and the projection onto it is built in the covariance (precision) metric (per
-  Tan 2016, Section 3.3) so the fitted and residual components are uncorrelated.
-  The residual is then shrunk recursively, conserving the full squared-error
-  loss exactly.
-- Added `stats.estimate_risk`, a Monte-Carlo helper to estimate the risk (and
-  its standard error) of a shrinkage estimator on shared samples, making
-  performance comparisons between estimators easier.
-- Added `stats.estimate_risk_curve`, which sweeps the estimated risk of several
-  shrinkage estimators against the true mean along configurable directions
-  (named, canonical axis, or a raw vector) at increasing distances, returning
-  records ready for a data frame and a seaborn plot. Each record includes the
-  Mahalanobis distance of the true mean, and integer directions accept negative
-  indices (e.g. -1 is the smallest variance).
-
-### Fixed
-
 - `stats.shrinkage.tan` no longer mis-applies the shrinkage weights to the wrong
   coordinates when the covariance is not already sorted: the estimator now
   reorders the data to match the Bayes-importance ordering before applying the
