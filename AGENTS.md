@@ -3,6 +3,17 @@
 - If you learn something about the code base that is not reflected in the
   `AGENTs.md` file, add it to the file.
 - If there are inconsistencies, ask the user for clarification and fix them
+- Do not silence warnings or errors (e.g. Sphinx `nitpick_ignore`, linter
+  ignores, `# noqa`, `mypy: ignore`) by adding ignore rules as a first resort —
+  the root cause should be fixed instead. If you believe an ignore rule is
+  genuinely justified, check with the user before adding it.
+- `nustattools.stats.shrinkage` is a subpackage of private modules: `_core`
+  (shared validation/canonicalization and the `_estimate` front-end),
+  `_empirical_prior` (gamma presets/factories), `_risk` (risk estimators),
+  `_dispatch` (`shrink` and the method registry), and one module per estimator
+  family — `_linear` (`matmul`), `_minimax` (`berger`), `_bayes` (`bayes`,
+  `robust_bayes`) and `_coordinate` (`tan`, `minimax_bayes`, `tan_bayes`). The
+  public API is re-exported from `nustattools.stats.shrinkage`.
 
 # Build/Lint/Test:
 
@@ -41,9 +52,21 @@
 - Use meaningful variable names that describe their purpose
 - Keep functions small and focused on a single responsibility
 - Use `pytest` fixtures for test setup and teardown
-- All tests must have 100% coverage
+- Tests must cover public behaviour and error conditions; test functions should
+  be behaviour-focused (one concept per test) rather than mechanically mirroring
+  every internal helper
+- Internal helpers are tested only where no public path can reach them (e.g.
+  error branches or regression guards), and such tests are documented as
+  sanctioned contracts that are kept when the suite is reduced
+- Coverage is a signal, not a gate: a PR must not reduce coverage on public
+  paths it touches materially, but there is no coverage gate in CI, and the
+  `--cov` report is currently unreliable under numpy 2.x (see below)
 - All user-facing changes must be documented in `CHANGELOG.md`
   - These entried should be short and not go into details
+- mypy quirk: in an exhaustiveness `else` branch after `isinstance(...)` /
+  `callable(...)` narrows a union to `Never`, mypy strict flags a preceding
+  `msg = ...` local assignment as unreachable. Use an inline module-level
+  message constant with `raise TypeError(_MSG)` instead.
 
 # Testing Best Practices:
 
@@ -52,3 +75,9 @@
 - Mock external dependencies in unit tests
 - Test both positive and negative cases
 - Run tests with --cov to verify coverage
+  - Known environment issue: `coverage` 7.x + numpy 2.x fails with
+    `ImportError: cannot load module more than once per process` because
+    `coverage` instruments `numpy._core` in a way numpy 2.x's module loader
+    rejects. The plain `nox -s tests-3.13` (no `--cov`) is unaffected, and the
+    existing tests pass cleanly under it. Verify branch coverage by test review
+    rather than the `--cov` report until numpy/coverage ship a fix.

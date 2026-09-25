@@ -19,17 +19,31 @@ References
     The American Statistician 2018, Vol. 72, No. 4, pp. 309-314,
     Informa UK Limited, p. 309-314, https://arxiv.org/abs/1512.00809
 
+.. [Koch2022] L. Koch, "Post-hoc regularization of unfolded binned data
+    distributions," https://arxiv.org/abs/2207.02125
+
 """
 
 from __future__ import annotations
 
-from . import _derate, _dist, _fmax
+# ``shrinkage`` is imported so that the ``nustattools.stats.shrinkage``
+# submodule is available, while only ``shrink``, ``estimate_risk`` and
+# ``estimate_risk_curve`` are re-exported at package level.
+from . import _derate, _dist, _fmax, _regularize, shrinkage  # noqa: F401
 from ._derate import *
 from ._dist import *
 from ._fmax import *
+from ._regularize import *
+from .shrinkage import estimate_risk, estimate_risk_curve, shrink
 
 # Export all exports from the sub-modules
-__all__ = _dist.__all__ + _derate.__all__ + _fmax.__all__
+__all__ = (
+    _dist.__all__
+    + _derate.__all__
+    + _fmax.__all__
+    + _regularize.__all__
+    + ["shrink", "estimate_risk", "estimate_risk_curve"]
+)
 
 # Some extra effort, so Sphinx picks up the data docstrings
 # mypy: disable-error-code=name-defined
