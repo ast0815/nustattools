@@ -1,13 +1,13 @@
 """Shrinkage estimators for a multivariate normal mean.
 
-This module implements shrinkage estimators for the problem of estimating
-the mean :math:`\\theta` of :math:`\\vec x \\sim N(\\vec\\theta, \\Sigma)`
+This module implements shrinkage estimators for the problem of estimating the
+mean :math:`\\vec\\theta` of :math:`\\vec x \\sim N(\\vec\\theta, \\Sigma)`
 under the quadratic loss :math:`(\\vec\\delta - \\vec\\theta)^\\mathrm{T} Q
 (\\vec\\delta - \\vec\\theta)`, where :math:`\\vec\\delta` is the estimatate.
-The aim of shrinkage estimators is to reduce the expectation value of the loss,
-the risk, for some or all possible values of :math:`\\vec\\theta`, compared to
-the risk of the Maximum Likelihood Estimator (MLE) :math:`\\vec\\delta = \\vec
-x`.
+The aim of shrinkage estimators is to reduce the *expectation value* of the
+loss, the risk, for some or all possible values of :math:`\\vec\\theta`,
+compared to the risk of the Maximum Likelihood Estimator (MLE)
+:math:`\\vec\\delta = \\vec x`.
 
 Following [Tan2015]_, the general problem can always be transformed into the
 canonical form :math:`\\vec y = T \\vec x`, with a suitable transformation
@@ -27,14 +27,14 @@ Following [Tan2016]_, Section 3.3, the projection onto this subspace is built
 in the data covariance (precision) metric: Let :math:`V` be the matrix of
 direction vectors in the canonical coordinates. Then the projector is :math:`P
 = V (V^T D^{-1} V)^{-1} V^T D^{-1}`.  This makes the fitted component :math:`P
-y` and the residual :math:`(I - P) y` statistically uncorrelated, so their
-risks add and each can be improved independently. The component in the affine
-subspace is kept and the residual is shrunk towards zero.
+\\vec y` and the residual :math:`(I - P) \\vec y` statistically uncorrelated,
+so their risks add and each can be improved independently. The component in the
+affine subspace is kept and the residual is shrunk towards zero.
 
 The prior used in some estimators -- e.g. :func:`bayes`, :func:`robust_bayes`,
 :func:`tan_bayes`, and :func:`minimax_bayes` -- is a Gaussian
 :math:`\\vec\\theta \\sim N(\\vec 0, \\gamma \\Gamma)`.  It has a shape
-:math:`\\Gamma` (provided as ``prior_cov`` and a scale :math:`\\gamma`. The
+:math:`\\Gamma` (provided as ``prior_cov``) and a scale :math:`\\gamma`. The
 prior must be diagonal in the canonical space. Its elements :math:`\\pi_i`
 follow the same large-to-small ordering as the data covariance. They are
 non-increasing within each block of (numerically-)equal :math:`d_i`.
@@ -61,29 +61,29 @@ The scaling factor :math:`\\gamma` can be specified in five ways:
 - The string ``"empirical"`` to infer the scale per observation from the data
   as :math:`\\gamma = \\sum_i y_i^2 / \\pi_i / p_{\\mathrm{eff}}`, where
   :math:`p_{\\mathrm{eff}}` is the effective number parameters. The latter can
-  be lower than the dimension of the data :math:`\\vec x`, when shrinking
+  be lower than the dimension of the data :math:`\\vec x` when shrinking
   towards a subspace.
 
 - A one-dimensional :class:`numpy.ndarray` giving an explicit prior scale per
-  observation; its shape must match the leading batch dimensions of
+  observation. Its shape must match the leading batch dimensions of
   ``x`` (``()`` for a single vector).
 
 - A string ``"max_rel_risk({alpha}, {precision})"`` or ``"max_rel_risk({beta},
   {precision})"``. The arguments must be given as numeric literals (e.g.
   ``"max_abs_risk(1, 1e-3)"``).
 
-  These empirical methods chose :math:`\\gamma` such that the application of
-  Bayes' rule (e.g. with :func:`bayes`) will lead to a shift of the data by a
-  vector with a length of at most ``alpha`` in the canonical space. If the
-  data is far away from the shrinkage target, where the reduction of variance
-  is negligible, this bias is equal to the increase of risk. Hence the name
-  ``max_*_risk``.
-  In the case of ``max_rel_risk``, the risk increase ``alpha`` is calculated as
-  a fraction ``beta`` of the MLE risk.
+  These empirical methods choose :math:`\\gamma` such that the application of
+  Bayes' rule (e.g. with :func:`bayes`) would lead to a shift of the data by a
+  vector with a length of at most ``alpha`` in the canonical space. If the data
+  is far away from the shrinkage target, where the reduction of variance is
+  negligible, this bias is equal to the increase of risk. Hence the name
+  ``max_*_risk``. In the case of ``max_rel_risk``, the risk increase ``alpha``
+  is calculated as a fraction ``beta`` of the MLE risk
+  :math:`\\operatorname{Tr}[ Q\\Sigma ]`.
 
-  The value of :math:`gamma` that leads to a data shift of the requested length
-  needs to be approximated numerically. The iterative process is stopped as
-  soon as the actual length is within ``alpha +/- precision``. If no
+  The value of :math:`\\gamma` that leads to a data shift of the requested
+  length needs to be approximated numerically. The iterative process is stopped
+  as soon as the actual length is within ``alpha +/- precision``. If no
   ``precision`` is specified, the first order approximation
 
   .. math::
@@ -92,7 +92,7 @@ The scaling factor :math:`\\gamma` can be specified in five ways:
                              {\\alpha \\sum_j d_j}}
 
   is used. This approximation overestimates :math:`\\gamma` for data points
-  close to the shrinkage target, leading to weaker shrinkgge. It is always
+  close to the shrinkage target, leading to weaker shrinkage. It is always
   guaranteed that :math:`\\gamma \\ge 0`, both in the first order approximation
   and the numerical evaluation. In the latter case, a data point within a
   distance of ``alpha`` from the shrinkage target will be pulled exactly to the
