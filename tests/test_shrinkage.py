@@ -3508,7 +3508,7 @@ def test_matmul_identity_with_offset():
     offset = gen.normal(size=p)
     np.testing.assert_allclose(
         _shrinkage.matmul(x, A=np.eye(p), offset=offset),
-        x - offset,
+        x,
         rtol=1e-12,
     )
 
@@ -3524,7 +3524,7 @@ def test_matmul_known_transform():
     q = np.eye(p)
     b, binv, _d = _canon_frame(cov, q)
     a_star = b @ a @ binv
-    expected = binv @ (a_star @ (b @ (x - offset)))
+    expected = binv @ (a_star @ (b @ (x - offset))) + offset
     np.testing.assert_allclose(
         _shrinkage.matmul(x, cov=cov, Q=q, A=a, offset=offset),
         expected,
@@ -3563,8 +3563,8 @@ def test_matmul_with_Q():
     x = gen.normal(size=p)
     a = gen.normal(size=(p, p))
     # Non-identity Q changes the canonical frame, which changes how A is
-    # interpreted internally.  The result should still equal A @ (x - offset)
-    # in original coordinates.
+    # interpreted internally.  The result should still equal
+    # offset + A @ (x - offset) in original coordinates.
     bmat = gen.normal(size=(p, p))
     q = bmat @ bmat.T + np.eye(p)
     result = _shrinkage.matmul(x, Q=q, A=a)
@@ -3580,7 +3580,7 @@ def test_matmul_with_Q_and_offset():
     bmat = gen.normal(size=(p, p))
     q = bmat @ bmat.T + np.eye(p)
     result = _shrinkage.matmul(x, Q=q, A=a, offset=offset)
-    np.testing.assert_allclose(result, a @ (x - offset), rtol=1e-10)
+    np.testing.assert_allclose(result, a @ (x - offset) + offset, rtol=1e-10)
 
 
 def test_matmul_A_shape_error():

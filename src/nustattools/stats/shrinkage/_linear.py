@@ -19,7 +19,7 @@ from ._core import _canonical_frame, _estimate, _validate
 
 
 def _matmul_canonical(
-    x: NDArray[Any],
+    y: NDArray[Any],
     _d: NDArray[Any],
     *,
     A: NDArray[Any],
@@ -27,20 +27,20 @@ def _matmul_canonical(
     """Matrix multiply in canonical form.
 
     ``A`` has shape ``(p, p)`` and is the user-supplied matrix transformed to
-    canonical coordinates
-    (:math:`A^* = B A B^{-1}`).  Applied as
-    :math:`\\delta = A x` where ``x`` is the centered canonical data.
+    canonical coordinates (:math:`A^* = B A B^{-1}`), applied to the centered
+    canonical data ``y`` as :math:`\\delta = A y`.
 
     """
 
-    return cast(NDArray[Any], x @ A.T)
+    return cast(NDArray[Any], y @ A.T)
 
 
 _ENHANCE_CONDITION_FAILED = (
-    "enhance=True requires the Eldar (2006) dominance condition "
-    "lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1 to hold in the canonical "
-    "coordinates (eq. (91)); it does not for this A, so the analytical "
-    "improvement is not guaranteed to dominate and is not applied."
+    "`enhance=True` requires the Eldar (2006) dominance condition "
+    "`lambda_max(D^{-1/2} (D (I - A^*)^T (I - A^*) D)^{1/2} D^{-1/2}) <= 1` "
+    "to hold in the canonical coordinates (eq. (91)). It does not for "
+    "this A, so the analytical improvement is not guaranteed to "
+    "dominate and is not applied."
 )
 
 
@@ -49,7 +49,7 @@ def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
 
     Applies the closed-form improvement of [Eldar2006]_ (Theorem 9) to the
     canonical ``(p, p)`` matrix ``g`` whose coordinates have canonical
-    variances ``d``.  Writing :math:`E = (g - I)^T (g - I)` for the loss
+    variances ``d``.  Writing :math:`E = (I - g)^T (I - g)` for the loss
     matrix of the bias and :math:`D = \\operatorname{diag}(d)` for the
     canonical covariance, it returns
 
@@ -58,7 +58,7 @@ def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
         g^* = I - (D E D)^{1/2}\\, D^{-1},
 
     where a positive-semidefinite square root is taken.  Pointwise
-    :math:`(g^* - I)^T (g^* - I) = E`, so the bias term is left unchanged
+    :math:`(I - g^*)^T (I - g^*) = E`, so the bias term is left unchanged
     while the variance :math:`\\operatorname{tr}(g D g^T)` is not increased
     provided the dominance condition
 
@@ -69,9 +69,7 @@ def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
     (eq. (91)) holds.  When the canonical variances are isotropic (``cov``
     proportional to :math:`Q^{-1}`) the construction reduces to the classical
     improvement of [Cohen1966]_ (Theorem 2.1), :math:`I - E^{1/2}`, which
-    dominates unconditionally, so the condition is not enforced there.  In the
-    general heteroscedastic case a violation raises :class:`ValueError` rather
-    than silently degrading the estimate.
+    dominates unconditionally, so the condition is not enforced there.
 
     Parameters
     ----------
@@ -94,7 +92,7 @@ def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
     """
 
     p = g.shape[0]
-    c = g - np.eye(p)
+    c = np.eye(p) - g
     a = c.T @ c
     evals, evecs = np.linalg.eigh(np.diag(d) @ a @ np.diag(d))
     s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
@@ -118,34 +116,37 @@ def matmul(
     dirs: ArrayLike | None = None,
     enhance: bool = False,
 ) -> NDArray[Any]:
-    """Apply a user-specified linear transformation to centered data.
+    """Apply a user-specified linear transformation to the data.
 
-    Computes :math:`\\delta = A (x - \\mathrm{offset})` where ``A`` is a matrix
-    in the original coordinate system.  Internally the problem is canonicalized
-    (diagonal covariance, identity loss) and ``A`` is transformed to canonical
-    coordinates :math:`A^* = B A B^{-1}` before application, so the result is
-    independent of the coordinate choice.
+    Computes :math:`\\vec \\delta = \\vec o + A (\\vec x - \\vec o)` where
+    :math:`\\vec o` is the ``offset``: like the shrinkage target of the other
+    estimators, it shifts the coordinate zero, so the point is added back after
+    applying ``A``.  With the default offset of zero the estimator is the plain
+    linear map :math:`\\vec \\delta = A \\vec x`.
 
     ``A`` has shape ``(p, p)`` and need not have any special properties (e.g.
-    invertibility, symmetry, or positive-definiteness); ensuring it does
+    invertibility, symmetry, or positive-definiteness). Ensuring it does
     something useful is the user's responsibility.
 
     Parameters
     ----------
     x : array_like
         Observed data.  A single vector of shape ``(p,)`` or a stack of
-        observations of shape ``(..., p)``.
+        observations of shape ``(..., p)``.  The transformation is applied to
+        each observation over the last axis.
     cov : array_like, default=None
-        The known covariance matrix of ``x``, of shape ``(p, p)``.  Defaults
-        to the identity matrix.
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  Defaults to the identity.
     A : array_like
         The transformation matrix, of shape ``(p, p)``.  Must contain only
         finite values.
     offset : array_like, default=None
-        A point of shape ``(p,)`` subtracted from ``x`` before applying ``A``.
-        Defaults to zero.
+        The point of shape ``(p,)`` the transformation is applied around, i.e.
+        it shifts the coordinate zero like the shrinkage target of the other
+        estimators.  It is subtracted from ``x`` before applying ``A`` and
+        added back afterwards.  Defaults to zero.
     dirs : array_like, default=None
         Not supported.  Must be ``None``; passing a value raises
         :class:`ValueError`.
@@ -163,21 +164,20 @@ def matmul(
     Notes
     -----
     ``enhance`` replaces :math:`A^*` in the canonical coordinates by the
-    dominating linear estimator of [Eldar2006]_ (Theorem 9).  Writing
-    :math:`D = \\operatorname{diag}(d)` for the diagonal canonical covariance
-    of the coordinates and
-    :math:`E = (A^* - I)^T (A^* - I)` for the loss matrix of the bias, it
-    returns
+    dominating linear estimator of [Eldar2006]_ (Theorem 9).  Writing :math:`D
+    = \\operatorname{diag}(d)` for the diagonal canonical covariance of the
+    coordinates and :math:`E = (I - A^*)^T (I - A^*)` for the loss matrix of
+    the bias, it returns
 
     .. math::
 
-        A_{\\mathrm{enh}} = I - (D E D)^{1/2}\\, D^{-1},
+        A_{\\mathrm{enh}} = I - (D E D)^{1/2}\\, D^{-1}.
 
-    the positive-semidefinite square root of :math:`D E D`.  Pointwise,
+    Pointwise,
 
     .. math::
 
-        (A_{\\mathrm{enh}} - I)^T (A_{\\mathrm{enh}} - I) = E,
+        (I - A_{\\mathrm{enh}})^T (I - A_{\\mathrm{enh}}) = E,
 
     so the bias term :math:`\\theta^T E \\theta` is left unchanged for every
     true mean :math:`\\theta` while the variance
@@ -189,19 +189,17 @@ def matmul(
         \\lambda_{\\max}\\left(D^{-1/2} (D E D)^{1/2} D^{-1/2}\\right) \\le 1
         \\qquad \\text{(Eldar 2006, eq. (91))}.
 
-    Under this condition the estimate dominates :math:`A` exactly in the
-    quadratic risk, not merely heuristically.  When the canonical variances
-    are isotropic (``cov`` proportional to :math:`Q^{-1}`) the construction
-    reduces to the classical improvement of [Cohen1966]_ (Theorem 2.1),
-    :math:`I - E^{1/2}`,
-    which dominates unconditionally, so the condition is not enforced.  For a
-    genuinely heteroscedastic problem with the condition violated,
-    ``enhance=True`` raises :class:`ValueError` instead of silently degrading
-    the estimate.  When :math:`A` is already symmetric in the canonical
-    coordinates with all eigenvalues in :math:`[0, 1]` (a shrinkage kernel),
-    ``enhance`` is a no-op only if :math:`A^*` also commutes with :math:`D`,
-    i.e. the estimator is admissible; otherwise the construction still reduces
-    its variance in the :math:`D`-metric.
+    Under this condition the estimate dominates :math:`A` in the quadratic
+    risk.  When the canonical variances are isotropic (``cov`` proportional to
+    :math:`Q^{-1}`) the construction reduces to the classical improvement of
+    [Cohen1966]_ (Theorem 2.1), :math:`I - E^{1/2}`, which dominates
+    unconditionally, so the condition is not enforced.  For a genuinely
+    heteroscedastic problem with the condition violated, ``enhance=True``
+    raises :class:`ValueError` instead of silently degrading the estimate. When
+    :math:`A^*` is symmetric in the canonical coordinates with all eigenvalues
+    in :math:`[0, 1]` (a shrinkage kernel), ``enhance`` is a no-op *only* if
+    :math:`A^*` commutes with :math:`D`. Otherwise the construction still
+    reduces its variance in the :math:`D`-metric.
 
     """
 
@@ -219,15 +217,9 @@ def matmul(
     if not np.all(np.isfinite(aa)):
         msg = "A must contain only finite values."
         raise ValueError(msg)
-    # Handle offset ourselves: subtract before canonicalizing so that the
-    # canonical estimator receives A @ (x - offset) without the offset being
-    # added back (which _estimate_pd does for shrinkage estimators).
-    if offset is not None:
-        o = np.asarray(offset, dtype=float)
-        if o.shape != (p,):
-            msg = f"offset must have shape {(p,)}, got {o.shape}."
-            raise ValueError(msg)
-        xa = xa - o
+    # The offset shifts the coordinate zero: _estimate (like _estimate_pd for
+    # the shrinkage estimators) centers the canonical data on the offset and
+    # adds it back afterwards, yielding delta = offset + A @ (x - offset).
     b, binv, d, _pi = _canonical_frame(cova, qa, None)
     a_star = b @ aa @ binv
     if enhance:
@@ -238,4 +230,5 @@ def matmul(
         Q,
         _matmul_canonical,
         A=a_star,
+        offset=offset,
     )

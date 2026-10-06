@@ -109,6 +109,9 @@ and this project adheres to
 
 ### Changed
 
+- `matmul` now treats `offset` like the other estimators, as a shift of the
+  coordinate zero: it computes `offset + A @ (x - offset)` instead of the plain
+  `A @ (x - offset)`.
 - `regularize` now validates its inputs (square / symmetric / positive definite
   covariance, matching `model` shape, positive `delta_chi2`, finite values) and
   returns typed asymmetric error bars shaped like the regularized data.
