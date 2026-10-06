@@ -500,9 +500,6 @@ def estimate_risk_curve(
     _check_n_reps(n_reps)
 
     cv = np.asarray(cov)
-    if cv.ndim != 2 or cv.shape[0] != cv.shape[1]:
-        msg = f"cov must be a square matrix, got shape {cv.shape}."
-        raise ValueError(msg)
     p = cv.shape[0]
     cova = _validate_sympd(cov, (p, p), "cov")
     qa = np.eye(p) if Q is None else _validate_sympd(Q, (p, p), "Q")

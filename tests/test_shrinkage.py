@@ -1103,10 +1103,6 @@ def test_estimate_risk_curve_validation_errors():
             n_reps=100,
             estimator_labels=["a", "b"],
         )
-    with pytest.raises(ValueError, match="must be a square matrix"):
-        _shrinkage.estimate_risk_curve(
-            np.eye(4)[:3], est, directions="uniform", distances=[1.0], n_reps=100
-        )
     with pytest.raises(ValueError, match="n_reps must be"):
         _shrinkage.estimate_risk_curve(
             cov, est, directions="uniform", distances=[1.0], n_reps=1
