@@ -327,7 +327,7 @@ def tan(
 
 
 def _minimax_bayes_canonical(
-    x: NDArray[Any],
+    y: NDArray[Any],
     d: NDArray[Any],
     *,
     positive: bool,
@@ -339,13 +339,13 @@ def _minimax_bayes_canonical(
     canonical form.
 
     Implements [Tan2015]_, Equation (8) (Berger's (1982) estimator, reviewed in
-    Tan2015, Section 2) for the canonical problem where the covariance is the
-    diagonal matrix :math:`D = \\operatorname{diag}(d)` and the loss is the
-    identity, under the
-    homoscedastic prior :math:`\\theta \\sim N(0, \\gamma I)`.
+    Tan2015, Section 2) under the prior
+    :math:`\\vec \\theta \\sim N(0, \\gamma \\Gamma)`.
 
-    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
-    ``(p,)``.  ``strength`` scales the shrinkage constant :math:`(k-2)_+`:
+    ``y`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``.  ``strength`` scales the shrinkage constants
+    :math:`(k-2)_+` (with :math:`k` the 1-based importance rank, coordinates
+    sorted by decreasing Bayes importance):
     ``strength = 1`` recovers Tan's version and ``strength = 2`` Berger's
     original :math:`2(k-2)_+`; minimaxity holds for
     :math:`0 \\le \\mathrm{strength} \\le 2`.
@@ -360,28 +360,28 @@ def _minimax_bayes_canonical(
 
     p_eff = len(d)
     if p_eff < 3:
-        return x
+        return y
 
     # Bayes importance d* = d^2/(d+gamma), Bayes-rule weight w = d/(d+gamma)
-    # and the cumulative shrinkage statistic S_k = sum_{l<=k} x_l^2/(d_l+gamma).
+    # and the cumulative shrinkage statistic S_k = sum_{l<=k} y_l^2/(d_l+gamma).
     # An explicit prior shape pi makes the effective per-coordinate prior
     # variance gamma * pi (replacing gamma).  For gamma >= 0 these are all
     # well-defined, with gamma=0 the Bhattacharya limit (d* = d, w = 1).  As
     # gamma -> inf, w -> 0 and the estimator reduces to the identity
-    # (delta = X), so no separate limit is needed.
+    # (delta = y), so no separate limit is needed.
     pi = _prior_diagonal(d, pi)
     d_plus_g = d + gamma * pi
     d_star = d**2 / d_plus_g
     weight = d / d_plus_g
 
-    # Sort by decreasing Bayes importance and reorder x to match.
+    # Sort by decreasing Bayes importance and reorder y to match.
     order = np.argsort(d_star)[::-1]
     d_star_sorted = d_star[order]
     weight_sorted = weight[order]
-    x_sorted = x[..., order]
+    y_sorted = y[..., order]
 
-    # S_k = sum_{l<=k} x_l^2 / (d_l + gamma), an increasing cumulative sum.
-    s_cum = np.cumsum(x_sorted**2 / d_plus_g[order], axis=-1)
+    # S_k = sum_{l<=k} y_l^2 / (d_l + gamma), an increasing cumulative sum.
+    s_cum = np.cumsum(y_sorted**2 / d_plus_g[order], axis=-1)
 
     # m_k = min{1, strength*(k-2)_+ / S_k}; recall k is 1-based in the paper, so
     # at 0-based index i the term is strength * max(0, i-1).  m_0 = m_1 = 0, so
@@ -395,11 +395,11 @@ def _minimax_bayes_canonical(
     t_k = (d_star_sorted - d_next) * m_k
     bracket = np.cumsum(t_k[..., ::-1], axis=-1)[..., ::-1] / d_star_sorted
 
-    # delta_j = x_j * (1 - w_j * B_j), with the optional positive part.
+    # delta_j = y_j * (1 - w_j * B_j), with the optional positive part.
     factor = 1.0 - weight_sorted * bracket
     if positive:
         factor = np.maximum(factor, 0.0)
-    delta_sorted = cast(NDArray[Any], factor * x_sorted)
+    delta_sorted = cast(NDArray[Any], factor * y_sorted)
     delta = np.empty_like(delta_sorted)
     delta[..., order] = delta_sorted
     return delta
@@ -412,7 +412,7 @@ def minimax_bayes(
     Q: ArrayLike | None = None,
     positive: bool = True,
     strength: float = 1.0,
-    gamma: float = 0.0,
+    gamma: float = 1.0,
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
     prior_cov: ArrayLike | None = None,
@@ -420,10 +420,11 @@ def minimax_bayes(
     """Berger's improved minimax shrinkage estimator :math:`\\delta^{\\mathrm{MB}}`.
 
     This is Berger's (1982) estimator reviewed in [Tan2015]_, Section 2,
-    Equation (8), for a multivariate normal mean under a homoscedastic prior
-    :math:`\\theta \\sim N(0, \\gamma I)`.  It combines the Bayes rule (shrinkage
-    proportional to variance) with a minimax shrinkage magnitude that keeps the
-    estimator minimax over the whole parameter space.
+    Equation (8), for a multivariate normal mean under a normal prior
+    :math:`\\vec \\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  It combines
+    the Bayes rule (shrinkage proportional to variance) with a minimax
+    shrinkage magnitude that keeps the estimator minimax over the whole
+    parameter space.
 
     Parameters
     ----------
@@ -442,66 +443,32 @@ def minimax_bayes(
     positive : bool, default=True
         Use the positive-part estimator, which dominates the plain one.
     strength : float, default=1.0
-        Shrinkage strength as a fraction of the critical value :math:`(k-2)_+`.
-        ``strength = 0`` gives the identity estimator, ``strength = 1`` is
-        Tan's version (with
-        the constant :math:`(k-2)_+`) and ``strength = 2`` Berger's original
-        version (with :math:`2(k-2)_+`).  Must be in :math:`[0, 2]`.
-    gamma : float, default=0.0
-        Non-negative prior scale in the homoscedastic prior
-        :math:`\\theta \\sim N(0, \\gamma I)` (in the canonical coordinates).
-        Must be :math:`\\ge 0`.  :math:`\\gamma = 0` corresponds to the
-        limiting Bhattacharya estimator; larger ``gamma`` shrinks coordinates
-        more strongly in the direction of the Bayes rule.  Because the Bayes
-        weight :math:`d_j/(d_j + \\gamma)` vanishes as :math:`\\gamma \\to
-        \\infty`, the
-        estimator reduces to the identity there, so no infinite-gamma parameter
-        is supported.
+        Shrinkage strength that scales the factor :math:`(k-2)_+` in the paper,
+        where k is the coordinate's 1-based rank by decreasing Bayes importance.
+        At ``strength = 1`` it yields Tan's version and ``strength = 2``
+        Berger's original.  Must be in :math:`[0, 2]`.
+    gamma : float, default=1.0
+        Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
+        module docstring for details. This estimator only accepts single
+        ``float`` values.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`:
-        the component in the subspace is kept and the residual
-        :math:`(I - P)(x - \\mathrm{offset})` (with :math:`P` the
-        covariance-metric projector) is shrunk towards zero in the complement.
-        If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, the null space of ``Q`` is added to the
-        no-shrink subspace; see the :mod:`nustattools.stats.shrinkage` module
-        docstring for the details.
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x`` — the fixed covariance ``Theta`` of a Gaussian
-        prior :math:`\\theta \\sim N(0, \\gamma \\Theta)`.  Defaults to
-        :math:`Q^{-1}` (the current homoscedastic prior in canonical
-        coordinates).
-        When given, the canonicalization rotates the canonical frame (where the
-        canonical variances allow; always, when ``cov`` is proportional to
-        :math:`Q^{-1}`) so that ``Theta`` is diagonal in the canonical
-        coordinates,
-        and that diagonal ``diag(pi)`` replaces the implicit identity of the
-        homoscedastic prior: ``gamma`` still scales the prior, now per
-        coordinate, so the Bayes weight becomes
-        :math:`d_j/(d_j + \\gamma \\pi_j)`.  ``Theta`` must be symmetric
-        positive definite and must be diagonalizable in the canonical
-        coordinates
-        (automatic for ``cov`` proportional to :math:`Q^{-1}`); see the
-        :mod:`nustattools.stats.shrinkage` module docstring.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
 
     Returns
     -------
     delta : numpy.ndarray
         The shrinkage estimate of the mean, with the same shape as ``x``.
-
-    Notes
-    -----
-    The estimator first transforms the problem to *canonical form* (diagonal
-    covariance, identity loss), which is lossless, and applies the direction
-    there.  Unlike :func:`tan`, which approximates the minimax optimal
-    shrinkage direction, this estimator uses Berger's explicit minimax
-    magnitude in the direction of the Bayes rule [Tan2015]_, Section 2.
 
     Examples
     --------

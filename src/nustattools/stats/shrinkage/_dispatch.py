@@ -16,6 +16,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from ._bayes import bayes, robust_bayes
 from ._coordinate import minimax_bayes, tan, tan_bayes
+from ._linear import matmul
 from ._minimax import berger
 
 
@@ -24,7 +25,7 @@ def shrink(
     cov: ArrayLike | None = None,
     *,
     Q: ArrayLike | None = None,
-    method: str = "berger",
+    method: str = "tan",
     offset: ArrayLike | None = None,
     dirs: ArrayLike | None = None,
     prior_cov: ArrayLike | None = None,
@@ -32,62 +33,65 @@ def shrink(
 ) -> NDArray[Any]:
     """Shrink an observed multivariate normal mean towards an affine subspace.
 
-    Convenience front-end that dispatches to a named shrinkage estimator after
-    transforming the problem to canonical form (a lossless change of
-    coordinates that makes the covariance diagonal and the loss the identity,
-    so the estimator only has to shrink independent coordinates of varying
-    variance).
+    Convenience front-end that dispatches to a named shrinkage estimator.
 
     Parameters
     ----------
     x : array_like
         Observed data.  A single vector of shape ``(p,)`` or a stack of
-        observations of shape ``(..., p)``.
+        observations of shape ``(..., p)``.  The estimator is applied to each
+        observation over the last axis.
     cov : array_like, default=None
-        The known covariance matrix of ``x``, of shape ``(p, p)``.  Defaults
-        to the identity matrix.
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  May be positive
         semi-definite; see the :mod:`nustattools.stats.shrinkage` module
         docstring for how the loss-free null space is handled.  Defaults to the
-        identity.
-    method : str, default="berger"
-        Which estimator to use.  Available: ``"berger"``, ``"tan"``,
-        ``"minimax_bayes"``, ``"tan_bayes"``, ``"robust_bayes"`` and ``"bayes"``.
+        identity, i.e. squared-error loss.
+    method : str, default="tan"
+        Which estimator to use.  Available: :func:`~nustattools.stats.shrinkage.bayes`,
+        :func:`~nustattools.stats.shrinkage.berger`,
+        :func:`~nustattools.stats.shrinkage.minimax_bayes`,
+        :func:`~nustattools.stats.shrinkage.robust_bayes`,
+        :func:`~nustattools.stats.shrinkage.matmul`,
+        :func:`~nustattools.stats.shrinkage.tan`, and
+        :func:`~nustattools.stats.shrinkage.tan_bayes`.
+        The method name matches the name of the estimator function.
     offset : array_like, default=None
-        A point of shape ``(p,)`` towards which to shrink.  Defaults to zero.
+        A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
+        i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`.
-        When ``Q`` is singular, the null space of ``Q``
-        is added to the no-shrink subspace; see the
-        :mod:`nustattools.stats.shrinkage` module docstring for the details.
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x`` — the fixed covariance of the prior
-        :math:`\\theta \\sim N(0, \\gamma \\Theta)`.  Defaults to
-        :math:`Q^{-1}`
-        (the current homoscedastic prior in canonical coordinates).  When
-        given, it must be symmetric positive definite and diagonalizable in the
-        canonical coordinates (automatic for ``cov`` proportional to
-        :math:`Q^{-1}`); see the :mod:`nustattools.stats.shrinkage` module
-        docstring.  Only the Bayes-rule estimators (:func:`~nustattools.stats.shrinkage.bayes`,
-        :func:`~nustattools.stats.shrinkage.robust_bayes`, :func:`~nustattools.stats.shrinkage.tan_bayes`) and the gamma-based
-        minimax estimators (:func:`~nustattools.stats.shrinkage.tan`, :func:`~nustattools.stats.shrinkage.minimax_bayes`) accept it.
-        :func:`~nustattools.stats.shrinkage.berger`, which involves no prior, rejects it (and any
-        ``gamma``): passing ``prior_cov`` with ``method="berger"`` (the
-        default) raises a :class:`TypeError`.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for
+        details.
     **kwargs
         Additional keyword arguments passed to the estimator, e.g.
-        ``strength``, ``positive``, or ``gamma`` (for the Bayes-rule
-        estimators).  See the :mod:`nustattools.stats.shrinkage` module
-        docstring for the accepted forms of ``gamma``.
+        ``strength``, ``positive`` or ``gamma``.  See the
+        :mod:`nustattools.stats.shrinkage` module docstring for the accepted
+        forms of ``gamma``.
 
     Returns
     -------
     delta : numpy.ndarray
         The shrinkage estimate of the mean, with the same shape as ``x``.
+
+    Examples
+    --------
+
+    >>> import numpy as np
+    >>> import nustattools.stats.shrinkage as sh
+    >>> rng = np.random.default_rng(0)
+    >>> x = rng.normal(size=5)
+    >>> sh.shrink(x).shape
+    (5,)
 
     """
 
@@ -104,6 +108,7 @@ _METHODS: dict[str, Callable[..., NDArray[Any]]] = {
     "tan_bayes": tan_bayes,
     "robust_bayes": robust_bayes,
     "bayes": bayes,
+    "matmul": matmul,
 }
 
 

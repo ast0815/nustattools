@@ -109,6 +109,8 @@ and this project adheres to
 
 ### Changed
 
+- `shrink` now defaults to `method="tan"` instead of `"berger"`.
+- `minimax_bayes` now defaults to `gamma=1.0` instead of `0.0`.
 - `matmul` now treats `offset` like the other estimators, as a shift of the
   coordinate zero: it computes `offset + A @ (x - offset)` instead of the plain
   `A @ (x - offset)`.
