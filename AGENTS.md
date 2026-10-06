@@ -37,7 +37,8 @@
 - Types: All public APIs must be typed (strict mypy)
 - Naming: snake_case for variables/functions, CamelCase for classes
 - Error handling: Use specific exceptions, avoid bare except
-- Docstrings: Google style for public APIs
+- Docstrings: NumPy style for public APIs (`Parameters` / `Returns` / `Notes` /
+  `Examples` sections)
 - Testing: Use pytest, include coverage, follow existing patterns
 
 # Additional Guidelines:

@@ -30,7 +30,7 @@ from ._core import (
 
 
 def _tan_canonical(
-    x: NDArray[Any],
+    y: NDArray[Any],
     d: NDArray[Any],
     *,
     positive: bool,
@@ -40,69 +40,45 @@ def _tan_canonical(
 ) -> NDArray[Any]:
     """Tan's improved minimax estimator in canonical form.
 
-    Implements [Tan2015]_, Theorem 2.  The estimator automatically segments
-    coordinates into two groups based on Bayes "importance":
-
-    - **High-importance** coordinates are shrunk inversely proportional to
-      their variance (Berger direction).
-    - **Low-importance** coordinates are shrunk in the direction of the Bayes
-      rule.
-
-    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
-    ``(p,)``.  ``strength`` scales the shrinkage constant :math:`c^*`: the
-    estimator is minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.
-
-    The estimator belongs to the minimax class :math:`(I - \\lambda A) x`,
-    where :math:`A = \\operatorname{diag}(a_1, \\dots, a_p)` is a nonnegative
-    diagonal *shrinkage-direction* matrix chosen, independently of the data, to
-    approximately minimize the Bayes risk (see [Tan2015]_, Theorem 2);
-    :math:`A^\\dagger` denotes this optimal choice, and
+    Implements [Tan2015]_, Theorem 2.  The estimator segments the coordinates
+    into two groups by Bayes importance: high-importance coordinates are
+    shrunk inversely proportional to their variance (Berger direction),
+    low-importance coordinates in the direction of the Bayes rule.  It belongs
+    to the minimax class :math:`(I - \\lambda A) y` with a nonnegative
+    diagonal direction matrix :math:`A = \\operatorname{diag}(a)`, chosen
+    independently of the data to approximately minimize the Bayes risk;
+    :math:`A^\\dagger` denotes this optimal choice, with
     :math:`A_0^\\dagger` / :math:`A_\\infty^\\dagger` its two extreme limits
     below.
 
-    ``gamma`` selects the prior :math:`\\theta \\sim N(0, \\gamma I)` in the
-    Bayes-risk criterion of [Tan2015]_, Section 3.3, i.e. a homoscedastic prior
-    in the *canonical* coordinate space with scale ``gamma``.  The prior enters
-    through the Bayes importance :math:`d_j^* = d_j^2/(d_j + \\gamma)`.  Any
-    non-negative ``gamma`` is accepted:
+    ``y`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``.  The coordinates are ranked by the Bayes importance
+    :math:`d_j^* = d_j^2/(d_j + \\gamma \\pi_j)`, where ``pi`` (default all
+    ones) is the canonical diagonal of the explicit prior covariance and the
+    effective per-coordinate prior variance is :math:`\\gamma \\pi_j`:
 
-    - ``gamma = 0`` (:math:`A_0^\\dagger`): the limit of a prior proportional to the
-      covariance, i.e. :math:`\\Gamma \\propto \\operatorname{diag}(d)`
-      in canonical form (so :math:`d_j^* \\propto d_j`).  Low-importance
+    - :math:`\\gamma = 0` (:math:`A_0^\\dagger`): the ranking reduces to
+      :math:`d_j`, independent of the prior shape, and the low-importance
       coordinates receive equal shrinkage weight.
-    - :math:`0 < \\gamma < \\infty`: a homoscedastic prior of scale ``gamma``
-      in the canonical coordinates, ranking coordinates by
-      :math:`d_j^2/(d_j + \\gamma)`.
-      Low-importance coordinates are shrunk in the Bayes-rule direction
-      :math:`d_j/(d_j + \\gamma)`.
-    - :math:`\\gamma = \\infty` (:math:`A_\\infty^\\dagger`): the limit of a
-      prior whose scale
-      :math:`\\Gamma \\propto \\gamma \\Theta` outgrows the coordinate
-      variances, ranking coordinates by :math:`d_j^* \\propto d_j^2/\\pi_j`
-      (for the default flat prior shape :math:`\\pi_j = 1` this reduces to the
-      classic flat-canonical-prior :math:`d_j^2`).  Low-importance coordinates
-      are shrunk proportional to their variance.
+    - :math:`0 < \\gamma < \\infty`: the ranking follows :math:`d_j^*` and
+      the low-importance coordinates are shrunk in the Bayes-rule direction
+      :math:`d_j/(d_j + \\gamma \\pi_j)`.
+    - :math:`\\gamma = \\infty` (:math:`A_\\infty^\\dagger`): the ranking
+      reduces to :math:`d_j^2/\\pi_j` (the flat-prior ranking :math:`d_j^2`
+      for :math:`\\pi_j = 1`) and the low-importance coordinates are shrunk
+      proportional to their variance.
 
-    ``pi`` (the canonical diagonal of an explicit prior covariance ``Theta``,
-    default all ones) gives the base prior shape scaled by ``gamma``: the
-    effective per-coordinate prior variance is :math:`\\gamma \\pi_j`,
-    replacing ``gamma`` throughout the Bayes-rule direction and importance
-    above.  As ``gamma`` increases the relative importance ordering of the
-    coordinates ranges from :math:`d_j` (:math:`\\gamma = 0`,
-    shape-independent) through :math:`d_j^2/(d_j + \\gamma \\pi_j)` to
-    :math:`d_j^2/\\pi_j` (:math:`\\gamma = \\infty`; for the default
-    homoscedastic shape :math:`\\pi_j = 1` this is the flat-prior
-    :math:`d_j^2` ranking).
-
-    The coordinates are in canonical order: ``d`` is non-increasing (variance
-    decreasing) and ``pi`` is its aligned prior diagonal, non-increasing within
-    each block of (numerically-)equal ``d``.
+    ``strength`` scales the minimax constant :math:`c^*`; the estimator is
+    minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.  The coordinates are
+    in canonical order: ``d`` is non-increasing (variance decreasing) and
+    ``pi`` is its aligned prior diagonal, non-increasing within each block of
+    (numerically-)equal ``d``.
 
     """
 
     p_eff = len(d)
     if p_eff < 3:
-        return x
+        return y
 
     # Bayes importance d* = d^2/(d+gamma*pi), weight (d+gamma*pi)/d^2 and the
     # low-importance Bayes-rule direction a = d/(d+gamma*pi) (see Corollary 3).
@@ -164,16 +140,16 @@ def _tan_canonical(
     if nu < p_eff:
         c_star_val += np.sum(d_star_sorted[nu:])
 
-    # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . x^2))_+ * x_j.
-    # a_star is indexed by descending-importance sorted position, so x must be
+    # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . y^2))_+ * y_j.
+    # a_star is indexed by descending-importance sorted position, so y must be
     # reordered to match before applying and then mapped back.
-    x_sorted = x[..., order]
-    s_val = np.sum(a_star**2 * x_sorted**2, axis=-1)
+    y_sorted = y[..., order]
+    s_val = np.sum(a_star**2 * y_sorted**2, axis=-1)
     c_actual = strength * c_star_val
     factor = 1.0 - c_actual * a_star / s_val[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
-    delta_sorted = cast(NDArray[Any], factor * x_sorted)
+    delta_sorted = cast(NDArray[Any], factor * y_sorted)
     delta = np.empty_like(delta_sorted)
     delta[..., order] = delta_sorted
     return delta
@@ -216,63 +192,21 @@ def tan(
         ``strength = 2`` the boundary of the minimax class.
     gamma : float, default=0.0
         Non-negative prior scale controlling the Bayes importance segmentation
-        [Tan2015]_.  Must be :math:`\\ge 0`.  The estimator first
-        transforms the problem to *canonical form*, in which the covariance is
-        the diagonal matrix :math:`D = \\operatorname{diag}(d)` and the loss is
-        the identity, so :math:`d_j` below is the variance of the
-        :math:`j`-th canonical coordinate (the
-        transformed problem has the same risk, so the transform is always
-        lossless).
-
-        The prior is homoscedastic in the canonical space, :math:`\\Gamma
-        \\propto \\gamma I`, entering through the Bayes importance
-        :math:`d_j^* = d_j^2/(d_j + \\gamma)`:
-
-        - :math:`\\gamma = 0` (:math:`A_0^\\dagger`): coordinates are ranked by
-          their variance :math:`d_j`.
-        - :math:`\\gamma = \\infty` (:math:`A_\\infty^\\dagger`): coordinates
-          are ranked by :math:`d_j^2/\\pi_j` (for the default homoscedastic
-          prior shape :math:`\\pi_j = 1`, by :math:`d_j^2`).
-        - intermediate :math:`\\gamma`: coordinates are ranked by
-          :math:`d_j^2/(d_j + \\gamma \\pi_j)`, so the importance ordering
-          ranges continuously between :math:`d_j` and :math:`d_j^2/\\pi_j` as
-          ``gamma`` grows.
-
+        [Tan2015]_.  Must be :math:`\\ge 0`.  Only a scalar float is
+        supported.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`:
-        the component in the subspace is kept and the residual
-        :math:`(I - P)(x - \\mathrm{offset})` (with :math:`P` the
-        covariance-metric projector) is shrunk towards zero in the complement.
-        If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, the null space of ``Q`` is added to the
-        no-shrink subspace; see the :mod:`nustattools.stats.shrinkage` module
-        docstring for the details.
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x`` — the fixed covariance ``Theta`` of a Gaussian
-        prior :math:`\\theta \\sim N(0, \\gamma \\Theta)`.  Defaults to
-        :math:`Q^{-1}` (the current homoscedastic prior in canonical
-        coordinates).
-        When given, the canonicalization rotates the canonical frame (where the
-        canonical variances allow; always, when ``cov`` is proportional to
-        :math:`Q^{-1}`) so that ``Theta`` is diagonal in the canonical
-        coordinates, and that diagonal :math:`\\operatorname{diag}(\\pi)`
-        replaces the implicit identity of the
-        homoscedastic prior: ``gamma`` still scales the prior, now per
-        coordinate, through the Bayes importance
-        :math:`d_j^* = d_j^2/(d_j + \\gamma \\pi_j)`, so the
-        :math:`\\gamma = 0` limit is independent of the shape while the
-        :math:`\\gamma = \\infty` limit ranks coordinates by
-        :math:`d_j^2/\\pi_j`.  ``Theta`` must
-        be symmetric positive definite and must be diagonalizable in the
-        canonical coordinates (automatic for ``cov`` proportional to
-        :math:`Q^{-1}`); see the :mod:`nustattools.stats.shrinkage` module
-        docstring.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
 
     Returns
     -------
@@ -281,15 +215,52 @@ def tan(
 
     Notes
     -----
-    The estimator first transforms the problem to *canonical form* (diagonal
-    covariance, identity loss), which is lossless.  It then automatically
-    segments the coordinates into two groups based on Bayes "importance"
-    [Tan2015]_.  High-importance coordinates are shrunk inversely proportional
-    to their variance (like Berger's estimator), while low-importance
-    coordinates are shrunk in the direction of the Bayes rule (shrinkage
-    proportional to variance).  This yields both minimaxity and effective risk
-    reduction, whereas Berger's estimator shrinks low-variance coordinates too
+    This is an implementation of the estimator described in [Tan2015]_, Theorem
+    2. The estimator first transforms the problem to *canonical form* (diagonal
+    covariance, identity loss), which is lossless. It then segments the
+    coordinates into two groups based on Bayes "importance" [Tan2015]_.
+    High-importance coordinates are shrunk inversely proportional to their
+    variance (like Berger's estimator), while low-importance coordinates are
+    shrunk in the direction of the Bayes rule (shrinkage proportional to
+    variance).  This yields both minimaxity and effective risk reduction,
+    whereas Berger's estimator shrinks low-variance coordinates too
     aggressively and the Bayes rule is generally non-minimax.
+
+    The automatic scaling in the estimator leads to some special cases
+    for the prior:
+
+    - Prior proportional to :math:`\\Sigma`: If the prior shape :math:`\\Gamma`
+      is proportional to the data covariance, the actual prior scale
+      :math:`\\gamma` no longer matters, as it is lost in the automatic
+      scaling.
+
+      This is also true in the special case when :math:`\\gamma = 0`, since
+      this sets the overall prior to 0, which is always proportional to the
+      data covariance.
+
+      This "heteroscedastic" case is denoted with :math:`A^\\dagger_0` in
+      [Tan2015]_. To quote:
+
+          Then coordinates with high variances are shrunk inversely in
+          proportion to their variances, whereas coordinates with low variances
+          are shrunk symmetrically. For :math:`\\Gamma = 0`, the proposed
+          method has a purely frequentist interpretation: it seeks to minimize
+          the upper bound on the pointwise risk of [the estimator] at
+          :math:`\\vec \\theta = 0`.
+
+    - A very diffuse, homoscedastic prior: For a homoscedastic prior shape
+      in the canonical coordinates, the estimator approaches a limit as
+      :math:`\\gamma \\to \\infty`. This case is denoted by
+      :math:`A^\\dagger_\\infty`.
+
+          Then coordinates with low (or high) variances are shrunk directly (or
+          inversely) in proportion to their variances
+
+    - Homoscedastic prior and data covariance: If the data covariance is
+      homoscedastic, i.e. if :math:`\\Sigma \\propto Q^{-1}`, and the prior
+      is proportional to it :math:`\\Gamma \\propto \\Sigma`, the ``tan``
+      estimator reduces to the James-Stein estimator in the canonical space,
+      regardless of the scales of the covariances.
 
     Examples
     --------
@@ -506,7 +477,7 @@ def minimax_bayes(
 
 
 def _tan_bayes_canonical(
-    x: NDArray[Any],
+    y: NDArray[Any],
     d: NDArray[Any],
     *,
     positive: bool,
@@ -518,47 +489,43 @@ def _tan_bayes_canonical(
     Bayes-rule shrinkage direction.
 
     Implements [Tan2015]_, Section 3, Equation (9): the estimator
-    :math:`\\delta_{A,c} = (I - c A / (x^T A^2 x)) x` where
-    :math:`A = \\operatorname{diag}(a)` is the
-    Bayes-rule shrinkage direction with :math:`a_j = d_j/(d_j + \\gamma)`.
+    :math:`\\delta_{A,c} = (I - c A / (y^T A^2 y)) y` where
+    :math:`A = \\operatorname{diag}(a)` is the Bayes-rule shrinkage direction
+    with :math:`a_j = d_j/(d_j + \\gamma \\pi_j)`.
 
-    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``y`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
     ``(p,)``.  ``strength`` scales the minimax constant
     :math:`c^*(D, A) = \\operatorname{tr}(D A) - 2 \\lambda_{\\max}(D A)`:
     the estimator is minimax for
-    :math:`0 \\le \\mathrm{strength} \\le 2`.  ``gamma`` is the prior scale; a
-    scalar is broadcast
-    across observations and ``(...,)`` array values give one scale per
-    observation (matching the batch dims of ``x``).  ``pi`` (default all ones)
-    is the canonical diagonal of an explicit prior covariance, making the
-    effective per-coordinate prior variance :math:`\\gamma \\pi_j` and hence
-    :math:`a_j = d_j/(d_j + \\gamma \\pi_j)`.  The coordinates are in canonical
-    order: ``d`` is non-increasing and ``pi`` is its aligned prior diagonal,
-    non-increasing within each block of (numerically-)equal ``d``.
+    :math:`0 \\le \\mathrm{strength} \\le 2`.  ``gamma`` is the prior scale (a
+    scalar is broadcast across observations and ``(...)`` array values give
+    one scale per observation); ``pi`` (default all ones) is the canonical
+    diagonal of an explicit prior covariance, making the effective
+    per-coordinate prior variance :math:`\\gamma \\pi_j`.  The coordinates are
+    in canonical order: ``d`` is non-increasing and ``pi`` is its aligned
+    prior diagonal, non-increasing within each block of (numerically-)equal
+    ``d``.
 
     The Bayes-rule direction :math:`a_j` is proportional to variance:
-    high-variance
-    coordinates are shrunk more (like Berger's estimator), while low-variance
-    coordinates are shrunk less.  As the prior scale varies:
+    high-variance coordinates are shrunk more (like Berger's estimator).
+    Limits:
 
-    - zero prior scale: :math:`a_j = 1` (:math:`A = I`), reducing to the Berger
-      direction with :math:`c^* = \\operatorname{tr}(D) - 2 \\max_j d_j`.
+    - zero prior scale: :math:`a_j = 1` (:math:`A = I`), reducing to the
+      Berger direction with :math:`c^* = \\operatorname{tr}(D) - 2 \\max_j d_j`.
     - infinite prior scale: :math:`a_j \\to d_j/\\pi_j` up to a common scalar.
       The estimator :math:`\\delta_{A,c}` is invariant under a scalar
-      rescaling of :math:`A`
-      (the factor cancels between :math:`c^*`, :math:`A` and the quadratic form
-      :math:`x^T A^2 x`), so the limit is the fixed direction
-      :math:`A \\sim \\operatorname{diag}(d/\\pi)`
-      with :math:`c^* = c^*(D, \\operatorname{diag}(d/\\pi))` (shrinkage
-      proportional to variance),
-      not the identity; the estimator still reduces to the identity when that
-      :math:`c^* \\le 0`.
+      rescaling of :math:`A` (the factor cancels between :math:`c^*`,
+      :math:`A` and the quadratic form :math:`y^T A^2 y`), so the limit is the
+      fixed direction :math:`A \\sim \\operatorname{diag}(d/\\pi)` with
+      :math:`c^* = c^*(D, \\operatorname{diag}(d/\\pi))` (shrinkage
+      proportional to variance), not the identity; the estimator still
+      reduces to the identity when that :math:`c^* \\le 0`.
 
     """
 
     p_eff = len(d)
     if p_eff < 3:
-        return x
+        return y
 
     pi = _prior_diagonal(d, pi)
     g = np.asarray(gamma, dtype=float)[..., None]
@@ -566,19 +533,19 @@ def _tan_bayes_canonical(
     # gamma -> inf: a_j = d_j/(d_j + gamma*pi_j) is proportional to d_j/pi_j
     # (the common 1/gamma factor).  Since delta_{A,c} is invariant under a
     # scalar rescaling of A (the factor cancels between c*, A and the quadratic
-    # form x^T A^2 x), the limit keeps a_j = d_j/pi_j instead of collapsing to
+    # form y^T A^2 y), the limit keeps a_j = d_j/pi_j instead of collapsing to
     # a = 0.
     a = np.where(np.isinf(g), d / pi, a)
     da = d * a
     c_star_val = np.sum(da, axis=-1) - 2.0 * np.max(da, axis=-1)
     bad = c_star_val <= 0.0
-    s_val = np.sum(a**2 * x**2, axis=-1)
+    s_val = np.sum(a**2 * y**2, axis=-1)
     c_actual = strength * c_star_val
     with np.errstate(divide="ignore", invalid="ignore"):
         factor = 1.0 - c_actual[..., None] * a / s_val[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
-    return np.where(bad[..., None], x, factor * x)
+    return np.where(bad[..., None], y, factor * y)
 
 
 def tan_bayes(
@@ -595,22 +562,19 @@ def tan_bayes(
 ) -> NDArray[Any]:
     """Shrinkage estimator :math:`\\delta_{A,c}` with the Bayes-rule direction.
 
-    Applies [Tan2015]_, Section 3, Equation (9) — the class of minimax
-    estimators :math:`\\delta_{A,c} = (I - c A / (x^T A^T Q A x)) x` — with the
-    shrinkage-direction matrix :math:`A` fixed to the Bayes rule under the
-    homoscedastic prior :math:`\\theta \\sim N(0, \\gamma I)` in canonical
-    coordinates.  In canonical form (diagonal covariance
-    :math:`D = \\operatorname{diag}(d)`,
-    identity loss), :math:`A = \\operatorname{diag}(a)` with
-    :math:`a_j = d_j/(d_j + \\gamma)`.
+    Applies [Tan2015]_, Section 3, Equation (9) -- the class of minimax
+    estimators :math:`\\delta_{A,c} = (I - c A / (\\vec x^T A^T Q A \\vec x))
+    \\vec x` -- with the shrinkage-direction matrix :math:`A` fixed to the
+    Bayes rule under the prior :math:`\\theta \\sim N(\\vec o, \\gamma
+    \\Gamma)`. In canonical form :math:`A = \\operatorname{diag}(a)` with
+    :math:`a_j = d_j/(d_j + \\gamma \\pi_j)`.
 
     Unlike :func:`tan` (which optimises :math:`A` by approximately minimising
-    the
-    Bayes risk among all minimax estimators), this estimator uses the
-    Bayes-rule direction directly.  The shrinkage magnitude is controlled by
-    :math:`\\mathrm{strength}\\, c^*(D, A)` where
-    :math:`c^*(D, A) = \\operatorname{tr}(D A) - 2 \\lambda_{\\max}(D A)`.
-    The estimator is minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.
+    the Bayes risk among all minimax estimators), this estimator uses the
+    Bayes-rule direction directly. The shrinkage magnitude is controlled by
+    :math:`c\\, c^*(D, A)` where :math:`c` is the ``strength``, and
+    :math:`c^*(D, A) = \\operatorname{Tr}[D A] - 2 \\lambda_{\\max}(D A)`. The
+    estimator is minimax for :math:`0 \\le c \\le 2`.
 
     Parameters
     ----------
@@ -638,60 +602,20 @@ def tan_bayes(
         minimax.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
-        module docstring for the accepted forms (scalar, ``"empirical"``,
-        per-observation array, factory string like ``"max_rel_risk(0.1)"``,
-        or callable) and the per-observation shape
-        contract.  Controls the Bayes-rule shrinkage direction
-        :math:`a_j = d_j/(d_j + \\gamma)`:
-
-        - :math:`\\gamma = 0`: :math:`a_j = 1` (:math:`A = I`), the Berger
-          direction with :math:`c^* = \\operatorname{tr}(D) - 2 \\max_j d_j`.
-        - :math:`\\gamma = \\infty`: :math:`a_j \\to d_j/\\pi_j` up to a common
-          scalar.  Since :math:`\\delta_{A,c}` is invariant under a scalar
-          rescaling of :math:`A` (the
-          factor cancels between :math:`c^*`, :math:`A` and the quadratic form
-          :math:`x^T A^T Q A x`), the limit is the fixed direction
-          :math:`A \\sim \\operatorname{diag}(d/\\pi)` with
-          :math:`c^* = c^*(D, \\operatorname{diag}(d/\\pi))` (shrinkage
-          proportional to variance); the estimator reduces to the identity
-          only when that :math:`c^* \\le 0`.
-        - intermediate :math:`\\gamma`: coordinates with larger variance
-          :math:`d_j` are shrunk more (proportional to
-          :math:`d_j/(d_j + \\gamma)`).
-
+        module docstring for the accepted forms.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`:
-        the component in the subspace is kept and the residual
-        :math:`(I - P)(x - \\mathrm{offset})` (with :math:`P` the
-        covariance-metric projector) is shrunk towards zero in the complement.
-        If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, the null space of ``Q`` is added to the
-        no-shrink subspace; see the :mod:`nustattools.stats.shrinkage` module
-        docstring for the details.
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x`` — the fixed covariance ``Theta`` of a Gaussian
-        prior :math:`\\theta \\sim N(0, \\gamma \\Theta)`.  Defaults to
-        :math:`Q^{-1}` (the current homoscedastic prior in canonical
-        coordinates).
-        When given, the canonicalization rotates the canonical frame (where the
-        canonical variances allow; always, when ``cov`` is proportional to
-        :math:`Q^{-1}`) so that ``Theta`` is diagonal in the canonical
-        coordinates,
-        and that diagonal :math:`\\operatorname{diag}(\\pi)` replaces the
-        implicit identity of the
-        homoscedastic prior: ``gamma`` still scales the prior, now per
-        coordinate, so the Bayes weight becomes
-        :math:`d_j/(d_j + \\gamma \\pi_j)`.  ``Theta`` must be symmetric
-        positive definite and must be diagonalizable in the canonical
-        coordinates
-        (automatic for ``cov`` proportional to :math:`Q^{-1}`); see the
-        :mod:`nustattools.stats.shrinkage` module docstring.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
 
     Returns
     -------
@@ -700,17 +624,16 @@ def tan_bayes(
 
     Notes
     -----
+
     The estimator first transforms the problem to *canonical form* (diagonal
     covariance, identity loss), which is lossless, and applies the direction
-    there.  The Bayes-rule direction :math:`a_j = d_j/(d_j + \\gamma)` is
-    proportional to variance: high-variance coordinates are shrunk more,
+    there.  The Bayes-rule direction :math:`a_j = d_j/(d_j + \\gamma \\pi_j)`
+    is proportional to variance: high-variance coordinates are shrunk more,
     unlike Berger's estimator (which shrinks inversely proportional to
-    variance).  The minimax constant
-    :math:`c^*(D, A) = \\operatorname{tr}(D A) - 2 \\lambda_{\\max}(D A)`
-    ensures that the risk never exceeds :math:`\\operatorname{tr}(D)` for
-    :math:`0 \\le \\mathrm{strength} \\le 2`.
-    See the ``gamma`` parameter above for the :math:`\\gamma = 0` and
-    :math:`\\gamma = \\infty` limits of the direction.
+    variance).  The minimax constant :math:`c^*(D, A) = \\operatorname{tr}(D A)
+    - 2 \\lambda_{\\max}(D A)` ensures that the risk never exceeds
+    :math:`\\operatorname{tr}(D)` for :math:`0 \\le \\mathrm{strength} \\le
+    2`.
 
     Examples
     --------

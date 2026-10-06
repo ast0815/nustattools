@@ -68,7 +68,9 @@ def _bayes_norm_root_solve(
 ) -> NDArray[Any]:
     """Refine the Bayes-rule prior scale toward the root of the norm equation.
 
-    Returns, per observation, the prior scale :math:`\\gamma` that satisfies
+    With ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` and ``y`` of shape
+    ``(..., p)``, returns, per observation, the prior scale :math:`\\gamma`
+    that satisfies
 
     .. math::
 
@@ -78,7 +80,7 @@ def _bayes_norm_root_solve(
     constant of the caller
     (:math:`\\alpha` for the absolute-risk family,
     :math:`\\alpha \\sum_j d_j` for the
-    relative-risk family).  The closed form
+    relative-risk family).  The result has shape ``(...)``.  The closed form
 
     .. math::
 
@@ -96,19 +98,13 @@ def _bayes_norm_root_solve(
         \\gamma_{k+1} = \\max\\!\\left(
             \\gamma_k - \\frac{f(\\gamma_k)}{f'(\\gamma_k)}, 0\\right)
 
-    Newton's method is used instead of a higher-order update because
-    :math:`f` is strictly convex and strictly decreasing in
-    :math:`\\gamma`, which
-    makes it *globally* convergent (from the right it crosses the root once
-    and then approaches monotonically from below; from the left it never
-    overshoots).  A plain Halley or higher-order update is only cubically
-    convergent near the root and can stall or enter a limit cycle when the
-    closed-form seed :math:`\\gamma_0` is far above the root -- which happens
-    precisely at small and medium data, where the asymptotic form is a poor
-    approximation.  The Newton step also escapes the clamped
-    :math:`\\gamma = 0`
-    boundary toward a positive root (:math:`f(0) > 0` gives a negative step),
-    while higher-order iterates may stay pinned at :math:`0`.
+    Newton is used instead of a higher-order update because :math:`f` is
+    strictly convex and strictly decreasing in :math:`\\gamma`, which makes
+    the step *globally* convergent: a Halley-type update can stall or enter a
+    limit cycle when the seed :math:`\\gamma_0` lies far above the root (small
+    and medium data, where the closed form is a poor approximation), while the
+    Newton step also escapes the clamped :math:`\\gamma = 0` boundary toward a
+    positive root (:math:`f(0) > 0` gives a negative step).
 
     The batch advances together until, for every observation, the relative
     residual :math:`|f(\\gamma)| / B` is at most ``rtol``, the scale is pinned
@@ -122,9 +118,6 @@ def _bayes_norm_root_solve(
     iterate and emits a :class:`RuntimeWarning` -- Newton is globally
     convergent for this strictly convex ``f``, so the cap is only a safety
     net.
-
-    with ``d`` of shape ``(p,)``, ``pi`` of shape ``(p,)`` and ``y`` of shape
-    ``(..., p)``.  The result has shape ``(...,)``.
 
     """
 

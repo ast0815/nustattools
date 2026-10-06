@@ -82,8 +82,8 @@ def _canonicalize(
     non-increasing: the canonical coordinates are ordered by *decreasing*
     variance, so coordinate ``0`` has the largest variance (matching the
     risk-curve axis convention).  Row vectors ``x`` transform to the
-    canonical coordinates as :math:`x^\\star = x B^T` and back as
-    :math:`x = x^\\star (B^{-1})^T`.  See [Tan2015]_, Section 3.2.
+    canonical coordinates as :math:`y = x B^T` and back as
+    :math:`x = y (B^{-1})^T`.  See [Tan2015]_, Section 3.2.
 
     """
 
@@ -660,8 +660,8 @@ def _estimate_pd(
 
     In the latter case the projection is built in the covariance (precision)
     metric (see :func:`_reduce_dirs`), so the fitted and residual components
-    are uncorrelated, and the residual :math:`(I - P) (x - \\mathrm{offset})`
-    is shrunk in the
+    are uncorrelated, and the residual :math:`(I - P) y` of the centered
+    canonical data :math:`y` is shrunk in the
     complement.  The residual problem is itself a canonical normal problem with
     diagonal covariance ``d_perp`` and identity loss, so it is solved by
     recursing into :func:`_estimate_pd`; the effective dimension of the
@@ -806,7 +806,7 @@ def _estimate(
     and :func:`_estimate_split` separates the problem along the covariance
     metric before canonicalizing the (strictly positive-definite) residual.
     ``canonical_estimator`` must have the signature
-    ``canonical(x_star, d, **kwargs)``, where ``x_star`` has shape ``(..., p)``
+    ``canonical(y, d, **kwargs)``, where ``y`` has shape ``(..., p)``
     and ``d`` holds the coordinate variances ``(p,)``; it returns the
     canonical-form estimate with shape ``(..., p)``.  ``prior_cov`` is an
     optional prior covariance in the original coordinates; see
@@ -901,12 +901,11 @@ def _estimate_coordinate(
 ) -> NDArray[Any]:
     """Dispatch a coordinate-wise estimator to the shared solver.
 
-    The coordinate-family estimators (``tan``, ``minimax_bayes``,
-    ``tan_bayes`` and ``robust_bayes``) all share this exact set of keyword
-    arguments.  Repackaging them here keeps the wrapper functions thin and
-    lets the public estimators pass ``canonical`` as a plain positional-style
-    argument instead of threading ``canonical_estimator`` backwards through
-    :func:`_estimate`.
+    The coordinate-family estimators (``tan``, ``minimax_bayes`` and
+    ``tan_bayes``) all share this exact set of keyword arguments.  Repackaging
+    them here keeps the wrapper functions thin and lets the public estimators
+    pass ``canonical`` as a plain positional-style argument instead of
+    threading ``canonical_estimator`` backwards through :func:`_estimate`.
 
     """
 

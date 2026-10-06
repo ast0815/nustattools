@@ -1,9 +1,10 @@
 """Monte-Carlo risk estimation helpers for the shrinkage estimators.
 
 This private module contains :func:`estimate_risk` and
-:func:`estimate_risk_curve`, which estimate the quadratic loss of a shrinkage
-estimator (or compare several on shared samples) by Monte Carlo, together with
-their private helpers (:func:`_normalize_estimators`, :func:`_resolved_labels`,
+:func:`estimate_risk_curve`, which estimate the risk (the expected quadratic
+loss) of a shrinkage estimator (or compare several on shared samples) by
+Monte Carlo, together with their private helpers
+(:func:`_normalize_estimators`, :func:`_resolved_labels`,
 :func:`_canonical_directions`, :func:`_as_magnitudes`).
 
 """
@@ -90,13 +91,10 @@ def estimate_risk(
 
     When ``truth_cov`` is given, the *Bayesian risk* is estimated instead: the
     true mean is itself random, :math:`\\theta_i \\sim N(\\theta,
-    \\mathrm{truth\\_cov})`, and each of
-    the ``n_reps`` draws is a pair :math:`(\\theta_i, x_i)` with
-    :math:`x_i \\sim N(\\theta_i, \\mathrm{cov})`.  The loss is averaged over
-    both the data noise
-    and the true-mean prior.  Because the data covariance is constant, the two
-    Gaussian pieces are drawn independently and added, so the total Monte Carlo
-    budget is still ``n_reps`` draws — no inner loop over true values.
+    \\mathrm{truth\\_cov})`, and each of the ``n_reps`` draws is a pair
+    :math:`(\\theta_i, x_i)` with :math:`x_i \\sim N(\\theta_i,
+    \\mathrm{cov})`.  The loss is averaged over both the data noise and the
+    true-mean prior.
 
     If an ``estimators`` *sequence* is given, all estimators are evaluated on
     the *same* Monte Carlo samples, so that any difference between their
@@ -106,7 +104,8 @@ def estimate_risk(
     Parameters
     ----------
     theta : array_like
-        The true mean, of shape ``(p,)``.
+        The true mean, of shape ``(p,)``.  With ``truth_cov``, it is the
+        center of the Gaussian distribution of true means.
     cov : array_like
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
         symmetric and positive definite.
@@ -134,10 +133,9 @@ def estimate_risk(
         Seed for the random number generator, for reproducible results.
     **kwargs
         Additional keyword arguments passed to every estimator (e.g.
-        ``strength``, ``positive``, ``offset``, ``dirs``).  ``prior_cov`` is
-        forwarded to the estimators through here as well; see
-        :func:`estimate_risk_curve` for the consistent-direction handling of
-        the prior.
+        ``strength``, ``positive``, ``offset``, ``dirs``, ``gamma`` or
+        ``prior_cov``); see the :mod:`nustattools.stats.shrinkage` module
+        docstring for the accepted forms of ``gamma`` and ``prior_cov``.
 
     Returns
     -------
@@ -162,8 +160,8 @@ def estimate_risk(
     >>> rng = np.random.default_rng(0)
     >>> theta = np.array([1.0, 0.0, 0.0])
     >>> estimators = [
-    ...     functools.partial(s.shrink, strength=1.0),
-    ...     functools.partial(s.shrink, strength=0.0),
+    ...     functools.partial(s.shrink, method="berger", strength=1.0),
+    ...     functools.partial(s.shrink, method="berger", strength=0.0),
     ... ]
     >>> s.estimate_risk(theta, np.eye(3), estimators, n_reps=2000, seed=0).shape
     (2, 2)
@@ -403,28 +401,21 @@ def estimate_risk_curve(
 ) -> list[dict[str, Any]]:
     """Sweep the estimated risk of estimators against the true mean.
 
-    The mean is moved along one or more *directions* in canonical space, at
-    increasing *distances* :math:`t = \\|\\theta^\\star\\|`, and the risk of
-    each
+    The mean is moved along one or more directions, at increasing distances
+    :math:`t = \\|\\vec \\theta'\\|`. Here :math:`\\vec\\theta'` is the true
+    mean of the data in the canonical space, where the data covariance is a
+    diagonal matrix :math:`D` and the loss is the cartesian distance. Each
     estimator is evaluated at each ``(direction, distance)`` pair (as in
     :func:`estimate_risk`).  The result is a list of records, one per
     ``(direction, distance, estimator)``, suitable for wrapping in
-    ``pandas.DataFrame`` for e.g. a seaborn plot.
+    ``pandas.DataFrame`` for, e.g., a seaborn plot.
 
-    The *canonical space* is reached by the lossless change of coordinates that
-    diagonalizes the covariance to :math:`D = \\operatorname{diag}(d)` and
-    reduces the loss to the
-    identity; :math:`\\theta^\\star` and :math:`u^\\star` below are the mean
-    and direction in
-    those coordinates.
-
-    Because the covariance is fixed across the sweep, the Monte Carlo noise is
-    drawn *once* as :math:`N(0, \\mathrm{cov})` and translated to each sweep
-    point.  All
-    points therefore share the same draws (common random numbers): this avoids
-    re-drawing per point and sharply reduces the sampling noise on the risk
-    curve, so differences between neighbouring points are less polluted by
-    Monte Carlo error.
+    Because the covariance is fixed across the sweep, the Monte Carlo is drawn
+    *once* as :math:`N(0, \\mathrm{cov})` and translated to each sweep point.
+    All points therefore share the same draws (common random numbers). This
+    avoids re-drawing per point and sharply reduces the sampling noise on the
+    risk curve, so differences between neighbouring points are less polluted by
+    Monte Carlo noise.
 
     Parameters
     ----------
@@ -432,23 +423,22 @@ def estimate_risk_curve(
         The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
         symmetric and positive definite.
     estimators : callable or str, or sequence of these
-        The estimator(s) to evaluate; see :func:`estimate_risk`.
+        The estimator(s) to evaluate. See :func:`estimate_risk`.
     Q : array_like, default=None
         The known loss matrix, of shape ``(p, p)``.  Must be symmetric and
         positive definite.  Defaults to the identity.
     directions : str, int, array_like, or sequence of these, default=\
 ('uniform', 'proportional', 'inverse')
         The directions along which to move the mean.  A name selects a built-in
-        canonical-space direction (``"uniform"``,
-        ``"proportional"`` :math:`\\propto \\sqrt{d}`,
-        ``"inverse"`` :math:`\\propto 1/\\sqrt{d}`); an integer ``j`` selects
-        the ``j``-th canonical axis ordered by decreasing variance (``j = 0``
-        is the largest variance and ``j = -1`` the smallest); an array of shape
-        ``(p,)`` is a raw direction
-        in the original space, mapped to canonical space as
-        :math:`u^\\star \\propto \\mathrm{raw}\\, B^T`.
-        A list or tuple combines several directions.  Every direction is
-        normalized so that :math:`\\|u^\\star\\| = 1`.
+        *canonical-space* direction: ``"uniform"`` :math:`u_i \\propto 1`,
+        ``"proportional"`` :math:`u_i \\propto \\sqrt{d_i}`, ``"inverse"``
+        :math:`u_i \\propto 1/\\sqrt{d_i}`. An integer ``j`` selects the
+        ``j``-th canonical axis ordered by decreasing variance (``j = 0`` is
+        the largest variance and ``j = -1`` the smallest) :math:`u_i =
+        \\delta_{ij}`. An array of shape ``(p,)`` is a raw direction in the
+        original space. A list or tuple combines several directions.  Every
+        direction is normalized so that :math:`\\|\\vec u\\| = 1` in the
+        canonical space.
     distances : array_like, or (start, stop, num), default=(0.0, 10.0, 41)
         The magnitudes ``t`` at which to evaluate the risk.  A ``(start, stop,
         num)`` triple is expanded with ``np.linspace``; otherwise the argument
@@ -465,21 +455,11 @@ def estimate_risk_curve(
         Optional display labels, one per direction, used as ``direction`` in
         each record.  Defaults to the direction name, axis index, or position.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, forwarded to the
-        estimators and used to define the canonical frame for the *canonical*
-        direction specifications (``"axis j"`` and raw vectors).  When given,
-        the canonicalization rotates the frame (where the canonical variances
-        allow; automatic for ``cov`` proportional to :math:`Q^{-1}`) so that
-        the
-        prior is diagonal in the canonical coordinates, exactly as the
-        estimators do internally; mapping the directions in the same frame
-        keeps the raw-vector and axis directions consistent with the
-        estimator's own canonicalization.  The shared frame also orders the
-        canonical prior diagonal ``pi`` non-increasingly within each block of
-        (numerically-)equal ``d`` (as the estimators receive it), so ``axis j``
-        is the estimator's canonical coordinate ``j``.  See the
-        :mod:`nustattools.stats.shrinkage` module docstring for the accepted
-        shapes and the diagonalizability requirement.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates). See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
     **kwargs
         Additional keyword arguments passed to every estimator (as in
         :func:`estimate_risk`).
@@ -489,15 +469,11 @@ def estimate_risk_curve(
     list of dict
         One record per ``(direction, distance, estimator)`` with keys
         ``direction``, ``distance``, ``mahalanobis``, ``estimator``, ``risk``,
-        ``se`` and
-        :math:`\\mathrm{risk\\_ratio} = \\mathrm{risk} /
-        \\operatorname{tr}(Q \\, \\mathrm{cov})`
-        (the minimax risk of
-        the raw estimator :math:`\\delta_0 = x`, so a value :math:`\\le 1`
-        indicates minimaxity).
-        :math:`\\mathrm{mahalanobis} = \\sqrt{\\theta^T
-        \\, \\mathrm{cov}^{-1} \\theta}` is the Mahalanobis distance
-        of the true mean (same for every estimator at a given sweep point).
+        ``se`` and ``risk_ratio = risk / trace[Q @ cov]`` (the minimax risk of
+        the MLE estimator :math:`\\vec\\delta = \\vec x`). ``mahalanobis =
+        sqrt(theta^T @ cov^{-1} @ theta)`` is the Mahalanobis distance of the
+        true mean to the coordinate origin (same for every estimator at a given
+        sweep point).
 
     Examples
     --------
@@ -543,7 +519,7 @@ def estimate_risk_curve(
     magnitudes = _as_magnitudes(distances)
 
     records: list[dict[str, Any]] = []
-    # Draw the noise once and translate it to each sweep point.  Because the
+    # Draw the data once and translate it to each sweep point.  Because the
     # covariance is fixed, ``N(theta, cov)`` is ``N(0, cov) + theta``, so all
     # sweep points share the *same* Monte Carlo draws (common random numbers).
     # This both avoids re-drawing per point and makes neighbouring points'

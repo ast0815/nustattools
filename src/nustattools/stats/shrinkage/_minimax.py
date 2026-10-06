@@ -21,38 +21,35 @@ from ._core import _check_strength, _estimate
 
 
 def _berger_canonical(
-    x: NDArray[Any],
+    y: NDArray[Any],
     d: NDArray[Any],
     positive: bool,
     strength: float = 1.0,
 ) -> NDArray[Any]:
     """Berger's minimax estimator in canonical form.
 
-    Implements [Tan2015]_, Equations (6), for the canonical problem where the
-    covariance is the diagonal matrix :math:`D = \\operatorname{diag}(d)` and
-    the loss is the identity: with :math:`S = x^T D^{-2} x`,
+    Implements [Tan2015]_, Equation (6): with :math:`s = y^T D^{-2} y` and
+    :math:`c = \\mathrm{strength}\\,(p_{\\mathrm{eff}} - 2)`,
 
-    .. math:: \\delta_j = \\left(1 - \\frac{c}{d_j S}\\right)_+ x_j.
+    .. math:: \\delta_j = \\left(1 - \\frac{c}{d_j S}\\right)_+ y_j.
 
-    ``x`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
-    ``(p,)``.  ``strength`` controls the shrinkage magnitude as a fraction of
-    the optimal value :math:`c = p_{\\mathrm{eff}} - 2` (where ``p_eff`` is
-    the effective dimension); the estimator is minimax for
-    :math:`0 \\le \\mathrm{strength} \\le 2`.  Berger's estimator does
-    not involve a prior.
+    ``y`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
+    ``(p,)``; the estimator is minimax for
+    :math:`0 \\le \\mathrm{strength} \\le 2`.  Berger's estimator involves no
+    prior.
 
     """
 
     p_eff = len(d)
     c = strength * (p_eff - 2)
     if c <= 0:
-        return x
+        return y
     dinv = 1.0 / d
-    s = np.sum(x**2 * dinv**2, axis=-1)
+    s = np.sum(y**2 * dinv**2, axis=-1)
     factor = 1.0 - c * dinv / s[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
-    return cast(NDArray[Any], factor * x)
+    return cast(NDArray[Any], factor * y)
 
 
 def berger(
@@ -66,6 +63,13 @@ def berger(
     dirs: ArrayLike | None = None,
 ) -> NDArray[Any]:
     """Berger's minimax shrinkage estimator for a multivariate normal mean.
+
+    In canonical coordinates the estimator reads
+    :math:`\\delta_j = (1 - c/(d_j s))_+\\, y_j`, where
+    :math:`s = \\sum_j y_j^2 / d_j^2` and
+    :math:`c = \\mathrm{strength}\\,(p_{\\mathrm{eff}} - 2)`, with
+    :math:`p_{\\mathrm{eff}}` the effective number of dimensions.
+    The estimator is minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.
 
     Parameters
     ----------
@@ -95,15 +99,8 @@ def berger(
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage.  If given, the estimate shrinks towards the affine
-        subspace :math:`\\mathrm{offset} + \\operatorname{span}(\\mathrm{dirs})`:
-        the component in the subspace is kept and the residual
-        :math:`(I - P)(x - \\mathrm{offset})` (with :math:`P` the
-        covariance-metric projector) is shrunk towards zero in the complement.
-        If ``None``, the estimate shrinks towards the single point ``offset``.
-        When ``Q`` is singular, the null space of ``Q`` is added to the
-        no-shrink subspace; see the :mod:`nustattools.stats.shrinkage` module
-        docstring for the details.
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
+        docstring for details.
 
     Returns
     -------
@@ -113,13 +110,9 @@ def berger(
     Notes
     -----
     The estimator first transforms the problem to *canonical form* (diagonal
-    covariance, identity loss), which is lossless, and applies this direction
+    covariance, identity loss), which is lossless, and applies this estimator
     there.  Because it shrinks inversely proportional to variance, coordinates
     with small variances are shrunk more strongly.  See [Tan2015]_, Section 2.
-
-    Berger's estimator is purely frequentist: it involves no Gaussian prior and
-    has no ``gamma`` or ``prior_cov`` argument, so passing either raises a
-    :class:`TypeError`.
 
     Examples
     --------

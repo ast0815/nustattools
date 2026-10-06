@@ -79,15 +79,15 @@ def robust_bayes(
     .. math::
 
         \\delta^\\mathrm{RB} = \\left(1 - \\min\\left(1,
-            \\frac{\\text{strength}\\, (p_{eff}-2)}{s}\\right) W\\right) \\vec y
+            \\frac{c\\, (p_{\\mathrm{eff}}-2)}{s}\\right) W\\right) \\vec y
 
-    where :math:`W = D(D + \\gamma\\Gamma)^{-1}` is the Bayes-rule weights and
-    :math:`s = \\sum_j x_j^2/(d_j + \\gamma \\pi_j)`. The estimator is
-    *non-minimax* (unlike :func:`minimax_bayes`): it is expected to provide
+    where :math:`c` is the ``strength``, :math:`W = D(D + \\gamma\\Gamma)^{-1}`
+    is the matrix of Bayes-rule weights and :math:`s = \\sum_j y_j^2/(d_j +
+    \\gamma \\pi_j)`. The estimator is *non-minimax*: it is expected to provide
     significant risk reduction over the identity when the prior is
-    well-specified but is robust to misspecification. If the number of
-    dimensions :math:`p_{eff}` is less than three, it returns the MLE
-    unmodified.
+    well-specified and is robust to misspecification, but does not always
+    outperform the MLE. If the number of dimensions :math:`p_{\\mathrm{eff}}`
+    is less than three, it returns the MLE unmodified.
 
     Parameters
     ----------
@@ -104,32 +104,29 @@ def robust_bayes(
         docstring for how the loss-free null space is handled.  Defaults to the
         identity, i.e. squared-error loss.
     strength : float, default=1.0
-        Shrinkage strength as a fraction of the critical value :math:`(k-2)_+`.
-        ``strength = 0`` gives the identity estimator, ``strength = 1`` is
-        Tan's version (with the constant :math:`(k-2)`) and ``strength = 2``
-        Berger's original version (with :math:`2(k-2)`).  Values outside
+        Shrinkage strength as a fraction of the critical value
+        :math:`(p_{\\mathrm{eff}}-2)`.  ``strength = 0`` gives the identity
+        estimator, ``strength = 1`` is Tan's version (with the constant
+        :math:`p_{\\mathrm{eff}}-2`) and ``strength = 2`` Berger's original
+        version (with :math:`2(p_{\\mathrm{eff}}-2)`).  Values outside
         :math:`[0, 2]` are accepted but push the estimator further from its
         recommended operating range.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
-        module docstring for the accepted forms. :math:`\\gamma = 0`
-        corresponds to the spherically symmetric limiting form :math:`\\{1 -
-        \\mathrm{strength}\\, (k-2)/(\\vec y^T D^{-1} \\vec y)\\}_+ \\vec y`
-        while larger ``gamma`` shrinks coordinates more strongly in the
-        direction of the Bayes rule.
+        module docstring for the accepted forms.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage. See the :mod:`nustattools.stats.shrinkage` module
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
         docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x``i.  the fixed covariance :math:``\\Gamma`` of a Gaussian
-        prior :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
-        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).
-        See the :mod:`nustattools.stats.shrinkage` module docstring for details.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
 
     Returns
     -------
@@ -139,10 +136,19 @@ def robust_bayes(
     Notes
     -----
     The estimator is generally *not* minimax: its risk can exceed the minimax
-    risk :math:`\\operatorname{Tr}[Q \\Sigma]`` when the true mean is far
+    risk :math:`\\operatorname{Tr}[Q \\Sigma]` when the true mean is far
     from the prior mean. However, it is robust to misspecification of the prior
-    and can have substantially lower risk than any minimax estimator when the
+    and can have substantially lower risk than minimax estimators when the
     prior is well-specified.
+
+    For the degenerate prior :math:`\\gamma = 0`, the estimator simplifies to
+    the spherically symmetric limiting form
+
+    .. math::
+        (1 - c\\, (p_{\\mathrm{eff}}-2)/(\\vec y^T D^{-1} \\vec y))_+\\,\\vec y.
+
+    This one *is* minimax, as long as :math:`0 \\le c\\, (p_{\\mathrm{eff}}-2)
+    \\le 2 (\\operatorname{Tr}[D]/\\lambda_\\mathrm{max}[D] - 2)`.
 
     Examples
     --------
@@ -191,7 +197,7 @@ def _bayes_canonical(
 
     - ``gamma = 0``: degenerate prior (point mass at zero); the estimate
       is zero.
-    - ``gamma = inf``: flat prior; the estimate is the MLE ``y``
+    - ``gamma = inf``: flat prior; the estimate is the MLE ``y``.
 
     """
 
@@ -216,10 +222,10 @@ def bayes(
     """Bayes rule shrinkage estimator for a multivariate normal mean.
 
     Applies the posterior-mean (Bayes rule) estimator under the prior
-    :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)` This is a *non-minimax*
+    :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`. This is a *non-minimax*
     estimator: it does not dominate the identity estimator uniformly over the
     parameter space, but can have substantially lower risk when the true mean
-    is close to the prior mean, i.e. the `offset`.
+    is close to the prior mean, i.e. the ``offset``.
 
     Parameters
     ----------
@@ -243,14 +249,14 @@ def bayes(
         i.e. shrinking towards the origin.
     dirs : array_like, default=None
         A matrix of shape ``(p, k)`` whose columns span the affine direction
-        of shrinkage. See the :mod:`nustattools.stats.shrinkage` module
+        of shrinkage.  See the :mod:`nustattools.stats.shrinkage` module
         docstring for details.
     prior_cov : array_like, default=None
-        The prior covariance matrix, of shape ``(p, p)``, in the same
-        coordinates as ``x``i.  the fixed covariance :math:``\\Gamma`` of a Gaussian
-        prior :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
-        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).
-        See the :mod:`nustattools.stats.shrinkage` module docstring for details.
+        The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
+        the same coordinates as ``x``, for the Gaussian prior
+        :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
+        the :mod:`nustattools.stats.shrinkage` module docstring for details.
 
     Returns
     -------
@@ -275,8 +281,8 @@ def bayes(
     The Bayes rule is generally *not* minimax: its risk exceeds the minimax
     risk :math:`\\operatorname{Tr}[Q\\Sigma]` when the true mean is far from
     the prior mean. However, when the prior is well-specified (the true mean is
-    near zero), the Bayes rule can have substantially lower risk than any
-    minimax estimator.
+    near the offset), the Bayes rule can have substantially lower risk than the
+    MLE.
 
     Examples
     --------

@@ -3,7 +3,7 @@
 This module implements shrinkage estimators for the problem of estimating the
 mean :math:`\\vec\\theta` of :math:`\\vec x \\sim N(\\vec\\theta, \\Sigma)`
 under the quadratic loss :math:`(\\vec\\delta - \\vec\\theta)^\\mathrm{T} Q
-(\\vec\\delta - \\vec\\theta)`, where :math:`\\vec\\delta` is the estimatate.
+(\\vec\\delta - \\vec\\theta)`, where :math:`\\vec\\delta` is the estimate.
 The aim of shrinkage estimators is to reduce the *expectation value* of the
 loss, the risk, for some or all possible values of :math:`\\vec\\theta`,
 compared to the risk of the Maximum Likelihood Estimator (MLE)
@@ -22,7 +22,7 @@ variance).
 The estimators may shrink towards an arbitrary affine subspace :math:`\\vec o +
 \\operatorname{span}(\\mathcal D)`, where :math:`\\vec o` is an ``offset`` and
 :math:`\\mathcal D` is a set of direction vectors that span the affine subspace
-(providede as a matrix ``dirs`` with the vectors making up the columns).
+(provided as a matrix ``dirs`` with the vectors making up the columns).
 Following [Tan2016]_, Section 3.3, the projection onto this subspace is built
 in the data covariance (precision) metric: Let :math:`V` be the matrix of
 direction vectors in the canonical coordinates. Then the projector is :math:`P
@@ -32,10 +32,13 @@ so their risks add and each can be improved independently. The component in the
 affine subspace is kept and the residual is shrunk towards zero.
 
 The prior used in some estimators -- e.g. :func:`bayes`, :func:`robust_bayes`,
-:func:`tan_bayes`, and :func:`minimax_bayes` -- is a Gaussian
-:math:`\\vec\\theta \\sim N(\\vec 0, \\gamma \\Gamma)`.  It has a shape
+:func:`tan`, :func:`tan_bayes`, and :func:`minimax_bayes` -- is a Gaussian
+:math:`\\vec\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  It has a shape
 :math:`\\Gamma` (provided as ``prior_cov``) and a scale :math:`\\gamma`. The
-prior must be diagonal in the canonical space. Its elements :math:`\\pi_i`
+shape :math:`\\Gamma` must be symmetric positive definite and must be
+diagonalizable in the canonical coordinates; the three cases below are the
+ones where the latter holds for any :math:`\\Gamma` (a :class:`ValueError` is
+raised otherwise). Its elements :math:`\\pi_i`
 follow the same large-to-small ordering as the data covariance. They are
 non-increasing within each block of (numerically-)equal :math:`d_i`.
 
@@ -44,7 +47,7 @@ coordinates:
 
 - :math:`\\Gamma \\propto Q^{-1}` -- In this case, :math:`Q = I` in the
   canonical space, so :math:`\\Gamma \\propto I`. The default assumption when
-  no explicit ``prior_cov`` is specified is :math:`\\Gamma = Q^{-1}`
+  no explicit ``prior_cov`` is specified is :math:`\\Gamma = Q^{-1}`.
 
 - :math:`\\Gamma \\propto \\Sigma` -- In this case, :math:`\\Sigma = D` in the
   canonical space, so :math:`\\Gamma \\propto D`.
@@ -68,9 +71,9 @@ The scaling factor :math:`\\gamma` can be specified in five ways:
   observation. Its shape must match the leading batch dimensions of
   ``x`` (``()`` for a single vector).
 
-- A string ``"max_rel_risk({alpha}, {precision})"`` or ``"max_rel_risk({beta},
-  {precision})"``. The arguments must be given as numeric literals (e.g.
-  ``"max_abs_risk(1, 1e-3)"``).
+- A string ``"max_abs_risk({alpha}, {precision})"`` or
+  ``"max_rel_risk({beta}, {precision})"``. The arguments must be given as
+  numeric literals (e.g. ``"max_abs_risk(1, 1e-3)"``).
 
   These empirical methods choose :math:`\\gamma` such that the application of
   Bayes' rule (e.g. with :func:`bayes`) would lead to a shift of the data by a
@@ -99,11 +102,11 @@ The scaling factor :math:`\\gamma` can be specified in five ways:
   shrinkage target.
 
 - A callable ``f(d, pi, y)`` that computes the prior scales from the canonical
-  coordinate data variances :math:`d_i`, and prior variances :math:`\\pi_i`
-  (both provided as a vector with shape ``(p_eff,)``; and the canonical data
-  :math:`\\vec y`. It may return either a singular scalar (a single scale
+  coordinate data variances :math:`d_i` and prior variances :math:`\\pi_i`
+  (both provided as vectors with shape ``(p_eff,)``) and the canonical data
+  :math:`\\vec y`. It may return either a single scalar (a single scale
   shared by every observation, e.g. when the scale is inferred only from
-  :math:`d_i`  and :math:`\\pi_i` and not the data) or a real-valued,
+  :math:`d_i` and :math:`\\pi_i` and not the data) or a real-valued,
   non-negative array whose shape equals ``y.shape[:-1]`` (one prior scale per
   observation).  Any error from the callable is reported as a
   :class:`TypeError`, and a shape mismatch or negative return as a
