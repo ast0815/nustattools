@@ -345,14 +345,21 @@ def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[
 def _zero_eigenvalue_tolerance(w: NDArray[Any], p: int) -> float:
     """Numerically-zero eigenvalue threshold for a size-``p`` symmetric matrix.
 
-    An eigenvalue of ``w`` is treated as zero when it lies below this tolerance,
-    which scales the machine epsilon by ``p`` so the threshold grows with the
-    matrix size.
+    An eigenvalue of ``w`` is treated as zero when it lies below this
+    tolerance, which scales the machine epsilon by ``p`` *and by the largest
+    magnitude eigenvalue of ``w``*.  The threshold is therefore purely
+    relative: rescaling the matrix by any positive factor never changes which
+    of its eigenvalues count as zero, so every positive semi-definiteness and
+    degeneracy decision made from it is scale-invariant.  An all-zero spectrum
+    has a tolerance of zero, so only exactly-zero eigenvalues are then treated
+    as zero.
 
     """
 
     maxw = float(np.max(np.abs(w))) if w.size else 0.0
-    return p * _EPSILON * max(maxw, 1.0)
+    if maxw == 0.0:
+        return 0.0
+    return p * _EPSILON * maxw
 
 
 def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
@@ -470,8 +477,12 @@ def _reduce_dirs(
     of basis is
     an isometry of the squared-error loss, so shrinking ``eta`` conserves the
     full-dimensional loss exactly.  Coordinates whose residual variance is
-    numerically zero (the kept subspace itself) are dropped with the
-    scale-aware tolerance of :func:`_zero_eigenvalue_tolerance`.
+    numerically zero are dropped against the zero threshold of the *parent*
+    covariance (see :func:`_zero_eigenvalue_tolerance`): the residual
+    covariance is a projection, and when the no-shrink directions span the
+    whole space it degenerates into pure roundoff whose own eigenvalues are
+    all of the same noise order, so judging them relative to each other would
+    keep the noise and build a bogus reduced problem from it.
 
     """
 
@@ -479,10 +490,12 @@ def _reduce_dirs(
     p_perp = np.eye(cov.shape[0]) - pmat
     # Residual covariance (I - P) C (I - P)^T; its range is S_perp.  Its
     # positive eigenvalues give the reduced variances and its (orthonormal)
-    # eigenvectors a basis that diagonalizes the residual.
+    # eigenvectors a basis that diagonalizes the residual.  A residual
+    # variance is zero relative to the covariance it was projected from, not
+    # relative to the other residual variances (which vanish with it).
     m = p_perp @ cov @ p_perp.T
     lam, vecs = np.linalg.eigh(m)
-    keep = lam > _zero_eigenvalue_tolerance(lam, cov.shape[0])
+    keep = lam > _zero_eigenvalue_tolerance(np.linalg.eigvalsh(cov), cov.shape[0])
     l2 = vecs[:, keep]
     d_perp = lam[keep]
     kept = y @ pmat.T

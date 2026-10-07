@@ -190,6 +190,14 @@ and this project adheres to
 
 ### Fixed
 
+- All positive semi-definiteness and degeneracy decisions (on `Q`, `cov`,
+  `prior_cov` and the canonical variance groups) are now scale-invariant: the
+  zero-eigenvalue threshold is purely relative to the matrix instead of carrying
+  an absolute floor, so `Q = 1e-16 I` shrinks like `Q = I` and a tiny indefinite
+  `Q` or a coupled tiny `prior_cov` is judged exactly like its O(1) counterpart.
+- A residual subspace that vanishes into roundoff (no-shrink directions spanning
+  everything) is no longer mistaken for a real, noise-only shrinkage problem:
+  residual variances are judged against the parent covariance.
 - `max_rel_risk`/`max_abs_risk` no longer stall at a zero prior scale (or enter
   a limit cycle) on small and medium data: the prior-scale refinement is now
   driven by an optional relative-residual tolerance (`rtol`, default no

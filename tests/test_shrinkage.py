@@ -1674,6 +1674,57 @@ def test_Q_nonsymmetric_raises_on_psd_path():
         _shrinkage.berger(rng().normal(size=2), np.eye(2), Q=q)
 
 
+@pytest.mark.parametrize("scale", [1e-16, 1e-8, 1e8, 1e16])
+def test_Q_scale_invariance(scale):
+    # The loss is only defined up to a positive scale factor, so rescaling Q
+    # must not change the estimate: in particular a numerically tiny Q must be
+    # classified exactly like the same matrix at O(1) instead of collapsing
+    # onto the "all directions loss-free" case.
+    gen = rng()
+    p = 5
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    q = _psd_q(3, p, gen)  # singular Q: null(Q) is scale-free as well
+    for loss in (np.eye(p), q):
+        expected = _shrinkage.berger(x, cov=cov, Q=loss)
+        np.testing.assert_allclose(
+            _shrinkage.berger(x, cov=cov, Q=scale * loss),
+            expected,
+            rtol=1e-9,
+            atol=1e-12,
+        )
+
+
+def test_scaled_indefinite_Q_raises():
+    # A negative eigenvalue must be caught whatever the scale of Q: it may be
+    # many orders of magnitude below the largest eigenvalue and still be a
+    # genuine indefiniteness rather than roundoff.
+    x = rng().normal(size=3)
+    q = np.diag([1e-18, -1e-17, 1e-18])  # lambda_min / lambda_max = -10
+    with pytest.raises(ValueError, match="positive semi-definite"):
+        _shrinkage.berger(x, Q=q)
+
+
+def test_prior_diagonalizability_verdict_is_scale_free():
+    # Whether a coupled prior can be diagonalized in the canonical frame is a
+    # structural property: it must not flip with the absolute scale of the
+    # prior or of the covariance.  A prior coupling canonical coordinates of
+    # differing variances is rejected at O(1) and at 1e-16 alike (the tiny
+    # scale used to be swallowed by an absolute tolerance, silently accepting
+    # a prior the user never got).
+    gen = rng()
+    p = 5
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    u = gen.normal(size=(p, p))
+    prior = u @ u.T + np.eye(p)  # coupled, not diagonal in canonical coords
+    x = gen.normal(size=p)
+    for scale_cov, scale_prior in ((1.0, 1.0), (1.0, 1e-16), (1e-16, 1.0)):
+        with pytest.raises(ValueError, match="cannot be diagonalized"):
+            _shrinkage.bayes(x, cov=scale_cov * cov, prior_cov=scale_prior * prior)
+
+
 # ---------------------------------------------------------------------------
 # tan_bayes: delta_{A,c} with the Bayes-rule shrinkage direction
 # ---------------------------------------------------------------------------
