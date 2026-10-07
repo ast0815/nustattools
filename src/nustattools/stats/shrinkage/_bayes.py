@@ -20,6 +20,7 @@ from numpy.typing import ArrayLike, NDArray
 from ._core import (
     GammaCallable,
     _check_gamma_nonnegative,
+    _check_strength,
     _estimate,
     _prior_diagonal,
 )
@@ -162,6 +163,7 @@ def robust_bayes(
 
     """
 
+    _check_strength(strength, bounded=False)
     _check_gamma_nonnegative(gamma)
 
     return _estimate(

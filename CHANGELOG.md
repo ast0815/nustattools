@@ -190,6 +190,15 @@ and this project adheres to
 
 ### Fixed
 
+- `minimax_bayes` no longer returns an all-NaN estimate on all-zero data, with
+  `offset == x`, or at `gamma = inf`; the last case now returns the identity as
+  documented. On zero data the vanishing shrinkage denominator no longer
+  produces NaN or leaked divide-by-zero warnings for `tan`, `tan_bayes` and
+  `berger` either (notably at `strength = 0` or with `positive=False`).
+- NaN `strength`, `gamma` (scalar or per-observation) and gamma-factory `alpha`
+  are now rejected with a `ValueError` instead of slipping through the range
+  checks, where every estimator read them differently (identity, MLE, or all-NaN
+  output).
 - With a positive _semi_-definite (singular) `Q` and a non-zero `offset`, the
   estimators now shrink around the offset correctly: the whole offset is
   restored instead of only its projection onto the no-shrink subspace, so zero

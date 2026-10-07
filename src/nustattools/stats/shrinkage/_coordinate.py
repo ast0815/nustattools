@@ -142,13 +142,18 @@ def _tan_canonical(
 
     # Apply estimator: delta_j = (1 - strength * c* * a*_j / (a*^2 . y^2))_+ * y_j.
     # a_star is indexed by descending-importance sorted position, so y must be
-    # reordered to match before applying and then mapped back.
+    # reordered to match before applying and then mapped back.  s_val is the
+    # squared norm of the shrinkage direction and vanishes only when y does
+    # (a_star > 0); the shrinkage term is then 0/0 (strength 0) or inf, so it
+    # is switched off and the all-zero residual is left at its data value.
     y_sorted = y[..., order]
     s_val = np.sum(a_star**2 * y_sorted**2, axis=-1)
     c_actual = strength * c_star_val
-    factor = 1.0 - c_actual * a_star / s_val[..., None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        factor = 1.0 - c_actual * a_star / s_val[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
+    factor = np.where(s_val[..., None] == 0.0, 1.0, factor)
     delta_sorted = cast(NDArray[Any], factor * y_sorted)
     delta = np.empty_like(delta_sorted)
     delta[..., order] = delta_sorted
@@ -320,7 +325,8 @@ def _minimax_bayes_canonical(
     ``strength = 1`` recovers Tan's version and ``strength = 2`` Berger's
     original :math:`2(k-2)_+`; minimaxity holds for
     :math:`0 \\le \\mathrm{strength} \\le 2`.
-    ``gamma`` is the (finite, non-negative) prior scale.  ``pi`` (default all
+    ``gamma`` is the non-negative prior scale; ``gamma = inf`` (the flat
+    prior) returns the identity.  ``pi`` (default all
     ones) is the canonical diagonal of an explicit prior covariance, making
     the effective per-coordinate prior variance :math:`\\gamma \\pi_j`.  The
     coordinates are in canonical order: ``d`` is non-increasing and ``pi`` is
@@ -332,14 +338,18 @@ def _minimax_bayes_canonical(
     p_eff = len(d)
     if p_eff < 3:
         return y
+    if np.isposinf(gamma):
+        # gamma -> inf is the flat-prior limit: w -> 0 and delta = y.  It must
+        # be taken explicitly here because d* collapses to zero and the bracket
+        # below would divide by it (0/0), returning NaN instead of the
+        # identity.
+        return y
 
     # Bayes importance d* = d^2/(d+gamma), Bayes-rule weight w = d/(d+gamma)
     # and the cumulative shrinkage statistic S_k = sum_{l<=k} y_l^2/(d_l+gamma).
     # An explicit prior shape pi makes the effective per-coordinate prior
     # variance gamma * pi (replacing gamma).  For gamma >= 0 these are all
-    # well-defined, with gamma=0 the Bhattacharya limit (d* = d, w = 1).  As
-    # gamma -> inf, w -> 0 and the estimator reduces to the identity
-    # (delta = y), so no separate limit is needed.
+    # well-defined, with gamma=0 the Bhattacharya limit (d* = d, w = 1).
     pi = _prior_diagonal(d, pi)
     d_plus_g = d + gamma * pi
     d_star = d**2 / d_plus_g
@@ -357,8 +367,13 @@ def _minimax_bayes_canonical(
     # m_k = min{1, strength*(k-2)_+ / S_k}; recall k is 1-based in the paper, so
     # at 0-based index i the term is strength * max(0, i-1).  m_0 = m_1 = 0, so
     # the k=1,2 coordinates contribute nothing, as expected from (k-2)_+.
+    # S_k = 0 (a leading run of zero data) makes the ratio 0/0 for those first
+    # two coordinates, whose m_k is 0 by definition anyway; for k >= 3 the
+    # ratio is c_k/0 = inf, which min() correctly maps to the maximal m_k = 1.
     c_k = strength * np.maximum(np.arange(p_eff) - 1, 0.0)
-    m_k = np.minimum(1.0, c_k / s_cum)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        m_k = np.minimum(1.0, c_k / s_cum)
+    m_k = np.where(c_k == 0, 0.0, m_k)
 
     # t_k = (d*_k - d*_{k+1}) * m_k, with d*_{p+1} = 0.  The bracket in Eq. (8)
     # is B_j = (1/d*_j) * sum_{k>=j} t_k, a reverse cumulative sum.
@@ -545,6 +560,11 @@ def _tan_bayes_canonical(
         factor = 1.0 - c_actual[..., None] * a / s_val[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
+    # s_val is the squared norm of the shrinkage direction and vanishes only
+    # when y does (a > 0): the shrinkage term is then 0/0 (strength 0) or an
+    # infinity, so it is switched off and the all-zero residual keeps its
+    # data value instead of turning into NaN (or -inf * 0).
+    factor = np.where(s_val[..., None] == 0.0, 1.0, factor)
     return np.where(bad[..., None], y, factor * y)
 
 
@@ -647,6 +667,7 @@ def tan_bayes(
 
     """
 
+    _check_strength(strength, bounded=False)
     _check_gamma_nonnegative(gamma)
 
     return _estimate_coordinate(

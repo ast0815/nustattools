@@ -882,10 +882,23 @@ def _estimate(
     )
 
 
-def _check_strength(strength: float) -> None:
-    """Raise ``ValueError`` unless ``0 <= strength <= 2``."""
+def _check_strength(strength: float, *, bounded: bool = True) -> None:
+    """Raise ``ValueError`` if ``strength`` is not a usable shrinkage strength.
 
-    if strength < 0 or strength > 2:
+    NaN is always rejected: as a bare range comparison it satisfies neither
+    side and would silently pass, giving each estimator a different all-NaN or
+    limit result instead of the promised error.  With ``bounded`` (the
+    default) the value must additionally lie in the minimax range
+    ``[0, 2]``, which ``+/-inf`` violates as well.  The estimators that
+    document out-of-range strengths pass ``bounded=False`` and keep every
+    finite (and infinite) value they accept today.
+
+    """
+
+    if np.isnan(strength):
+        msg = "strength must not be NaN."
+        raise ValueError(msg)
+    if bounded and not 0.0 <= strength <= 2.0:
         msg = "strength must be in [0, 2]."
         raise ValueError(msg)
 
@@ -893,19 +906,22 @@ def _check_strength(strength: float) -> None:
 def _check_gamma_nonnegative(
     gamma: float | str | Callable[..., Any] | NDArray[Any],
 ) -> None:
-    """Raise ``ValueError`` if ``gamma`` contains negative values.
+    """Raise ``ValueError`` if ``gamma`` contains negative or NaN values.
 
     String presets and callables are left to be resolved downstream; only
-    numeric (scalar or array) values are validated here.
+    numeric (scalar or array) values are validated here.  ``+inf`` stays
+    allowed: it is the documented flat prior (and ``-inf`` is caught by the
+    sign check).  NaN would otherwise slip through the sign comparison and be
+    interpreted differently by every estimator (identity, MLE, or all-NaN
+    output).
 
     """
 
-    if (
-        not isinstance(gamma, str)
-        and not callable(gamma)
-        and np.any(np.asarray(gamma) < 0)
-    ):
-        msg = "gamma must be non-negative."
+    if isinstance(gamma, str) or callable(gamma):
+        return
+    values = np.asarray(gamma)
+    if np.any(values < 0) or np.any(np.isnan(values)):
+        msg = "gamma must be non-negative and not NaN."
         raise ValueError(msg)
 
 

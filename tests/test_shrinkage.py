@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import warnings
 
 import numpy as np
 import pytest
@@ -35,6 +36,20 @@ from nustattools.stats.shrinkage._risk import _canonical_directions
 
 def rng():
     return np.random.default_rng(42)
+
+
+# Estimator groupings shared by the parametrized tests below; kept at the top
+# so every test can use them regardless of where it sits in the file.
+_EMPIRICAL_METHODS = [
+    "bayes",
+    "robust_bayes",
+    "tan_bayes",
+]
+_FLOAT_ONLY_METHODS = [
+    "tan",
+    "minimax_bayes",
+]
+_PRIOR_METHODS = ["bayes", "robust_bayes", "tan_bayes", "tan", "minimax_bayes"]
 
 
 def _berger_general_formula(x, cov, q, c):
@@ -296,6 +311,68 @@ def test_berger_out_of_range_strength_error():
     for bad in (-1.0, 3.0):
         with pytest.raises(ValueError, match="strength"):
             _shrinkage.berger(rng().normal(size=3), np.eye(3), strength=bad)
+
+
+_STRENGTH_METHODS = [
+    "berger",
+    "tan",
+    "minimax_bayes",
+    "tan_bayes",
+    "robust_bayes",
+]
+
+
+@pytest.mark.parametrize("estimator", _STRENGTH_METHODS)
+def test_strength_nan_rejected(estimator):
+    # NaN satisfies neither half of a bare `0 <= strength <= 2` comparison, so
+    # it used to slip through and give each estimator a different wrong
+    # answer (all NaN, or an undocumented limit) instead of an error.
+    estimate = getattr(_shrinkage, estimator)
+    with pytest.raises(ValueError, match="strength"):
+        estimate(rng().normal(size=5), strength=np.nan)
+    with pytest.raises(ValueError, match="strength"):
+        s.shrink(rng().normal(size=5), method=estimator, strength=np.nan)
+
+
+@pytest.mark.parametrize("estimator", _PRIOR_METHODS)
+def test_gamma_nan_rejected(estimator):
+    # Same hole in the gamma check: NaN is not < 0, and it used to be read as
+    # a flat prior by `tan`, as the MLE by `bayes`, and as NaN elsewhere.
+    estimate = getattr(_shrinkage, estimator)
+    with pytest.raises(ValueError, match="gamma"):
+        estimate(rng().normal(size=5), gamma=np.nan)
+
+
+@pytest.mark.parametrize("estimator", _EMPIRICAL_METHODS)
+def test_vector_gamma_nan_rejected(estimator):
+    # A per-observation array with one NaN entry is rejected as well, so no
+    # single observation can silently poison the whole batch.
+    estimate = getattr(_shrinkage, estimator)
+    x = rng().normal(size=(3, 5))
+    g_bad = np.array([1.0, np.nan, 2.0])
+    with pytest.raises(ValueError, match="non-negative"):
+        estimate(x, gamma=g_bad)
+
+
+@pytest.mark.parametrize("estimator", _STRENGTH_METHODS)
+def test_zero_data_returns_zero_without_warnings(estimator):
+    # The shrinkage denominator vanishes on all-zero data.  The estimators
+    # must return zero (their estimate of a zero residual) rather than NaN,
+    # and must not leak a divide-by-zero RuntimeWarning -- including at
+    # strength 0 (0/0 instead of an infinity) and with positive=False (where
+    # an unclipped -inf times a zero residual is NaN).
+    estimate = getattr(_shrinkage, estimator)
+    z = np.zeros(5)
+    variants: list[dict[str, object]] = [{}, {"strength": 0.0}]
+    if estimator != "berger":
+        variants.append({"gamma": float("inf")})
+    if estimator not in ("berger", "robust_bayes"):
+        variants.append({"positive": False})
+    for kwargs in variants:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            out = estimate(z, **kwargs)
+        np.testing.assert_array_equal(out, z, err_msg=f"{estimator} {kwargs}")
 
 
 def _projection(basis):
@@ -1337,6 +1414,32 @@ def test_minimax_bayes_gamma_validation():
         _shrinkage.minimax_bayes(rng().normal(size=5), gamma=-1.0)
 
 
+def test_minimax_bayes_infinite_gamma_is_identity():
+    # gamma -> inf is the flat-prior limit: d* collapses to zero, so the
+    # bracket divided by it (0/0) and returned all NaN instead of the
+    # identity the canonical form documents for this limit.
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.minimax_bayes(x, gamma=float("inf")), x, rtol=1e-12
+    )
+    batch = gen.normal(size=(3, p))
+    np.testing.assert_allclose(
+        _shrinkage.minimax_bayes(batch, gamma=float("inf")), batch, rtol=1e-12
+    )
+
+
+def test_minimax_bayes_offset_equal_data_is_identity():
+    # With offset == x the centered data are all zero, so every cumulative
+    # statistic S_k vanishes and m_k was 0/0 for the leading coordinates;
+    # one NaN canonical coordinate then smeared over the whole estimate
+    # through the dense back-transform.  The estimate must be the data.
+    gen = rng()
+    x = gen.normal(size=6)
+    np.testing.assert_allclose(_shrinkage.minimax_bayes(x, offset=x), x)
+
+
 def test_minimax_bayes_small_complement_survives_general_gamma():
     # A small complement with a moderate gamma still produces shrinkage in the
     # low-Bayes-importance coordinates, so the result differs from the input.
@@ -2177,17 +2280,6 @@ def test_robust_bayes_two_dimensions_is_identity():
     np.testing.assert_allclose(_shrinkage.robust_bayes(x, cov=np.eye(2)), x, atol=1e-12)
 
 
-_EMPIRICAL_METHODS = [
-    "bayes",
-    "robust_bayes",
-    "tan_bayes",
-]
-_FLOAT_ONLY_METHODS = [
-    "tan",
-    "minimax_bayes",
-]
-
-
 def _empirical_gamma(x, p, offset=None):
     y = np.asarray(x, dtype=float) - (0.0 if offset is None else offset)
     return float(np.sum(y**2)) / p
@@ -2938,8 +3030,6 @@ def test_float_only_methods_reject_callable_gamma():
 # ---------------------------------------------------------------------------
 # Explicit prior covariance (prior_cov): validation, rotation, and consistency.
 # ---------------------------------------------------------------------------
-
-_PRIOR_METHODS = ["bayes", "robust_bayes", "tan_bayes", "tan", "minimax_bayes"]
 
 
 def _diagonalizable_prior(cov, q, pi):

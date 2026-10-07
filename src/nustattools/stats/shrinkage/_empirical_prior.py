@@ -192,7 +192,10 @@ def _max_rel_risk_gamma(
 
     """
 
-    if alpha <= 0:
+    # Written as `not alpha > 0` rather than `alpha <= 0` so that NaN (both
+    # comparisons are False) is rejected instead of silently yielding a NaN
+    # prior scale.
+    if not alpha > 0:
         msg = "alpha must be > 0."
         raise ValueError(msg)
     if rtol is not None and (np.isnan(rtol) or rtol < 0):
@@ -246,7 +249,10 @@ def _max_abs_risk_gamma(
 
     """
 
-    if alpha <= 0:
+    # Written as `not alpha > 0` rather than `alpha <= 0` so that NaN (both
+    # comparisons are False) is rejected instead of silently yielding a NaN
+    # prior scale.
+    if not alpha > 0:
         msg = "alpha must be > 0."
         raise ValueError(msg)
     if rtol is not None and (np.isnan(rtol) or rtol < 0):

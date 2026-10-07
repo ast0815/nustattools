@@ -46,9 +46,15 @@ def _berger_canonical(
         return y
     dinv = 1.0 / d
     s = np.sum(y**2 * dinv**2, axis=-1)
-    factor = 1.0 - c * dinv / s[..., None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        factor = 1.0 - c * dinv / s[..., None]
     if positive:
         factor = np.maximum(factor, 0.0)
+    # s is a weighted squared norm that vanishes only when y does: the
+    # shrinkage ratio is then infinite (or NaN for the batch elements that do
+    # not shrink), so it is switched off and the all-zero residual keeps its
+    # data value instead of becoming NaN.
+    factor = np.where(s[..., None] == 0.0, 1.0, factor)
     return cast(NDArray[Any], factor * y)
 
 
