@@ -3755,6 +3755,74 @@ def test_matmul_with_Q_and_offset():
     np.testing.assert_allclose(result, a @ (x - offset) + offset, rtol=1e-10)
 
 
+@pytest.mark.parametrize("with_offset", [False, True])
+def test_matmul_psd_Q_matches_direct(with_offset):
+    # A singular loss admits no canonical frame, so matmul used to die in its
+    # Cholesky factorisation even though the plain transformation does not
+    # depend on the loss: it must give exactly the documented
+    # offset + A (x - offset), batched as well.
+    gen = rng()
+    p = 5
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p) if with_offset else None
+    shift = 0.0 if offset is None else offset
+    a = gen.normal(size=(p, p))
+    q = _psd_q(3, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, cov=cov, Q=q, A=a, offset=offset),
+        shift + a @ (x - shift),
+        rtol=1e-12,
+    )
+    batch = gen.normal(size=(4, p))
+    np.testing.assert_allclose(
+        _shrinkage.matmul(batch, cov=cov, Q=q, A=a, offset=offset),
+        shift + (batch - shift) @ a.T,
+        rtol=1e-12,
+    )
+
+
+def test_matmul_psd_Q_identity_returns_x():
+    # The identity transform with a singular Q must return the data instead
+    # of failing in the loss whitening.
+    x = np.array([1.0, 2.0])
+    np.testing.assert_array_equal(
+        _shrinkage.matmul(x, Q=np.diag([1.0, 0.0]), A=np.eye(2)), x
+    )
+    gen = rng()
+    p = 5
+    xx = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(xx, Q=_psd_q(3, p, gen), A=np.eye(p)), xx, rtol=1e-12
+    )
+
+
+def test_matmul_psd_Q_enhance_raises():
+    # enhance is formulated in the canonical coordinates, which do not exist
+    # for a singular loss: the requirement must surface as a clear ValueError,
+    # not as a raw numpy LinAlgError from the frame's Cholesky factorisation.
+    gen = rng()
+    p = 4
+    q = _psd_q(3, p, gen)
+    with pytest.raises(ValueError, match="enhance=True requires a positive definite"):
+        _shrinkage.matmul(gen.normal(size=p), Q=q, A=np.eye(p), enhance=True)
+
+
+def test_shrink_method_matmul_psd_Q():
+    # shrink(method="matmul") forwards the loss unchanged, singular or not.
+    gen = rng()
+    p = 4
+    x = gen.normal(size=p)
+    a = gen.normal(size=(p, p))
+    q = _psd_q(2, p, gen)
+    np.testing.assert_allclose(
+        s.shrink(x, Q=q, method="matmul", A=a),
+        _shrinkage.matmul(x, Q=q, A=a),
+        rtol=1e-12,
+    )
+
+
 def test_matmul_A_shape_error():
     with pytest.raises(ValueError, match="A must have shape"):
         _shrinkage.matmul(rng().normal(size=3), A=np.eye(4))

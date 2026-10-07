@@ -362,6 +362,20 @@ def _zero_eigenvalue_tolerance(w: NDArray[Any], p: int) -> float:
     return p * _EPSILON * maxw
 
 
+def _is_positive_definite(q: NDArray[Any]) -> bool:
+    """True when the symmetric matrix ``q`` is numerically positive definite.
+
+    Every eigenvalue must exceed the scale-relative zero threshold of
+    :func:`_zero_eigenvalue_tolerance`, the same predicate that decides
+    between the direct and the split solve in :func:`_estimate`, so a caller
+    deciding whether a canonical frame exists agrees with the solver.
+
+    """
+
+    w = np.linalg.eigvalsh(q)
+    return bool(np.all(w > _zero_eigenvalue_tolerance(w, q.shape[0])))
+
+
 def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive semi-definite with the given shape."""
 
@@ -856,8 +870,7 @@ def _estimate(
 
     xa, cova, qa, _ = _validate(x, cov, q)
     p = qa.shape[0]
-    w = np.linalg.eigvalsh(qa)
-    if np.all(w > _zero_eigenvalue_tolerance(w, p)):
+    if _is_positive_definite(qa):
         return _estimate_pd(
             xa,
             cova,

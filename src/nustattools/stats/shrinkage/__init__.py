@@ -123,6 +123,11 @@ estimator acts only on the covariance-metric complement of
 :math:`\\operatorname{span}(\\mathcal D) + \\operatorname{null}(Q)`, where the
 restricted loss is positive definite.
 
+The one exception is :func:`matmul` with ``enhance=True``: that improvement
+is formulated in the canonical coordinates and therefore needs a positive
+definite :math:`Q`.  Plain :func:`matmul` works with any :math:`Q`, since its
+result does not depend on the loss.
+
 Concretely, the covariance-metric projection of the estimate onto
 :math:`\\operatorname{span}(\\mathcal D) + \\operatorname{null}(Q)` equals that
 of the observed data (kept at its data value), and shrinkage is applied in the

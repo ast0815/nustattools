@@ -190,6 +190,11 @@ and this project adheres to
 
 ### Fixed
 
+- `matmul` now accepts a positive semi-definite `Q` like every other method: the
+  plain transformation is applied directly instead of dying in the Cholesky
+  factorisation of the canonical frame. `enhance=True` with a singular `Q`
+  raises a clear `ValueError` instead, since that construction needs the
+  canonical coordinates.
 - `minimax_bayes` no longer returns an all-NaN estimate on all-zero data, with
   `offset == x`, or at `gamma = inf`; the last case now returns the identity as
   documented. On zero data the vanishing shrinkage denominator no longer
