@@ -190,6 +190,11 @@ and this project adheres to
 
 ### Fixed
 
+- With a positive _semi_-definite (singular) `Q` and a non-zero `offset`, the
+  estimators now shrink around the offset correctly: the whole offset is
+  restored instead of only its projection onto the no-shrink subspace, so zero
+  shrinkage returns the data again and the estimate is
+  `offset + P(x - offset) + delta_res`.
 - All positive semi-definiteness and degeneracy decisions (on `Q`, `cov`,
   `prior_cov` and the canonical variance groups) are now scale-invariant: the
   zero-eigenvalue threshold is purely relative to the matrix instead of carrying

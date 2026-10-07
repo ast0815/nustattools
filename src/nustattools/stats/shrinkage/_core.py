@@ -597,6 +597,18 @@ def _estimate_split(
     :func:`_estimate_pd` and recombines.  The inputs must already be validated
     (see :func:`_validate`); ``dirs`` must span the full no-shrink set.
 
+    With ``offset`` given, the data are centred first and the *whole* offset is
+    added back on recombination, so the estimate is
+    :math:`\\vec o + P(\\vec x - \\vec o) + \\delta_{\\mathrm{res}}` (the same
+    recombination :func:`_estimate_pd` uses for its ``dirs`` split).  Adding
+    only the projected offset :math:`P \\vec o` instead would shrink the
+    offset's out-of-span component and return :math:`P\\vec x +
+    \\delta_{\\mathrm{res}}`, which is not the data even at zero shrinkage.
+    The recombination keeps both contracts: :math:`P \\delta = P \\vec x`
+    (because :math:`P\\vec o + P(\\vec x - \\vec o) = P\\vec x` and the residual
+    lives in the complement) and :math:`\\delta = \\vec x` when the estimator
+    does not shrink.
+
     """
 
     p = cov.shape[0]
@@ -610,7 +622,11 @@ def _estimate_split(
             raise ValueError(msg)
         y = x - o
     kept, eta, d_perp, l2, pmat = _reduce_dirs(y, cov, v_all)
-    kept_off = np.zeros(p) if offset is None else o @ pmat.T
+    # The *whole* offset is added back on recombination, not its projection:
+    # the estimate is o + P(x - o) + delta_res (as in _estimate_pd's dirs
+    # path), which gives P delta = P x and delta = x when nothing shrinks.
+    # Keeping only P o would return P x + delta_res instead.
+    offset_term = np.zeros(p) if offset is None else o
     q_comp = l2.T @ q @ l2
     # The prior only acts where shrinkage happens: restrict it to the
     # covariance-metric complement of the no-shrink directions.  The residuals
@@ -639,7 +655,7 @@ def _estimate_split(
             prior_cov=prior_comp,
             **kwargs,
         )
-    return cast(NDArray[Any], kept_off + kept + delta_comp @ l2.T)
+    return cast(NDArray[Any], offset_term + kept + delta_comp @ l2.T)
 
 
 def _estimate_pd(

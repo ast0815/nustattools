@@ -1518,18 +1518,53 @@ def test_psd_Q_null_is_auto_included_in_no_shrink_span():
         np.testing.assert_allclose(with_null_dirs, plain, rtol=1e-8, atol=1e-10)
 
 
-def test_psd_Q_identity_strength_recovers_x():
+@pytest.mark.parametrize("with_offset", [False, True])
+@pytest.mark.parametrize(
+    "estimator", ["berger", "tan", "minimax_bayes", "tan_bayes", "robust_bayes"]
+)
+def test_psd_Q_identity_strength_recovers_x(estimator, with_offset):
     # With strength 0 (no shrinkage) the estimate must be the input even for a
-    # singular Q.
+    # singular Q -- also when an offset shifts the target, which used to drop
+    # the out-of-span component of the offset and return x - (I - P) o.
     gen = rng()
     p = 6
     q = _psd_q(3, p, gen)
     cov = gen.normal(size=(p, p))
     cov = cov @ cov.T + np.eye(p)
     x = gen.normal(size=p)
+    offset = gen.normal(size=p) if with_offset else None
+    estimate = getattr(_shrinkage, estimator)
     np.testing.assert_allclose(
-        _shrinkage.berger(x, cov=cov, Q=q, strength=0.0), x, rtol=1e-9
+        estimate(x, cov=cov, Q=q, offset=offset, strength=0.0), x, rtol=1e-9
     )
+
+
+@pytest.mark.parametrize("q_kind", ["pd", "singular"])
+@pytest.mark.parametrize(
+    "estimator",
+    ["berger", "tan", "minimax_bayes", "tan_bayes", "robust_bayes", "bayes"],
+)
+def test_offset_shift_equivariance(estimator, q_kind):
+    # The estimators depend on the data only through x - offset, so shifting
+    # data and target by the same vector must shift the estimate by it.  On
+    # the singular-Q path this used to fail because only the projection of the
+    # offset was restored on recombination.
+    gen = rng()
+    p = 6
+    q = np.eye(p) if q_kind == "pd" else _psd_q(4, p, gen)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
+    x = gen.normal(size=p)
+    offset = gen.normal(size=p)
+    dirs = gen.normal(size=(p, 2))
+    estimate = getattr(_shrinkage, estimator)
+    kwargs = {"gamma": 1.0} if estimator == "bayes" else {}
+    for user_dirs in (None, dirs):
+        with_shift = estimate(x, cov=cov, Q=q, offset=offset, dirs=user_dirs, **kwargs)
+        without_shift = offset + estimate(
+            x - offset, cov=cov, Q=q, dirs=user_dirs, **kwargs
+        )
+        np.testing.assert_allclose(with_shift, without_shift, rtol=1e-8, atol=1e-10)
 
 
 def test_psd_Q_dirs_in_null_are_dropped():
