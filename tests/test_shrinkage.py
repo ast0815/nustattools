@@ -1029,12 +1029,27 @@ def test_estimate_risk_curve_matches_brute_force():
 
 def test_estimate_risk_curve_distance_is_canonical_norm():
     # The distance entry equals the canonical Euclidean norm of the mean.
+    # A constant-zero estimator loses exactly ||B theta||^2 = theta^T Q theta
+    # on every draw, so sqrt(risk) reproduces the requested distance with no
+    # Monte Carlo noise left over.  Merely echoing the input back -- all this
+    # test asserted before -- would not notice a wrong step from distance to
+    # mean.
     cov = np.diag([1.0, 2.0, 3.0])
-    est = functools.partial(s.shrink, strength=1.0)
+
+    def zero_estimate(x, _cov, **_kwargs):
+        return np.zeros_like(np.asarray(x, dtype=float))
+
     recs = _shrinkage.estimate_risk_curve(
-        cov, est, directions="uniform", distances=[2.0, 4.0], n_reps=200, seed=0
+        cov,
+        zero_estimate,
+        directions="uniform",
+        distances=[2.0, 4.0],
+        n_reps=200,
+        seed=0,
     )
     assert [r["distance"] for r in recs] == [2.0, 4.0]
+    for r in recs:
+        np.testing.assert_allclose(np.sqrt(r["risk"]), r["distance"], rtol=1e-12)
 
 
 def test_estimate_risk_curve_risk_ratio():
@@ -3998,31 +4013,89 @@ def test_matmul_enhance_dominates_guaranteed():
             assert bias_enh == pytest.approx(bias_plain, abs=1e-12)  # bias identical
 
 
+def _linear_matrix(estimate, p):
+    """Matrix ``A`` of the linear estimator ``delta = estimate(x)``.
+
+    Evaluating the estimator on the canonical basis recovers its columns, so
+    a test can inspect the transformation itself instead of only the output
+    on one draw.
+
+    """
+    eye = np.eye(p)
+    return np.column_stack([estimate(eye[j]) for j in range(p)])
+
+
 def test_matmul_enhance_with_cov():
-    """enhance=True works correctly with non-identity covariance."""
+    """enhance=True preserves the bias term and does not raise the variance.
+
+    Both properties are asserted in the original coordinates with the
+    identity loss: the bias term ``(I - A)^T Q (I - A)`` is unchanged and
+    ``tr(Q A cov A^T)`` does not increase.  The matrices are recovered from
+    the estimator's action, and they must actually differ -- otherwise the
+    two inequalities would hold trivially even if ``enhance`` did nothing.
+
+    """
     gen = rng()
     p = 3
-    x = gen.normal(size=p)
     cov = gen.normal(size=(p, p))
     cov = cov @ cov.T + np.eye(p)
     a = _shrinkage_kernel(gen, p)
-    # Should not raise and should produce a finite result
-    result = _shrinkage.matmul(x, cov=cov, A=a, enhance=True)
-    assert result.shape == (p,)
-    assert np.all(np.isfinite(result))
+    a_enh = _linear_matrix(
+        lambda x: _shrinkage.matmul(x, cov=cov, A=a, enhance=True), p
+    )
+    a_plain = _linear_matrix(
+        lambda x: _shrinkage.matmul(x, cov=cov, A=a, enhance=False), p
+    )
+    eye = np.eye(p)
+    np.testing.assert_allclose(
+        (eye - a_enh).T @ (eye - a_enh),
+        (eye - a_plain).T @ (eye - a_plain),
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    assert (
+        np.trace(a_enh @ cov @ a_enh.T) <= np.trace(a_plain @ cov @ a_plain.T) + 1e-12
+    )
+    assert not np.allclose(a_enh, a_plain, atol=1e-8)
 
 
 def test_matmul_enhance_with_Q():
-    """enhance=True works correctly with non-identity loss matrix."""
+    """The same two guarantees hold for a non-identity loss matrix.
+
+    With a general ``Q`` the bias term is ``Q``-weighted and the variance
+    term is ``tr(Q A cov A^T)``, which is the trace the canonical-frame
+    change of coordinates preserves.  The covariance must not be the
+    identity: for ``cov = I`` and a symmetric ``A`` the Eldar construction
+    returns its input unchanged (``(D E D)^{1/2}`` equals ``(I - A*) D``
+    exactly), so ``enhance`` would be an algebraic no-op there and only the
+    two equalities, not the difference, could be checked.
+
+    """
     gen = rng()
     p = 3
-    x = gen.normal(size=p)
     bmat = gen.normal(size=(p, p))
     q = bmat @ bmat.T + np.eye(p)
+    cov = gen.normal(size=(p, p))
+    cov = cov @ cov.T + np.eye(p)
     a = _shrinkage_kernel(gen, p)
-    result = _shrinkage.matmul(x, Q=q, A=a, enhance=True)
-    assert result.shape == (p,)
-    assert np.all(np.isfinite(result))
+    a_enh = _linear_matrix(
+        lambda x: _shrinkage.matmul(x, cov=cov, Q=q, A=a, enhance=True), p
+    )
+    a_plain = _linear_matrix(
+        lambda x: _shrinkage.matmul(x, cov=cov, Q=q, A=a, enhance=False), p
+    )
+    eye = np.eye(p)
+    np.testing.assert_allclose(
+        (eye - a_enh).T @ q @ (eye - a_enh),
+        (eye - a_plain).T @ q @ (eye - a_plain),
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    assert (
+        np.trace(q @ a_enh @ cov @ a_enh.T)
+        <= np.trace(q @ a_plain @ cov @ a_plain.T) + 1e-12
+    )
+    assert not np.allclose(a_enh, a_plain, atol=1e-8)
 
 
 def test_matmul_enhance_batched():
