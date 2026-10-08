@@ -126,7 +126,11 @@ restricted loss is positive definite.
 The one exception is :func:`matmul` with ``enhance=True``: that improvement
 is formulated in the canonical coordinates and therefore needs a positive
 definite :math:`Q`.  Plain :func:`matmul` works with any :math:`Q`, since its
-result does not depend on the loss.
+result does not depend on the loss.  :func:`estimate_risk_curve` likewise
+requires a positive definite :math:`Q`: it Cholesky-factorizes it to build
+the canonical frame its sweep directions live in, whereas
+:func:`estimate_risk` and :func:`shrink` accept a semi-definite loss and only
+leave its null space unshrunk.
 
 Concretely, the covariance-metric projection of the estimate onto
 :math:`\\operatorname{span}(\\mathcal D) + \\operatorname{null}(Q)` equals that

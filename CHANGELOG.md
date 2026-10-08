@@ -190,6 +190,11 @@ and this project adheres to
 
 ### Fixed
 
+- The shrinkage module docstring now says which entry points need a positive
+  definite `Q` rather than a semi-definite one: `estimate_risk_curve` (which
+  Cholesky-factorizes the loss to build its sweep directions), next to the
+  already documented `matmul` with `enhance=True`, while `estimate_risk` and
+  `shrink` keep accepting a semi-definite loss.
 - `regularize`'s docstring now matches what the code returns and computes: `err`
   has shape `(2, *reg_x.shape)` (not "shaped like `reg_x`"), the penalty matrix
   is called `G` so that `Q` keeps its package-wide meaning of the loss matrix,
