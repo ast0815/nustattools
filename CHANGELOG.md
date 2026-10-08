@@ -190,6 +190,12 @@ and this project adheres to
 
 ### Fixed
 
+- `regularize`'s docstring now matches what the code returns and computes: `err`
+  has shape `(2, *reg_x.shape)` (not "shaped like `reg_x`"), the penalty matrix
+  is called `G` so that `Q` keeps its package-wide meaning of the loss matrix,
+  the loss is described as the inverse covariance whose Mahalanobis distance
+  `delta_chi2` bounds, and the single-bin 68% CI guarantee is qualified by the
+  1e-3 Newton tolerance it holds to.
 - The shrinkage docstrings now claim minimaxity exactly where Tan (2015)
   establishes it: `minimax_bayes` is stated minimax for `strength` 1 and 2
   (Berger's original), `tan_bayes` only while its shrinkage direction is

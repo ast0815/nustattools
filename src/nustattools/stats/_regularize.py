@@ -39,9 +39,10 @@ def regularize(
 
     If ``model`` is given, the data is regularized towards the model shape,
     otherwise towards a flat prior (all ones). By default, the shift of the
-    data is limited to a ``delta_chi2`` of 1, so the regularized data is
-    guaranteed to lie within all single-bin 68% CI error bars of the original
-    data.
+    data is limited to a ``delta_chi2`` of 1, so the regularized data lies
+    within all single-bin 68% CI error bars of the original data -- to within
+    the 1e-3 relative residual of the Newton refinement that sets the
+    per-observation prior scale (see Notes).
 
     Parameters
     ----------
@@ -63,12 +64,14 @@ def regularize(
     reg_x : numpy.ndarray
         The regularized data, shape ``(..., k)``.
     err : numpy.ndarray
-        Asymmetric error bars around ``reg_x`` shaped like ``reg_x``, ready
-        for plotting. ``err[0]`` is the lower error bar (``reg_x - err[0]``
-        is the lower edge of the original 1-sigma interval relative to the
-        regularized point) and ``err[1]`` is the upper error bar
-        (``reg_x + err[1]`` is the upper edge). The original error bar
-        centered on ``x`` is shifted so the regularized value lies inside it.
+        Asymmetric error bars around ``reg_x``, ready for plotting, with
+        shape ``(2, *reg_x.shape)``: the leading axis holds the lower
+        (``err[0]``) and upper (``err[1]``) error bar. ``err[0]`` is the
+        lower error bar (``reg_x - err[0]`` is the lower edge of the
+        original 1-sigma interval relative to the regularized point) and
+        ``err[1]`` is the upper error bar (``reg_x + err[1]`` is the upper
+        edge). The original error bar centered on ``x`` is shifted so the
+        regularized value lies inside it.
 
     Raises
     ------
@@ -100,7 +103,9 @@ def regularize(
     -----
 
     Applies a post-hoc regularization as described in [Koch2022]_. The penalty
-    matrix ``Q`` penalizes shape differences from the model.
+    matrix ``G`` (named apart from the loss matrix ``Q`` of
+    :mod:`nustattools.stats.shrinkage`) penalizes shape differences from the
+    model.
     The multiplication
 
     .. math::
@@ -117,13 +122,13 @@ def regularize(
     .. math::
 
         \\sum_{i<j} (y_i - y_j)^2 = \\sum_{i<j} y_i^2 + y_j^2 - 2 y_i y_j
-            = \\vec{y}^T Q \\vec{y},
+            = \\vec{y}^T G \\vec{y},
 
     with
 
     .. math::
 
-        Q = k I_k - \\vec{1} \\vec{1}^T = \\left( \\begin{array}{cccc}
+        G = k I_k - \\vec{1} \\vec{1}^T = \\left( \\begin{array}{cccc}
                 k-1 & -1 & -1 & \\cdots \\\\
                 -1 & k-1 & -1 & \\cdots \\\\
                 -1 & -1 & k-1 & \\cdots \\\\
@@ -140,12 +145,15 @@ def regularize(
     coincides with the model shape.
 
     The implementation uses the Bayes shrinkage estimator
-    :func:`nustattools.stats.shrinkage.bayes` with the risk metric being the
-    data covariance, and the inverse of ``Q`` as the prior covariance. In order
-    to do this, a small relative diagonal jitter is added to make ``Q``
-    numerically invertible.  The ``max_abs_risk`` empirical gamma factory is
-    then used to set the per-observation prior scale from the data and ensure
-    that the shrunk data is moved by the required ``delta_chi2``.
+    :func:`nustattools.stats.shrinkage.bayes` with the loss matrix set to the
+    inverse of the data covariance -- so that the Mahalanobis distance
+    ``delta_chi2`` bounds is measured in exactly that metric -- and with the
+    inverse of ``G`` as the prior covariance. In order to do this, a small
+    relative diagonal jitter is added to make ``G`` numerically invertible.
+    The ``max_abs_risk`` empirical gamma factory is then used to set the
+    per-observation prior scale from the data and ensure that the shrunk data
+    is moved by the required ``delta_chi2``; its Newton refinement stops at a
+    relative residual of 1e-3, the tolerance the CI guarantee above holds to.
 
     """
 
