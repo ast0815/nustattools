@@ -190,6 +190,11 @@ and this project adheres to
 
 ### Fixed
 
+- `matmul`'s `enhance` notes now also cover the fixed-point case: an `A` that is
+  symmetric in the original coordinates and commutes with `cov` (in particular
+  any symmetric `A` with the default `cov = I`) is returned unchanged by the
+  Eldar construction, where the notes previously implied every case outside the
+  canonical-kernel one has its variance reduced.
 - The shrinkage module docstring now says which entry points need a positive
   definite `Q` rather than a semi-definite one: `estimate_risk_curve` (which
   Cholesky-factorizes the loss to build its sweep directions), next to the

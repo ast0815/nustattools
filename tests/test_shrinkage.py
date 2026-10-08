@@ -3889,6 +3889,27 @@ def test_matmul_enhance_symmetric_noop():
     np.testing.assert_allclose(r_enh, r_plain, rtol=1e-12)
 
 
+def test_matmul_enhance_symmetric_kernel_identity_cov():
+    """With the default covariance a symmetric kernel is a fixed point.
+
+    For ``cov = I`` and a symmetric ``A`` with eigenvalues in ``[0, 1]`` the
+    Eldar construction maps its input to itself, so ``enhance`` must leave the
+    estimate unchanged instead of improving or rejecting it.
+    """
+    gen = rng()
+    p = 3
+    a = _shrinkage_kernel(gen, p)
+    bmat = gen.normal(size=(p, p))
+    q = bmat @ bmat.T + np.eye(p)
+    x = gen.normal(size=p)
+    np.testing.assert_allclose(
+        _shrinkage.matmul(x, Q=q, A=a, enhance=True),
+        _shrinkage.matmul(x, Q=q, A=a, enhance=False),
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
 def _shrinkage_kernel(gen: np.random.Generator, p: int) -> np.ndarray:
     """Symmetric PSD matrix with eigenvalues in (0, 1] in a random eigenbasis.
 

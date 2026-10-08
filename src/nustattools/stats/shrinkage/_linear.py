@@ -238,7 +238,12 @@ def matmul(
     raises :class:`ValueError` instead of silently degrading the estimate. When
     :math:`A^*` is symmetric in the canonical coordinates with all eigenvalues
     in :math:`[0, 1]` (a shrinkage kernel), ``enhance`` is a no-op *only* if
-    :math:`A^*` commutes with :math:`D`. Otherwise the construction still
+    :math:`A^*` commutes with :math:`D`.  Conversely, an :math:`A` that is
+    symmetric in the *original* coordinates and commutes with ``cov`` -- in
+    particular any symmetric :math:`A` with the default ``cov = I``, such as
+    a shrinkage kernel built in that basis -- is a fixed point of the
+    construction: when the condition holds ``enhance`` returns it unchanged,
+    and when it does not it raises as above. Otherwise the construction still
     reduces its variance in the :math:`D`-metric.
 
     """
