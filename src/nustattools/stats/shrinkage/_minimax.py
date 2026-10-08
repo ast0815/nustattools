@@ -75,7 +75,9 @@ def berger(
     :math:`s = \\sum_j y_j^2 / d_j^2` and
     :math:`c = \\mathrm{strength}\\,(p_{\\mathrm{eff}} - 2)`, with
     :math:`p_{\\mathrm{eff}}` the effective number of dimensions.
-    The estimator is minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.
+    The estimator is minimax for :math:`0 \\le \\mathrm{strength} \\le 2`
+    ([Tan2015]_, Section 2: :math:`\\delta_c^{\\mathrm{B}}` is minimax for
+    :math:`0 \\le c \\le 2 (p - 2)`).
 
     Parameters
     ----------
@@ -99,7 +101,9 @@ def berger(
         dimension).  ``strength = 0``
         gives the identity estimator, ``strength = 1`` the optimal minimax
         estimator, and ``strength = 2`` the boundary of the minimax class.
-        Must be in ``[0, 2]``.
+        Must be in ``[0, 2]``.  With fewer than three effective coordinates
+        the constant :math:`c` is non-positive and the estimator returns the
+        data.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.

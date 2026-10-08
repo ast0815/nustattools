@@ -58,6 +58,11 @@ def shrink(
         :func:`~nustattools.stats.shrinkage.tan`, and
         :func:`~nustattools.stats.shrinkage.tan_bayes`.
         The method name matches the name of the estimator function.
+        For fewer than three effective coordinates the shrinkage estimators
+        (``tan``, ``berger``, ``minimax_bayes``, ``tan_bayes`` and
+        ``robust_bayes``) are the identity, so with the default
+        ``method="tan"`` this function leaves one- and two-dimensional data
+        untouched; ``bayes`` and ``matmul`` still act there.
     offset : array_like, default=None
         A point of shape ``(p,)`` towards which to shrink.  Defaults to zero,
         i.e. shrinking towards the origin.

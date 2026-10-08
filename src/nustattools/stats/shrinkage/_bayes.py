@@ -111,7 +111,9 @@ def robust_bayes(
         :math:`p_{\\mathrm{eff}}-2`) and ``strength = 2`` Berger's original
         version (with :math:`2(p_{\\mathrm{eff}}-2)`).  Values outside
         :math:`[0, 2]` are accepted but push the estimator further from its
-        recommended operating range.
+        recommended operating range -- except that ``strength <= 0`` makes
+        the shrinkage cap vanish, leaving the estimate at the MLE rather
+        than pushing it past the identity.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for the accepted forms.

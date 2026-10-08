@@ -69,7 +69,9 @@ def _tan_canonical(
       proportional to their variance.
 
     ``strength`` scales the minimax constant :math:`c^*`; the estimator is
-    minimax for :math:`0 \\le \\mathrm{strength} \\le 2`.  The coordinates are
+    minimax for :math:`0 \\le \\mathrm{strength} \\le 2` ([Tan2015]_,
+    Corollary 1, applied to the data-independent direction
+    :math:`A^\\dagger` of Theorem 2).  The coordinates are
     in canonical order: ``d`` is non-increasing (variance decreasing) and
     ``pi`` is its aligned prior diagonal, non-increasing within each block of
     (numerically-)equal ``d``.
@@ -194,7 +196,9 @@ def tan(
         Shrinkage strength as a fraction of the optimal value :math:`c^*`.
         Must be in :math:`[0, 2]`.  ``strength = 0`` gives the identity
         estimator, ``strength = 1`` the optimal minimax estimator, and
-        ``strength = 2`` the boundary of the minimax class.
+        ``strength = 2`` the boundary of the minimax class.  Fewer than
+        three effective coordinates also give the identity: the construction
+        of [Tan2015]_ assumes :math:`p \\ge 3`.
     gamma : float, default=0.0
         Non-negative prior scale controlling the Bayes importance segmentation
         [Tan2015]_.  Must be :math:`\\ge 0`.  Only a scalar float is
@@ -227,9 +231,10 @@ def tan(
     High-importance coordinates are shrunk inversely proportional to their
     variance (like Berger's estimator), while low-importance coordinates are
     shrunk in the direction of the Bayes rule (shrinkage proportional to
-    variance).  This yields both minimaxity and effective risk reduction,
-    whereas Berger's estimator shrinks low-variance coordinates too
-    aggressively and the Bayes rule is generally non-minimax.
+    variance).  This yields both minimaxity ([Tan2015]_, Theorem 2: the
+    direction :math:`A^\\dagger` is data-independent) and effective risk
+    reduction, whereas Berger's estimator shrinks low-variance coordinates
+    too aggressively and the Bayes rule is generally non-minimax.
 
     The automatic scaling in the estimator leads to some special cases
     for the prior:
@@ -323,7 +328,8 @@ def _minimax_bayes_canonical(
     :math:`(k-2)_+` (with :math:`k` the 1-based importance rank, coordinates
     sorted by decreasing Bayes importance):
     ``strength = 1`` recovers Tan's version and ``strength = 2`` Berger's
-    original :math:`2(k-2)_+`; minimaxity holds for
+    original :math:`2(k-2)_+`.  [Tan2015]_ reviews those two as minimax; it
+    does not claim minimaxity for every
     :math:`0 \\le \\mathrm{strength} \\le 2`.
     ``gamma`` is the non-negative prior scale; ``gamma = inf`` (the flat
     prior) returns the identity.  ``pi`` (default all
@@ -408,9 +414,11 @@ def minimax_bayes(
     This is Berger's (1982) estimator reviewed in [Tan2015]_, Section 2,
     Equation (8), for a multivariate normal mean under a normal prior
     :math:`\\vec \\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  It combines
-    the Bayes rule (shrinkage proportional to variance) with a minimax
-    shrinkage magnitude that keeps the estimator minimax over the whole
-    parameter space.
+    the Bayes rule (shrinkage proportional to variance) with a shrinkage
+    magnitude intended to keep the estimator minimax: its risk never exceeds
+    the minimax risk :math:`\\operatorname{tr}(Q \\Sigma)`, that of the MLE,
+    for any true mean.  See Notes for which ``strength`` values that is
+    established for.
 
     Parameters
     ----------
@@ -432,7 +440,10 @@ def minimax_bayes(
         Shrinkage strength that scales the factor :math:`(k-2)_+` in the paper,
         where k is the coordinate's 1-based rank by decreasing Bayes importance.
         At ``strength = 1`` it yields Tan's version and ``strength = 2``
-        Berger's original.  Must be in :math:`[0, 2]`.
+        Berger's original.  Must be in :math:`[0, 2]`; minimaxity is stated
+        for the values 1 and 2 (see Notes).  With fewer than three effective
+        coordinates every factor :math:`(k-2)_+` vanishes and the estimator
+        returns the data.
     gamma : float, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for details. This estimator only accepts single
@@ -455,6 +466,17 @@ def minimax_bayes(
     -------
     delta : numpy.ndarray
         The shrinkage estimate of the mean, with the same shape as ``x``.
+
+    Notes
+    -----
+    ``strength`` scales the constants :math:`(k-2)_+` in the shrinkage
+    magnitude.  ``strength = 1`` is the version [Tan2015]_ reviews in
+    Equation (8) and ``strength = 2`` Berger's original
+    :math:`2(k-2)_+`; the paper reports both as minimax (attributing them
+    to Berger) and remarks that the available theory does not favour either
+    version over the other.  The values in between scale the same magnitude
+    and are accepted, but are not covered by that reference -- simulation
+    finds no violation of the minimax bound for them either.
 
     Examples
     --------
@@ -511,8 +533,11 @@ def _tan_bayes_canonical(
     ``y`` has shape ``(..., p)`` with coordinate variances ``d`` of shape
     ``(p,)``.  ``strength`` scales the minimax constant
     :math:`c^*(D, A) = \\operatorname{tr}(D A) - 2 \\lambda_{\\max}(D A)`:
-    the estimator is minimax for
-    :math:`0 \\le \\mathrm{strength} \\le 2`.  ``gamma`` is the prior scale (a
+    for a data-independent :math:`A` the estimator is minimax for
+    :math:`0 \\le \\mathrm{strength} \\le 2` ([Tan2015]_, Equation (11)),
+    while a ``gamma`` resolved from the data makes :math:`A`
+    data-dependent, which [Tan2015]_, Section 3.3, excludes from that
+    guarantee.  ``gamma`` is the prior scale (a
     scalar is broadcast across observations and ``(...)`` array values give
     one scale per observation); ``pi`` (default all ones) is the canonical
     diagonal of an explicit prior covariance, making the effective
@@ -593,8 +618,13 @@ def tan_bayes(
     the Bayes risk among all minimax estimators), this estimator uses the
     Bayes-rule direction directly. The shrinkage magnitude is controlled by
     :math:`c\\, c^*(D, A)` where :math:`c` is the ``strength``, and
-    :math:`c^*(D, A) = \\operatorname{Tr}[D A] - 2 \\lambda_{\\max}(D A)`. The
-    estimator is minimax for :math:`0 \\le c \\le 2`.
+    :math:`c^*(D, A) = \\operatorname{Tr}[D A] - 2 \\lambda_{\\max}(D A)`. For
+    a data-independent direction :math:`A` the estimator is minimax for
+    :math:`0 \\le c \\le 2` ([Tan2015]_, Equation (11)).  A scalar ``gamma``
+    with a fixed ``prior_cov`` makes :math:`A` data-independent; an
+    empirical, callable or per-observation ``gamma`` derives it from the data,
+    and [Tan2015]_, Section 3.3, explicitly warns that minimaxity does not
+    necessarily follow from a data-dependent choice of :math:`A`.
 
     Parameters
     ----------
@@ -619,7 +649,7 @@ def tan_bayes(
         identity estimator, ``strength = 1`` the optimal minimax value, and
         ``strength = 2`` the boundary of the minimax class.  Values outside
         :math:`[0, 2]` are accepted but the estimator is no longer guaranteed
-        minimax.
+        minimax.  Fewer than three effective coordinates give the identity.
     gamma : float, str, callable, or numpy.ndarray, default=1.0
         Non-negative prior scale; see the :mod:`nustattools.stats.shrinkage`
         module docstring for the accepted forms.

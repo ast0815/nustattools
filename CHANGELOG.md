@@ -190,6 +190,14 @@ and this project adheres to
 
 ### Fixed
 
+- The shrinkage docstrings now claim minimaxity exactly where Tan (2015)
+  establishes it: `minimax_bayes` is stated minimax for `strength` 1 and 2
+  (Berger's original), `tan_bayes` only while its shrinkage direction is
+  data-independent -- an empirical, callable or array `gamma` derives it from
+  the data, which the paper's Section 3.3 excludes from the guarantee -- while
+  the claims that did hold (`berger`, `tan`) now carry their citations. Also
+  documented: the identity returned below three effective coordinates (including
+  via the default `shrink` method) and `robust_bayes` with `strength <= 0`.
 - `matmul` now accepts a positive semi-definite `Q` like every other method: the
   plain transformation is applied directly instead of dying in the Cholesky
   factorisation of the canonical frame. `enhance=True` with a singular `Q`
