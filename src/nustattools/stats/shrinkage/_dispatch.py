@@ -74,9 +74,11 @@ def shrink(
         The prior covariance matrix :math:`\\Gamma`, of shape ``(p, p)``, in
         the same coordinates as ``x``, for the Gaussian prior
         :math:`\\theta \\sim N(\\vec o, \\gamma \\Gamma)`.  Defaults to
-        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  See
-        the :mod:`nustattools.stats.shrinkage` module docstring for
-        details.
+        :math:`Q^{-1}` (a homoscedastic prior in canonical coordinates).  Only
+        the prior-aware estimators (``bayes``, ``minimax_bayes``, ``tan``,
+        ``tan_bayes`` and ``robust_bayes``) take a prior; ``berger`` and
+        ``matmul`` take no prior and reject it.  See the
+        :mod:`nustattools.stats.shrinkage` module docstring for details.
     **kwargs
         Additional keyword arguments passed to the estimator, e.g.
         ``strength``, ``positive`` or ``gamma``.  See the
