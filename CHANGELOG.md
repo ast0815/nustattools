@@ -190,6 +190,16 @@ and this project adheres to
 
 ### Fixed
 
+- Symmetry validation of `cov`, `Q` and `prior_cov` no longer depends on the
+  unit system: `shrinkage` and `regularize` now check symmetry with a purely
+  relative tolerance, so a matrix that is asymmetric in relative terms is
+  rejected however small its scale.
+- `matmul`'s `enhance` isotropy shortcut is now triggered by a relative instead
+  of an absolute spread of the canonical variances, so the Eldar dominance
+  condition (eq. (91)) is enforced at every scale of the data.
+- `shrink`'s `prior_cov` docstring now names the methods that take a prior
+  (`bayes`, `minimax_bayes`, `tan`, `tan_bayes`, `robust_bayes`) and states that
+  `berger` and `matmul` reject it, instead of dying with a raw `TypeError`.
 - `matmul`'s `enhance` notes now also cover the fixed-point case: an `A` that is
   symmetric in the original coordinates and commutes with `cov` (in particular
   any symmetric `A` with the default `cov = I`) is returned unchanged by the

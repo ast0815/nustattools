@@ -173,7 +173,16 @@ def regularize(
         raise ValueError(_MSG_COV_SQUARE_MISMATCH.format(got=cov_arr.shape, k=k))
     if not np.all(np.isfinite(x_arr)) or not np.all(np.isfinite(cov_arr)):
         raise ValueError(_MSG_FINITE)
-    if not np.allclose(cov_arr, cov_arr.T, rtol=1e-5, atol=1e-8):
+    # The symmetry tolerance is relative to the matrix norm so the verdict does
+    # not depend on the unit system: with an absolute floor, a matrix that is
+    # asymmetric by a factor of two in relative terms is accepted once every
+    # entry falls below it.
+    if not np.allclose(
+        cov_arr,
+        cov_arr.T,
+        rtol=1e-5,
+        atol=1e-8 * float(np.max(np.abs(cov_arr))),
+    ):
         raise ValueError(_MSG_COV_NOT_SYM)
     eigvals = np.linalg.eigvalsh(cov_arr)
     if float(eigvals.min()) <= 0:

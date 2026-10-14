@@ -2000,6 +2000,32 @@ def test_scaled_indefinite_Q_raises():
         _shrinkage.berger(x, Q=q)
 
 
+@pytest.mark.parametrize("scale", [1.0, 1e-6, 1e-12, 1e-16])
+def test_symmetry_gate_is_scale_invariant(scale):
+    # "Is this matrix symmetric?" is a relative property: a matrix that is
+    # asymmetric by a factor of two in relative terms must be rejected at every
+    # scale, instead of being accepted once every entry falls below the old
+    # absolute tolerance (numpy's default atol=1e-8).  The covariance uses the
+    # strict positive-definite validator, Q the semi-definite one.
+    gen = rng()
+    m = np.array([[1.0, 1.0], [0.0, 1.0]])
+    with pytest.raises(ValueError, match="must be symmetric"):
+        _shrinkage.berger(gen.normal(size=2), cov=scale * m)
+    with pytest.raises(ValueError, match="must be symmetric"):
+        _shrinkage.berger(gen.normal(size=2), Q=scale * m)
+
+
+def test_symmetry_gate_accepts_exactly_symmetric_tiny_matrix():
+    # The relative gate must not over-reject: an exactly symmetric matrix is
+    # accepted however small its scale.
+    gen = rng()
+    p = 3
+    u = gen.normal(size=(p, p))
+    m = (u @ u.T + np.eye(p)) * 1e-20
+    assert _shrinkage.berger(gen.normal(size=p), cov=m).shape == (p,)
+    assert _shrinkage.berger(gen.normal(size=p), Q=m).shape == (p,)
+
+
 def test_prior_diagonalizability_verdict_is_scale_free():
     # Whether a coupled prior can be diagonalized in the canonical frame is a
     # structural property: it must not flip with the absolute scale of the
@@ -4080,6 +4106,16 @@ def test_matmul_enhance_dominates_shrinkage():
     risk_plain = float(np.mean(np.sum(d_plain**2, axis=1)))
     risk_enh = float(np.mean(np.sum(d_enh**2, axis=1)))
     assert risk_enh <= risk_plain + 1e-10  # allow MC noise
+    # Recover the transformation matrices: a no-op ``enhance`` would satisfy
+    # the Monte-Carlo inequality trivially, so pin the actual variance
+    # reduction the construction promises.
+    a_enh = _linear_matrix(
+        lambda v: _shrinkage.matmul(v, cov=cov, A=a, enhance=True), p
+    )
+    a_plain = _linear_matrix(
+        lambda v: _shrinkage.matmul(v, cov=cov, A=a, enhance=False), p
+    )
+    assert np.trace(a_enh @ cov @ a_enh.T) < np.trace(a_plain @ cov @ a_plain.T)
 
 
 def test_matmul_enhance_raises_condition():
@@ -4108,6 +4144,30 @@ def test_matmul_enhance_raises_condition():
     assert cond > 1.0
     with pytest.raises(ValueError, match="Eldar"):
         _shrinkage.matmul(x, cov=cov, A=a, enhance=True)
+
+
+@pytest.mark.parametrize("scale", [1.0, 1e-4, 1e-8, 1e8])
+def test_matmul_enhance_condition_is_scale_invariant(scale):
+    """The dominance-condition gate must not depend on the unit system.
+
+    Condition (91) is invariant under rescaling the canonical variances
+    ``D -> c D`` (the ``c`` from ``(cDED)^{1/2}`` cancels against the two
+    ``c^{-1/2}`` factors), so the same standardized problem -- data scaled by
+    ``s``, covariance by ``s**2`` -- must raise at every scale instead of the
+    isotropy shortcut swallowing the violation once the variances drop below
+    the (previously absolute) tolerance.
+    """
+    gen = rng()
+    d = np.array([10.0, 5.0, 2.0, 1.0])
+    a = np.eye(4)
+    a[3, 0] = 1.7  # lambda_max = 1.025 > 1, so condition (91) fails
+    x = gen.normal(size=(4, 4)) * np.sqrt(d)
+    cov = np.diag(d)
+    # Sanity: the unscaled problem really does violate condition (91).
+    with pytest.raises(ValueError, match="Eldar"):
+        _shrinkage.matmul(x, cov=cov, A=a, enhance=True)
+    with pytest.raises(ValueError, match="Eldar"):
+        _shrinkage.matmul(x * scale, cov=cov * scale**2, A=a, enhance=True)
 
 
 def test_matmul_enhance_heteroscedastic_guaranteed():

@@ -23,6 +23,30 @@ from numpy.typing import ArrayLike, NDArray
 
 from ._empirical_prior import _EPSILON
 
+# Symmetry tolerance for the symmetry gates.  ``np.allclose``'s default
+# absolute floor (``atol=1e-8``) would make "is this matrix symmetric?" depend
+# on the unit system: a matrix that is asymmetric by a factor of two in
+# relative terms passes once every entry falls below ~1e-8.  The floor is
+# therefore kept at the same magnitude but measured *relative to the matrix
+# norm*, so the verdict is scale-invariant (like the zero-eigenvalue threshold
+# below).  The element-wise relative part catches asymmetries between
+# comparable entries even when the overall matrix is large.
+_SYMMETRY_RTOL = 1e-5
+_SYMMETRY_ATOL_SCALE = 1e-8
+
+
+def _is_symmetric(a: NDArray[Any]) -> bool:
+    """True when ``a`` is symmetric to within a scale-relative tolerance."""
+
+    return bool(
+        np.allclose(
+            a,
+            a.T,
+            rtol=_SYMMETRY_RTOL,
+            atol=_SYMMETRY_ATOL_SCALE * float(np.max(np.abs(a))),
+        )
+    )
+
 
 def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
     """Validate that ``a`` is symmetric positive definite with the given shape."""
@@ -34,7 +58,7 @@ def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[
     if not np.all(np.isfinite(aa)):
         msg = f"{name} must contain only finite values."
         raise ValueError(msg)
-    if not np.allclose(aa, aa.T):
+    if not _is_symmetric(aa):
         msg = f"{name} must be symmetric."
         raise ValueError(msg)
     try:
@@ -91,7 +115,7 @@ def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray
         # but reporting it as "not symmetric" hides what is actually wrong.
         msg = f"{name} must contain only finite values."
         raise ValueError(msg)
-    if not np.allclose(aa, aa.T):
+    if not _is_symmetric(aa):
         msg = f"{name} must be symmetric."
         raise ValueError(msg)
     if shape[0] == 0:

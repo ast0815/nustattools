@@ -36,6 +36,12 @@ def _matmul_canonical(
     return cast(NDArray[Any], y @ A.T)
 
 
+# Relative tolerance for the isotropic-variance shortcut below.  The gate must
+# be relative: an absolute floor would make "are the canonical variances
+# isotropic?" depend on the unit system, so the same standardized problem could
+# either enforce or skip condition (91) depending on the scale of ``d``.
+_ENHANCE_ISOTROPY_RTOL = 1e-9
+
 _ENHANCE_CONDITION_FAILED = (
     "`enhance=True` requires the Eldar (2006) dominance condition "
     "`lambda_max(D^{-1/2} (D (I - A^*)^T (I - A^*) D)^{1/2} D^{-1/2}) <= 1` "
@@ -97,9 +103,12 @@ def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
     a = c.T @ c
     evals, evecs = np.linalg.eigh(np.diag(d) @ a @ np.diag(d))
     s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
-    if not np.allclose(d, d[0]):
+    if np.ptp(d) > _ENHANCE_ISOTROPY_RTOL * float(np.max(d)):
         # Condition (91): lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1,
         # the D-weighted analogue of lambda_max(A) <= 1 in the isotropic case.
+        # Skipping this check for isotropic ``d`` is deliberate: there the
+        # condition degenerates to ``||I - g||_2 <= 1``, which is not what
+        # Cohen (1966) needs, so the construction dominates unconditionally.
         winv = np.diag(1.0 / np.sqrt(d))
         cond = np.linalg.eigvalsh(winv @ s @ winv)[-1]
         if cond > 1.0 + 1e-9:

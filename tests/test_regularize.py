@@ -140,6 +140,26 @@ def test_invalid_cov_symmetry_raises():
         s.regularize(x, cov)
 
 
+def test_cov_symmetry_gate_is_scale_invariant():
+    # The same relative asymmetry must be rejected whatever the unit system:
+    # the old absolute tolerance (atol=1e-8) wrongly accepted this matrix once
+    # every entry was below ~1e-8.
+    x = np.array([1.0, 2.0, 3.0])
+    cov = np.array([[1.0, 0.5, 0.0], [0.3, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    for scale in (1.0, 1e-10, 1e-20):
+        with pytest.raises(ValueError, match="symmetric"):
+            s.regularize(x, scale * cov)
+
+
+def test_tiny_exactly_symmetric_cov_accepted():
+    # The relative gate must not over-reject: an exactly symmetric positive
+    # definite covariance passes however small its scale.
+    x = np.array([1.0, 2.0, 3.0]) * 1e-10
+    cov = np.diag([1.0, 0.5, 2.0]) * 1e-20
+    data, _ = s.regularize(x, cov, delta_chi2=1e-2)
+    assert data.shape == (3,)
+
+
 def test_invalid_cov_positive_definite_raises():
     x = np.array([1.0, 2.0, 3.0])
     cov = np.array([[1.0, 0.0, 0.0], [0.0, -0.5, 0.0], [0.0, 0.0, 1.0]])
