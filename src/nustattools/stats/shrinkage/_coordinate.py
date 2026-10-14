@@ -20,13 +20,8 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from ._core import (
-    GammaCallable,
-    _check_gamma_nonnegative,
-    _check_strength,
-    _estimate_coordinate,
-    _prior_diagonal,
-)
+from ._core import GammaCallable, _estimate_coordinate, _prior_diagonal
+from ._validate import _check_gamma_nonnegative, _check_strength
 
 
 def _tan_canonical(

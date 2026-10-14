@@ -25,6 +25,7 @@ _MSG_X_DIM = "x must have at least one dimension."
 _MSG_COV_NOT_SYM = "cov must be symmetric within float tolerance."
 _MSG_COV_NOT_PD = "cov must be positive definite."
 _MSG_MODEL_SHAPE = "model must have shape (k,) matching x trailing dimension."
+_MSG_MODEL_NONZERO = "model must not contain zero entries; x is divided by the model."
 _MSG_DELTA_CHI2 = "delta_chi2 must be > 0."
 _MSG_FINITE = "all inputs must be finite."
 
@@ -78,8 +79,9 @@ def regularize(
     ValueError
         If ``cov`` is not square, not symmetric, not positive definite, or
         has a shape incompatible with ``x``; if ``model`` is given and does
-        not match the trailing dimension of ``x``; if ``delta_chi2`` is not
-        positive; or if any input contains non-finite values.
+        not match the trailing dimension of ``x`` or contains a zero entry;
+        if ``delta_chi2`` is not positive; or if any input contains
+        non-finite values.
 
     Examples
     --------
@@ -185,6 +187,10 @@ def regularize(
             raise ValueError(_MSG_MODEL_SHAPE)
         if not np.all(np.isfinite(model_arr)):
             raise ValueError(_MSG_FINITE)
+        if np.any(model_arr == 0.0):
+            # 1/model overflows to inf here and surfaces much later as a
+            # bogus "prior covariance matrix must be symmetric".
+            raise ValueError(_MSG_MODEL_NONZERO)
 
     # Penalise shape differences from the model, but not normalisation
     # differences

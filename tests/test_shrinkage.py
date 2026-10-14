@@ -25,13 +25,13 @@ from nustattools.stats.shrinkage._core import (
     _merge_dirs,
     _projector,
     _reduce_dirs,
-    _validate_dirs,
 )
 from nustattools.stats.shrinkage._empirical_prior import (
     _max_abs_risk_gamma,
     _max_rel_risk_gamma,
 )
 from nustattools.stats.shrinkage._risk import _canonical_directions
+from nustattools.stats.shrinkage._validate import _validate_dirs
 
 
 def rng():
@@ -354,6 +354,46 @@ def test_vector_gamma_nan_rejected(estimator):
         estimate(x, gamma=g_bad)
 
 
+@pytest.mark.parametrize(
+    "gamma",
+    [
+        np.ones(2),
+        np.ones(1),
+        np.ones((3, 1)),
+        np.full((3, 3), 1.0),
+    ],
+    ids=["too-many", "too-few", "extra-axis", "full-matrix"],
+)
+def test_array_gamma_shape_must_match_batch(gamma):
+    # A numeric per-observation gamma must carry exactly one scale per
+    # observation.  Anything else was broadcast by numpy, handing one row the
+    # scale meant for another (or failing later with a raw broadcast error).
+    with pytest.raises(ValueError, match="gamma has shape"):
+        _shrinkage.bayes(np.ones((3, 5)), gamma=gamma)
+
+
+def test_array_gamma_shape_on_single_observation():
+    # With no batch dimension the gamma must be scalar.
+    with pytest.raises(ValueError, match="gamma has shape"):
+        _shrinkage.tan_bayes(np.arange(5.0), gamma=np.ones(2))
+    # The documented forms still work.
+    np.testing.assert_allclose(
+        _shrinkage.bayes(np.ones((3, 5)), gamma=np.full(3, 2.0)),
+        _shrinkage.bayes(np.ones((3, 5)), gamma=2.0),
+        rtol=1e-12,
+    )
+
+
+def test_unknown_gamma_spec_rejected_for_singular_Q():
+    # The gamma specification used to be parsed only where the solver reached
+    # the canonical-form call, so an all-no-shrink problem (singular Q) handed
+    # back the data instead of raising -- unlike the same call with Q = I.
+    x = np.arange(5.0)
+    for q in (np.eye(5), np.zeros((5, 5))):
+        with pytest.raises(ValueError, match="Unknown gamma specification"):
+            _shrinkage.bayes(x, Q=q, gamma="bogus")
+
+
 @pytest.mark.parametrize("estimator", _STRENGTH_METHODS)
 def test_zero_data_returns_zero_without_warnings(estimator):
     # The shrinkage denominator vanishes on all-zero data.  The estimators
@@ -373,6 +413,41 @@ def test_zero_data_returns_zero_without_warnings(estimator):
             warnings.simplefilter("error", RuntimeWarning)
             out = estimate(z, **kwargs)
         np.testing.assert_array_equal(out, z, err_msg=f"{estimator} {kwargs}")
+
+
+@pytest.mark.parametrize("case", ["x", "cov", "Q", "offset", "dirs"])
+def test_nonfinite_inputs_rejected(case):
+    # Every numeric input is checked before anything computes with it: a NaN
+    # cov used to be reported as "not symmetric" (np.allclose(NaN, NaN) is
+    # False), and inf in x, Q or offset only surfaced as an all-NaN estimate.
+    gen = rng()
+    p = 3
+    nan = float("nan")
+    bad_matrix = np.diag([nan, 1.0, 1.0])
+    bad = {
+        "x": np.array([nan, 1.0, 2.0]),
+        "cov": bad_matrix,
+        "Q": bad_matrix,
+        "offset": np.array([nan, 0.0, 0.0]),
+        "dirs": np.array([[nan, 0.0], [0.0, 1.0], [1.0, 0.0]]),
+    }
+    x = bad["x"] if case == "x" else gen.normal(size=p)
+    kwargs = {} if case == "x" else {case: bad[case]}
+    with pytest.raises(ValueError, match="finite"):
+        _shrinkage.bayes(x, **kwargs)
+
+
+def test_nonfinite_truth_cov_rejected():
+    # The shared matrix validator covers the risk helpers too.
+    with pytest.raises(ValueError, match="finite"):
+        _shrinkage.estimate_risk(
+            np.zeros(2),
+            np.eye(2),
+            "bayes",
+            truth_cov=np.diag([float("nan"), 1.0]),
+            n_reps=10,
+            seed=0,
+        )
 
 
 def _projection(basis):
@@ -1050,6 +1125,72 @@ def test_estimate_risk_curve_distance_is_canonical_norm():
     assert [r["distance"] for r in recs] == [2.0, 4.0]
     for r in recs:
         np.testing.assert_allclose(np.sqrt(r["risk"]), r["distance"], rtol=1e-12)
+
+
+def test_estimate_risk_curve_cov_must_be_matrix():
+    # p is taken from cov in this function (unlike estimate_risk, which has
+    # theta), so a scalar cov used to fail on cv.shape[0] with an IndexError.
+    with pytest.raises(ValueError, match="square"):
+        _shrinkage.estimate_risk_curve(1.0, "bayes", n_reps=10, seed=0)
+
+
+@pytest.mark.parametrize("n_reps", [2.5, True, "10"])
+def test_n_reps_must_be_integer(n_reps):
+    # A float used to pass the `>= 2` check and then fail inside numpy with a
+    # TypeError, though the documentation promises a ValueError.
+    with pytest.raises(ValueError, match="n_reps"):
+        _shrinkage.estimate_risk_curve(np.eye(3), "bayes", n_reps=n_reps, seed=0)
+    with pytest.raises(ValueError, match="n_reps"):
+        _shrinkage.estimate_risk(np.zeros(3), np.eye(3), "bayes", n_reps=n_reps, seed=0)
+
+
+def test_distances_triple_rejects_negative():
+    # The array form already refuses negative distances; the (start, stop, num)
+    # form must not record sweep points at a negative "distance".
+    with pytest.raises(ValueError, match="non-negative"):
+        _shrinkage.estimate_risk_curve(
+            np.eye(3), "bayes", distances=(-5.0, 5.0, 3), n_reps=10, seed=0
+        )
+
+
+def test_direction_labels_length_must_match():
+    # Too few labels raised a bare IndexError, too many dropped the extras.
+    for directions, labels in (
+        (["uniform", "proportional"], ["only one"]),
+        (["uniform"], ["a", "b"]),
+    ):
+        with pytest.raises(ValueError, match="direction_labels"):
+            _shrinkage.estimate_risk_curve(
+                np.eye(3),
+                "bayes",
+                directions=directions,
+                direction_labels=labels,
+                n_reps=10,
+                seed=0,
+            )
+
+
+def test_estimator_wrong_shape_raises():
+    # A (1, p) result broadcasts one draw's loss over every draw and returns a
+    # wrong risk with no error at all; anything else was a raw broadcast error.
+    def wrong_shape(x, _cov, **_kwargs):
+        return np.zeros((1, x.shape[-1]))
+
+    for call in (
+        lambda: _shrinkage.estimate_risk_curve(
+            np.eye(3), wrong_shape, n_reps=10, seed=0
+        ),
+        lambda: _shrinkage.estimate_risk(
+            np.zeros(3),
+            np.eye(3),
+            wrong_shape,
+            n_reps=10,
+            seed=0,
+            truth_cov=np.eye(3),
+        ),
+    ):
+        with pytest.raises(ValueError, match="returned shape"):
+            call()
 
 
 def test_estimate_risk_curve_risk_ratio():

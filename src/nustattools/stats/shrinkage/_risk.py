@@ -11,18 +11,16 @@ Monte Carlo, together with their private helpers
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from ._core import (
-    _canonical_frame,
-    _validate_sympd,
-    _validate_sympsd,
-)
+from ._core import _canonical_frame
 from ._dispatch import _resolve_method
+from ._validate import _validate_sympd, _validate_sympsd
 
 _Estimator = Callable[..., NDArray[Any]] | str
 
@@ -32,8 +30,21 @@ _ESTIMATOR_ERROR = (
 
 
 def _check_n_reps(n_reps: int) -> None:
-    """Raise unless ``n_reps`` is an integer >= 2."""
-    if n_reps < 2:
+    """Raise unless ``n_reps`` is an integer >= 2.
+
+    The integer-ness goes through the ``index`` protocol, so a float or a
+    string becomes the same ``ValueError`` the rest of this module's
+    validation raises, instead of a bare ``TypeError`` from numpy (slicing by
+    ``2.5``) much later.
+
+    """
+
+    try:
+        n = operator.index(n_reps)
+    except TypeError as e:
+        msg = "n_reps must be an integer >= 2."
+        raise ValueError(msg) from e
+    if n < 2:
         msg = "n_reps must be an integer >= 2."
         raise ValueError(msg)
 
@@ -234,6 +245,17 @@ def _risk_from_samples(
     results = []
     for fn in est_list:
         delta = fn(x, cova, Q=qa, **kwargs)
+        if np.shape(delta) != x.shape:
+            # Anything but the data's own shape is either a raw broadcast
+            # error below or, for a (1, p) result, one draw's loss broadcast
+            # over every draw -- a wrong risk with no error at all.
+            name = getattr(fn, "__name__", None)
+            label = name if isinstance(name, str) else repr(fn)
+            msg = (
+                f"estimator {label} returned shape {np.shape(delta)}, "
+                f"expected {x.shape} to match the data."
+            )
+            raise ValueError(msg)
         d = delta - theta
         loss = np.sum(d * (d @ qa), axis=1)
         risk = float(np.mean(loss))
@@ -311,6 +333,14 @@ def _canonical_directions(
         items: Sequence[_Direction] = list(directions)
     else:
         items = [cast(_Direction, directions)]
+    if direction_labels is not None and len(direction_labels) != len(items):
+        # Before the loop below indexes into it: too few labels raised a bare
+        # IndexError, too many dropped the extras silently.
+        msg = (
+            f"direction_labels must have one entry per direction ({len(items)}), "
+            f"got {len(direction_labels)}."
+        )
+        raise ValueError(msg)
 
     pi_arr = np.ones(p) if pi is None else np.asarray(pi, dtype=float)
     descend = np.lexsort((-pi_arr, -d))
@@ -370,8 +400,12 @@ def _as_magnitudes(distances: tuple[float, float, int] | ArrayLike) -> NDArray[A
         if int(num) < 1:
             msg = "The number of distances must be >= 1."
             raise ValueError(msg)
-        return np.linspace(start, stop, int(num))
-    arr = np.asarray(distances, dtype=float)
+        arr = np.linspace(start, stop, int(num))
+    else:
+        arr = np.asarray(distances, dtype=float)
+    # The expanded triple goes through the same checks as the array form: a
+    # negative start would otherwise record sweep points at a "distance" the
+    # array form refuses.
     if arr.ndim != 1 or arr.size == 0 or not np.all(np.isfinite(arr)):
         msg = "distances must be a finite 1-D array of magnitudes."
         raise ValueError(msg)
@@ -500,6 +534,11 @@ def estimate_risk_curve(
     _check_n_reps(n_reps)
 
     cv = np.asarray(cov)
+    if cv.ndim != 2 or cv.shape[0] != cv.shape[1]:
+        # p is taken from cov here (unlike estimate_risk, which has theta), so
+        # a scalar or 1-D cov would otherwise fail on `cv.shape[0]` itself.
+        msg = f"cov must be a square (p, p) matrix, got shape {cv.shape}."
+        raise ValueError(msg)
     p = cv.shape[0]
     cova = _validate_sympd(cov, (p, p), "cov")
     qa = np.eye(p) if Q is None else _validate_sympd(Q, (p, p), "Q")

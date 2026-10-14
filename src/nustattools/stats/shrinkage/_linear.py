@@ -15,7 +15,8 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from ._core import _canonical_frame, _estimate, _is_positive_definite, _validate
+from ._core import _canonical_frame, _estimate
+from ._validate import _is_positive_definite, _validate, _validate_offset
 
 
 def _matmul_canonical(
@@ -113,17 +114,15 @@ def _affine_map(
 
     The canonical frame used for the positive-definite loss cancels out of
     this expression exactly, so a singular loss -- which admits no such frame
-    -- can be handled by the plain affine map.  The ``offset`` shape check and
-    its message mirror :func:`~nustattools.stats.shrinkage._core._estimate_pd`.
+    -- can be handled by the plain affine map.  The ``offset`` shape and
+    finiteness checks are shared with the solvers via
+    :func:`~nustattools.stats.shrinkage._validate._validate_offset`.
 
     """
 
-    if offset is None:
+    o = _validate_offset(offset, x.shape[-1])
+    if o is None:
         return cast(NDArray[Any], x @ a.T)
-    o = np.asarray(offset, dtype=float)
-    if o.shape != (x.shape[-1],):
-        msg = f"offset must have shape {(x.shape[-1],)}, got {o.shape}."
-        raise ValueError(msg)
     return cast(NDArray[Any], o + (x - o) @ a.T)
 
 

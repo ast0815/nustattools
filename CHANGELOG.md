@@ -305,6 +305,19 @@ and this project adheres to
   coordinates when the covariance is not already sorted: the estimator now
   reorders the data to match the Bayes-importance ordering before applying the
   paper's coordinate-wise shrinkage (Tan, 2015).
+- Non-finite inputs (`x`, `cov`, `Q`, `offset`, `dirs`, `truth_cov`) are now
+  rejected with a directed `ValueError` instead of surfacing as an all-NaN
+  estimate or a misleading "must be symmetric" message.
+- The shrinkage helpers no longer accept a handful of malformed arguments that
+  used to slip through to numpy or be silently broadcast: a numeric
+  per-observation `gamma` must match the batch shape of `x`, `n_reps` must be an
+  integer, `direction_labels` must have one entry per direction,
+  `estimate_risk_curve` requires a square `cov`, and a risk estimator returning
+  a shape other than the data's is rejected. An unknown `gamma` specification is
+  now also rejected for a singular `Q`, and a `(start, stop, num)` distance
+  triple with a negative start is refused like the array form.
+- `regularize` rejects a `model` with a zero entry instead of overflowing to
+  `inf` and failing later as a bogus prior-covariance error.
 
 ## [0.8.0]
 

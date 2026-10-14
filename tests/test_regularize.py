@@ -172,6 +172,16 @@ def test_invalid_finite_inputs_raise():
         s.regularize(x, cov, model=np.array([1.0, np.nan, 3.0]))
 
 
+def test_zero_model_entry_raises():
+    # The model divides the data, so a zero entry overflowed to inf and the
+    # failure surfaced much later as a bogus "prior covariance matrix must be
+    # symmetric".
+    x = np.array([1.0, 2.0, 3.0])
+    cov = np.eye(3)
+    with pytest.raises(ValueError, match="model must not contain zero entries"):
+        s.regularize(x, cov, model=np.array([0.0, 1.0, 2.0]))
+
+
 def test_invalid_x_dimension_raises():
     cov = np.eye(3)
     with pytest.raises(ValueError, match="x must have at least one dimension"):

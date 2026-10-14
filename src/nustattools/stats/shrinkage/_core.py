@@ -1,10 +1,11 @@
 """Shared infrastructure for the canonical-form shrinkage estimators.
 
 This private module contains the machinery common to all shrinkage estimators
-in :mod:`nustattools.stats.shrinkage`: validation of the common inputs,
-transformation to canonical form (diagonal covariance ``D``, identity loss),
-the affine-subspace projector, and the :func:`_estimate` front-end that runs a
-canonical-form estimator on a general problem and transforms the result back.
+in :mod:`nustattools.stats.shrinkage`: transformation to canonical form
+(diagonal covariance ``D``, identity loss), the affine-subspace projector, and
+the :func:`_estimate` front-end that runs a canonical-form estimator on a
+general problem and transforms the result back.  Validation of the inputs
+lives in :mod:`nustattools.stats.shrinkage._validate`.
 
 Nothing in this module is public; estimators and the risk-estimation helpers in
 the sibling modules build on it.
@@ -24,6 +25,15 @@ from ._empirical_prior import (
     _EPSILON,
     _FACTORY_PATTERN,
     _parse_gamma_factory,
+)
+from ._validate import (
+    _check_gamma_shape,
+    _is_positive_definite,
+    _validate,
+    _validate_dirs,
+    _validate_offset,
+    _validate_sympd,
+    _zero_eigenvalue_tolerance,
 )
 
 #: Alias for a gamma prior-scale callable ``f(d, pi, y)``; see the
@@ -324,131 +334,6 @@ def _canonical_frame(
     return b, np.linalg.inv(b), d, pi
 
 
-def _validate_sympd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
-    """Validate that ``a`` is symmetric positive definite with the given shape."""
-
-    aa = np.asarray(a)
-    if aa.shape != shape:
-        msg = f"{name} must have shape {shape}, got {aa.shape}."
-        raise ValueError(msg)
-    if not np.allclose(aa, aa.T):
-        msg = f"{name} must be symmetric."
-        raise ValueError(msg)
-    try:
-        np.linalg.cholesky(aa)
-    except np.linalg.LinAlgError as e:
-        msg = f"{name} must be positive definite."
-        raise ValueError(msg) from e
-    return aa
-
-
-def _zero_eigenvalue_tolerance(w: NDArray[Any], p: int) -> float:
-    """Numerically-zero eigenvalue threshold for a size-``p`` symmetric matrix.
-
-    An eigenvalue of ``w`` is treated as zero when it lies below this
-    tolerance, which scales the machine epsilon by ``p`` *and by the largest
-    magnitude eigenvalue of ``w``*.  The threshold is therefore purely
-    relative: rescaling the matrix by any positive factor never changes which
-    of its eigenvalues count as zero, so every positive semi-definiteness and
-    degeneracy decision made from it is scale-invariant.  An all-zero spectrum
-    has a tolerance of zero, so only exactly-zero eigenvalues are then treated
-    as zero.
-
-    """
-
-    maxw = float(np.max(np.abs(w))) if w.size else 0.0
-    if maxw == 0.0:
-        return 0.0
-    return p * _EPSILON * maxw
-
-
-def _is_positive_definite(q: NDArray[Any]) -> bool:
-    """True when the symmetric matrix ``q`` is numerically positive definite.
-
-    Every eigenvalue must exceed the scale-relative zero threshold of
-    :func:`_zero_eigenvalue_tolerance`, the same predicate that decides
-    between the direct and the split solve in :func:`_estimate`, so a caller
-    deciding whether a canonical frame exists agrees with the solver.
-
-    """
-
-    w = np.linalg.eigvalsh(q)
-    return bool(np.all(w > _zero_eigenvalue_tolerance(w, q.shape[0])))
-
-
-def _validate_sympsd(a: ArrayLike, shape: tuple[int, int], name: str) -> NDArray[Any]:
-    """Validate that ``a`` is symmetric positive semi-definite with the given shape."""
-
-    aa = np.asarray(a)
-    if aa.shape != shape:
-        msg = f"{name} must have shape {shape}, got {aa.shape}."
-        raise ValueError(msg)
-    if not np.allclose(aa, aa.T):
-        msg = f"{name} must be symmetric."
-        raise ValueError(msg)
-    if shape[0] == 0:
-        return aa
-    w = np.linalg.eigvalsh(aa)
-    if np.min(w) < -_zero_eigenvalue_tolerance(w, shape[0]):
-        msg = f"{name} must be positive semi-definite (all eigenvalues >= 0)."
-        raise ValueError(msg)
-    return aa
-
-
-def _validate(
-    x: ArrayLike, cov: ArrayLike | None, q: ArrayLike | None
-) -> tuple[NDArray[Any], NDArray[Any], NDArray[Any], int]:
-    """Validate and resolve the common estimator inputs.
-
-    Returns ``(x, cov, q, p)`` where ``x`` has shape ``(..., p)``, ``cov`` is a
-    symmetric positive definite ``(p, p)`` matrix and ``q`` is a symmetric
-    positive semi-definite ``(p, p)`` matrix; ``cov`` is the identity if it was
-    not given, as is ``q``.
-
-    """
-
-    xa = np.asarray(x)
-    if xa.ndim < 1:
-        msg = "x must have at least one dimension."
-        raise ValueError(msg)
-    p = xa.shape[-1]
-    if cov is None:
-        cova = np.eye(p)
-    else:
-        cova = _validate_sympd(cov, (p, p), "covariance matrix")
-    if q is None:
-        qa = np.eye(p)
-    else:
-        qa = _validate_sympsd(q, (p, p), "loss matrix Q")
-    return xa, cova, qa, p
-
-
-def _validate_dirs(dirs: ArrayLike, p: int) -> NDArray[Any]:
-    """Validate spanning vectors and return them as an array of shape ``(p, k)``.
-
-    ``dirs`` must have shape ``(p, k)`` with ``k >= 1`` and full column rank
-    (its columns span the affine direction of shrinkage, i.e. they form a
-    basis of the subspace).  Returns the matrix of shape ``(p, k)``.
-
-    """
-
-    dv = np.asarray(dirs, dtype=float)
-    if dv.ndim != 2 or dv.shape[0] != p or dv.shape[1] < 1:
-        msg = f"dirs must have shape ({p}, k) with k >= 1, got shape {dv.shape}."
-        raise ValueError(msg)
-    if not np.all(np.isfinite(dv)):
-        msg = "dirs must contain only finite values."
-        raise ValueError(msg)
-    rank = np.linalg.matrix_rank(dv)
-    if rank < dv.shape[1]:
-        msg = (
-            "dirs must have linearly independent columns (full column rank), "
-            f"got rank {rank} for {dv.shape[1]} columns."
-        )
-        raise ValueError(msg)
-    return dv
-
-
 def _projector(v: NDArray[Any], cov: NDArray[Any]) -> NDArray[Any]:
     """Covariance-metric projector onto the column space of ``v``.
 
@@ -627,20 +512,14 @@ def _estimate_split(
 
     p = cov.shape[0]
     v_all = np.asarray(dirs, dtype=float)
-    if offset is None:
-        y = x
-    else:
-        o = np.asarray(offset, dtype=float)
-        if o.shape != (p,):
-            msg = f"offset must have shape {(p,)}, got {o.shape}."
-            raise ValueError(msg)
-        y = x - o
+    o = _validate_offset(offset, p)
+    y = x if o is None else x - o
     kept, eta, d_perp, l2, pmat = _reduce_dirs(y, cov, v_all)
     # The *whole* offset is added back on recombination, not its projection:
     # the estimate is o + P(x - o) + delta_res (as in _estimate_pd's dirs
     # path), which gives P delta = P x and delta = x when nothing shrinks.
     # Keeping only P o would return P x + delta_res instead.
-    offset_term = np.zeros(p) if offset is None else o
+    offset_term = np.zeros(p) if o is None else o
     q_comp = l2.T @ q @ l2
     # The prior only acts where shrinkage happens: restrict it to the
     # covariance-metric complement of the no-shrink directions.  The residuals
@@ -745,24 +624,9 @@ def _estimate_pd(
     p = qa.shape[0]
     b, binv, d, pi = _canonical_frame(cova, qa, prior_cov)
     x_star = xa @ b.T
-    if offset is None:
-        offset_star = np.zeros(p)
-    else:
-        o = np.asarray(offset, dtype=float)
-        if o.shape != (p,):
-            msg = f"offset must have shape {(p,)}, got {o.shape}."
-            raise ValueError(msg)
-        offset_star = o @ b.T
+    o = _validate_offset(offset, p)
+    offset_star = np.zeros(p) if o is None else o @ b.T
     y = x_star - offset_star
-    if "gamma" in kwargs and isinstance(kwargs["gamma"], str):
-        g_str = kwargs["gamma"]
-        if g_str not in _EMPIRICAL_GAMMA_PRESETS:
-            if _FACTORY_PATTERN.match(g_str):
-                kwargs["gamma"] = _parse_gamma_factory(g_str)
-            else:
-                names = ", ".join(_EMPIRICAL_GAMMA_PRESETS)
-                msg = f"Unknown gamma specification '{g_str}'; use a number or one of: {names}."
-                raise ValueError(msg)
     # A named preset or callable prior scale is resolved per observation: each
     # draw gets its own scale (e.g. ||y_i / sqrt(pi)||^2 / p_eff).  In the plain
     # (no-dirs) path it is resolved here and passed to the canonical estimator
@@ -870,6 +734,19 @@ def _estimate(
 
     xa, cova, qa, _ = _validate(x, cov, q)
     p = qa.shape[0]
+    # Validate gamma before anything can return early: an all-no-shrink split
+    # never reaches _estimate_pd, so a bad specification would otherwise be
+    # accepted for one Q and rejected for another.
+    _check_gamma_shape(kwargs.get("gamma"), xa.shape[:-1])
+    if isinstance(kwargs.get("gamma"), str):
+        g_str = kwargs["gamma"]
+        if g_str not in _EMPIRICAL_GAMMA_PRESETS:
+            if _FACTORY_PATTERN.match(g_str):
+                kwargs["gamma"] = _parse_gamma_factory(g_str)
+            else:
+                names = ", ".join(_EMPIRICAL_GAMMA_PRESETS)
+                msg = f"Unknown gamma specification '{g_str}'; use a number or one of: {names}."
+                raise ValueError(msg)
     if _is_positive_definite(qa):
         return _estimate_pd(
             xa,
@@ -893,49 +770,6 @@ def _estimate(
         prior_cov=prior_cov,
         **kwargs,
     )
-
-
-def _check_strength(strength: float, *, bounded: bool = True) -> None:
-    """Raise ``ValueError`` if ``strength`` is not a usable shrinkage strength.
-
-    NaN is always rejected: as a bare range comparison it satisfies neither
-    side and would silently pass, giving each estimator a different all-NaN or
-    limit result instead of the promised error.  With ``bounded`` (the
-    default) the value must additionally lie in the minimax range
-    ``[0, 2]``, which ``+/-inf`` violates as well.  The estimators that
-    document out-of-range strengths pass ``bounded=False`` and keep every
-    finite (and infinite) value they accept today.
-
-    """
-
-    if np.isnan(strength):
-        msg = "strength must not be NaN."
-        raise ValueError(msg)
-    if bounded and not 0.0 <= strength <= 2.0:
-        msg = "strength must be in [0, 2]."
-        raise ValueError(msg)
-
-
-def _check_gamma_nonnegative(
-    gamma: float | str | Callable[..., Any] | NDArray[Any],
-) -> None:
-    """Raise ``ValueError`` if ``gamma`` contains negative or NaN values.
-
-    String presets and callables are left to be resolved downstream; only
-    numeric (scalar or array) values are validated here.  ``+inf`` stays
-    allowed: it is the documented flat prior (and ``-inf`` is caught by the
-    sign check).  NaN would otherwise slip through the sign comparison and be
-    interpreted differently by every estimator (identity, MLE, or all-NaN
-    output).
-
-    """
-
-    if isinstance(gamma, str) or callable(gamma):
-        return
-    values = np.asarray(gamma)
-    if np.any(values < 0) or np.any(np.isnan(values)):
-        msg = "gamma must be non-negative and not NaN."
-        raise ValueError(msg)
 
 
 def _prior_diagonal(d: NDArray[Any], pi: NDArray[Any] | None) -> NDArray[Any]:
