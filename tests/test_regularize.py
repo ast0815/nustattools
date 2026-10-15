@@ -160,6 +160,21 @@ def test_tiny_exactly_symmetric_cov_accepted():
     assert data.shape == (3,)
 
 
+def test_zero_bins_returns_input_unregularized():
+    # k == 0 is supported throughout (`bayes`' documented limit is the
+    # identity), so regularize must return the inputs untouched instead of
+    # dying in reductions over the empty covariance.
+    x = np.zeros(0)
+    cov = np.zeros((0, 0))
+    data, err = s.regularize(x, cov, delta_chi2=1.0)
+    assert data is not x
+    assert data.shape == (0,)
+    assert err.shape == (2, 0)
+    batched, batched_err = s.regularize(np.zeros((2, 3, 0)), cov, delta_chi2=1.0)
+    assert batched.shape == (2, 3, 0)
+    assert batched_err.shape == (2, 2, 3, 0)
+
+
 def test_invalid_cov_positive_definite_raises():
     x = np.array([1.0, 2.0, 3.0])
     cov = np.array([[1.0, 0.0, 0.0], [0.0, -0.5, 0.0], [0.0, 0.0, 1.0]])

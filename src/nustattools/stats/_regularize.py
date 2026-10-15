@@ -176,16 +176,18 @@ def regularize(
     # The symmetry tolerance is relative to the matrix norm so the verdict does
     # not depend on the unit system: with an absolute floor, a matrix that is
     # asymmetric by a factor of two in relative terms is accepted once every
-    # entry falls below it.
+    # entry falls below it.  An empty covariance (k == 0) has no norm.
     if not np.allclose(
         cov_arr,
         cov_arr.T,
         rtol=1e-5,
-        atol=1e-8 * float(np.max(np.abs(cov_arr))),
+        atol=1e-8 * (float(np.max(np.abs(cov_arr))) if cov_arr.size else 0.0),
     ):
         raise ValueError(_MSG_COV_NOT_SYM)
     eigvals = np.linalg.eigvalsh(cov_arr)
-    if float(eigvals.min()) <= 0:
+    if eigvals.size and float(eigvals.min()) <= 0:
+        # Vacuously positive definite when there are no eigenvalues (k == 0);
+        # the reduced check for that case is the early return below.
         raise ValueError(_MSG_COV_NOT_PD)
 
     if model is None:
@@ -200,6 +202,13 @@ def regularize(
             # 1/model overflows to inf here and surfaces much later as a
             # bogus "prior covariance matrix must be symmetric".
             raise ValueError(_MSG_MODEL_NONZERO)
+
+    if k == 0:
+        # Zero bins: the (already validated) estimator limit is the identity
+        # (`bayes` returns the input) and `err` has nothing to quote, so
+        # return without running the shape machinery below, which would die
+        # in reductions over the empty covariance.
+        return x_arr.copy(), np.empty((2, *x_arr.shape))
 
     # Penalise shape differences from the model, but not normalisation
     # differences

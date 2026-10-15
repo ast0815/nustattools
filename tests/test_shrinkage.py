@@ -292,6 +292,17 @@ def test_shrink_unknown_method():
         s.shrink(rng().normal(size=3), np.eye(3), method="nope")
 
 
+def test_empty_matrices_accepted():
+    # Zero observations / zero coordinates is deliberately supported (the
+    # validators' empty-shape branches); the symmetry gate must not crash on
+    # the empty norm that guards it.
+    x = np.zeros(0)
+    cov = np.zeros((0, 0))
+    assert s.shrink(x, cov).shape == (0,)
+    assert _shrinkage.berger(x, cov=cov).shape == (0,)
+    assert _shrinkage.berger(x, cov=cov, Q=cov).shape == (0,)
+
+
 def test_berger_shape_error():
     with pytest.raises(ValueError, match="covariance matrix must have shape"):
         _shrinkage.berger(rng().normal(size=3), np.eye(4))

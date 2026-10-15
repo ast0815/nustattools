@@ -190,16 +190,22 @@ and this project adheres to
 
 ### Fixed
 
+- The scale-invariant symmetry validation of `cov`, `Q` and `prior_cov` no
+  longer crashes on empty `(0, 0)` matrices (the norm the gate guards against is
+  undefined there): `shrinkage` supports zero observations/coordinates as
+  before, and `regularize` now returns its inputs unregularized at zero bins
+  instead of dying in reductions over the empty covariance.
 - Symmetry validation of `cov`, `Q` and `prior_cov` no longer depends on the
-  unit system: `shrinkage` and `regularize` now check symmetry with a purely
-  relative tolerance, so a matrix that is asymmetric in relative terms is
+  unit system: `shrinkage` and `regularize` now check symmetry with a
+  scale-relative tolerance, so a matrix that is asymmetric in relative terms is
   rejected however small its scale.
 - `matmul`'s `enhance` isotropy shortcut is now triggered by a relative instead
   of an absolute spread of the canonical variances, so the Eldar dominance
   condition (eq. (91)) is enforced at every scale of the data.
 - `shrink`'s `prior_cov` docstring now names the methods that take a prior
-  (`bayes`, `minimax_bayes`, `tan`, `tan_bayes`, `robust_bayes`) and states that
-  `berger` and `matmul` reject it, instead of dying with a raw `TypeError`.
+  (`bayes`, `minimax_bayes`, `tan`, `tan_bayes`, `robust_bayes`) and mentions
+  that `berger` and `matmul` reject a `prior_cov` with a `TypeError` (unchanged
+  behaviour, now documented).
 - `matmul`'s `enhance` notes now also cover the fixed-point case: an `A` that is
   symmetric in the original coordinates and commutes with `cov` (in particular
   any symmetric `A` with the default `cov = I`) is returned unchanged by the

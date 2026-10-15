@@ -38,6 +38,11 @@ _SYMMETRY_ATOL_SCALE = 1e-8
 def _is_symmetric(a: NDArray[Any]) -> bool:
     """True when ``a`` is symmetric to within a scale-relative tolerance."""
 
+    if a.size == 0:
+        # An empty matrix is trivially symmetric; the reduction below would
+        # raise on it, before the validators' deliberate empty-shape branch.
+        return True
+
     return bool(
         np.allclose(
             a,
