@@ -10,11 +10,6 @@ from numpy.typing import ArrayLike, NDArray
 
 from .shrinkage import bayes
 
-# Relative diagonal jitter added to the shape-difference loss matrix to keep
-# it numerically invertible when the shape projection is rank-deficient
-# (e.g. when the input is already on the model shape).
-_DIAGONAL_INFLATION = 1e-6
-
 # Relative-residual tolerance for the ``max_abs_risk`` gamma factory's Newton
 # refinement, matching the closed-form start to machine precision.
 _MAX_ABS_RISK_RTOL = 1e-3
@@ -54,8 +49,7 @@ def regularize(
         ``(k, k)``. Must be symmetric and positive definite.
     model : array-like, optional
         The model shape to regularize towards, shape ``(k,)``. Defaults to a
-        flat prior (all ones), which preserves the overall normalization but
-        pulls every component towards equality.
+        flat prior (all ones).
     delta_chi2 : float, default=1.0
         The upper bound on the squared Mahalanobis distance of the
         regularized result from the unregularized data. Must be positive.
@@ -138,25 +132,15 @@ def regularize(
             \\end{array}\\right) .
 
     This penalises differences between all possible combinations of data bins,
-    so it works with unordered or N-dimensional data.
+    so it works with unordered or N-dimensional data.  The penalty matrix is
+    only positive *semi*-definite: its null space is the model direction, which
+    is exactly the normalization that must not be penalised.
 
     The regularization strength is chosen such that the squared
     Mahalanobis distance of the regularized result from the unregularized
     data is at most ``delta_chi2``. If the model shape is already closer
     to the unregularized data than this distance, the regularized data
     coincides with the model shape.
-
-    The implementation uses the Bayes shrinkage estimator
-    :func:`nustattools.stats.shrinkage.bayes` with the loss matrix set to the
-    inverse of the data covariance -- so that the Mahalanobis distance
-    ``delta_chi2`` bounds is measured in exactly that metric -- and with the
-    inverse of ``G`` as the prior covariance. In order to do this, a small
-    relative diagonal jitter is added to make ``G`` numerically invertible.
-    The ``max_abs_risk`` empirical gamma factory is then used to set the
-    per-observation prior scale from the data and ensure that the shrunk data
-    is moved by the required ``delta_chi2``; its Newton refinement stops at a
-    relative residual of 1e-3, the tolerance the CI guarantee above holds to.
-
     """
 
     if delta_chi2 <= 0:
@@ -211,24 +195,29 @@ def regularize(
         return x_arr.copy(), np.empty((2, *x_arr.shape))
 
     # Penalise shape differences from the model, but not normalisation
-    # differences
+    # differences.  The penalty matrix is positive semi-definite (positive
+    # definite on the shape subspace, exactly zero along the normalised model
+    # direction), so its inverse needs a completion along that direction.  The
+    # `dirs` machinery below keeps the model direction at its data value and
+    # never sees the completion, so its magnitude is immaterial; it is chosen
+    # on the scale of the proper penalty eigenvalues (whose sum is the trace).
+    model_hat = model_arr / np.linalg.norm(model_arr)
     penalty_matrix = (
         np.diag(1.0 / model_arr) @ (k * np.eye(k) - 1.0) @ np.diag(1.0 / model_arr)
     )
-
-    # Inflate the diagonal a tiny bit to keep the matrix numerically
-    # invertible when the projection is rank-deficient.
-    penalty_matrix = penalty_matrix + np.diag(
-        np.diag(penalty_matrix) * _DIAGONAL_INFLATION
+    completion = np.trace(penalty_matrix) / k
+    if not completion > 0:  # k == 1: the penalty is the zero matrix
+        completion = 1.0
+    prior_cov = np.linalg.inv(
+        penalty_matrix + completion * np.outer(model_hat, model_hat)
     )
-
-    prior_cov = np.linalg.inv(penalty_matrix)
 
     reg_x = bayes(
         x_arr,
         cov_arr,
         Q=np.linalg.inv(cov_arr),
         prior_cov=prior_cov,
+        dirs=model_hat[:, np.newaxis],
         gamma=f"max_abs_risk({delta_chi2}, {_MAX_ABS_RISK_RTOL})",
     )
 

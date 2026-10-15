@@ -221,3 +221,93 @@ def test_invalid_x_dimension_raises():
     cov = np.eye(3)
     with pytest.raises(ValueError, match="x must have at least one dimension"):
         s.regularize(np.float64(1.0), cov)
+
+
+def test_shift_has_no_model_direction_component():
+    # The covariance-metric `dirs` machinery keeps the model (normalisation)
+    # direction at its data value, so the shift between the data and the
+    # regularized result must be Mahalanobis-orthogonal to the model direction.
+    rng = np.random.default_rng(0)
+    u = rng.normal(size=(5, 4))
+    cov = u @ u.T + (np.trace(u @ u.T) / 5) * np.eye(5)
+    x = rng.normal(size=5) * np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    model = rng.uniform(1.0, 9.0, size=5)
+    reg_x, _ = s.regularize(x, cov, model=model)
+    sinv = np.linalg.inv(cov)
+    assert np.allclose((reg_x - x) @ sinv @ model, 0.0)
+
+
+def test_data_on_model_shape_is_unchanged():
+    # Data already in model shape must be returned untouched: the shape error
+    # is zero, so the delta_chi2 budget has nothing to spend it on (previously
+    # the diagonal-inflation prior let the budget drain into the
+    # normalisation).
+    template = np.array([2.0, 3.0, 1.0])
+    cov = np.diag(template)
+    for delta_chi2 in (0.01, 1.0, 10.0):
+        reg_x, _ = s.regularize(
+            template.copy(), cov, model=template, delta_chi2=delta_chi2
+        )
+        assert np.allclose(reg_x, template)
+
+
+def test_within_budget_data_coincides_with_model_shape():
+    # When the Mahalanobis distance to the model shape is smaller than
+    # delta_chi2, the result is the shape itself (the closest point of the
+    # shape manifold), not a shape-preserving pull at the full budget.
+    x = np.array([2.0, 3.0])
+    reg_x, _ = s.regularize(x, np.eye(2))
+    # Closest flat point to [2, 3] is [2.5, 2.5], at distance^2 = 0.5 <= 1.
+    assert np.allclose(reg_x, [2.5, 2.5])
+
+
+def test_budget_smaller_than_shape_error_moves_partially():
+    # With the budget below the distance to the model shape, the shift spends
+    # exactly delta_chi2 in Mahalanobis distance, entirely in the shape
+    # directions (the component along the model direction is kept).
+    x = np.array([2.0, 3.0])
+    reg_x, _ = s.regularize(x, np.eye(2), delta_chi2=0.1)
+    # The Newton refinement stops at a 1e-3 relative residual, so the shift is
+    # delta_chi2 only to within that tolerance.
+    assert np.allclose(
+        np.sum((reg_x - x) ** 2),
+        0.1,
+        rtol=0.0,
+        atol=0.1 * _MAX_ABS_RISK_RTOL + 1e-9,
+    )
+    assert np.allclose(np.mean(reg_x), np.mean(x))
+
+
+def test_flat_data_survives_large_budget():
+    # Flat data with a default flat model: previously regularize returned
+    # [0, 0] for delta_chi2 = 10 (the whole budget was spent on the
+    # normalisation); now the data is the model shape and stays put.
+    x = np.array([2.0, 2.0])
+    reg_x, _ = s.regularize(x, np.eye(2), delta_chi2=10.0)
+    assert np.allclose(reg_x, x)
+
+
+def test_sum_preserved_for_diagonal_template_covariance():
+    # With cov = diag(model) the covariance-metric projection onto the model
+    # direction sums to the data sum (1^T cov^-1 model is constant), so both
+    # the kept component and the contrast residual preserve the total.
+    template = np.array([10.0, 12.0, 15.0, 11.0, 9.0, 13.0])
+    cov = np.diag(template)
+    reg_on, _ = s.regularize(template.copy(), cov, model=template)
+    assert np.isclose(reg_on.sum(), template.sum())
+    tilted = template.copy()
+    tilted[3:] *= 1.5
+    reg_tilted, _ = s.regularize(tilted, cov, model=template)
+    assert np.isclose(reg_tilted.sum(), tilted.sum())
+
+
+def test_single_bin_returns_input():
+    # A single bin has no shape degree of freedom: the model direction spans
+    # everything, so the regularized data is the data itself.  Previously this
+    # died with a raw numpy.linalg.LinAlgError from inverting the zero penalty.
+    x = np.array([2.0])
+    reg_x, err = s.regularize(x, np.eye(1))
+    assert np.allclose(reg_x, x)
+    reg_x, err = s.regularize(x, np.eye(1), model=[3.0])
+    assert np.allclose(reg_x, x)
+    assert err.shape == (2, 1)
