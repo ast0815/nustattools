@@ -303,6 +303,49 @@ def test_empty_matrices_accepted():
     assert _shrinkage.berger(x, cov=cov, Q=cov).shape == (0,)
 
 
+@pytest.mark.parametrize(
+    "method",
+    ["tan", "bayes", "robust_bayes", "tan_bayes", "minimax_bayes"],
+)
+def test_empty_matrices_with_prior_cov_accepted(method):
+    # The empty short-circuit in _estimate_pd sits before the frame
+    # construction, so a prior covariance is accepted on an empty problem
+    # without reaching the canonicalization (which would divide by p == 0).
+    # `berger` and `matmul` deliberately reject prior_cov with a TypeError.
+    out = s.shrink(
+        np.zeros(0), np.zeros((0, 0)), method=method, prior_cov=np.zeros((0, 0))
+    )
+    assert out.shape == (0,)
+
+
+def test_empty_matrices_matmul_enhance_accepted():
+    # matmul builds the enhanced matrix itself, before the shared solver: the
+    # empty short-circuit must fire there too instead of crashing in the
+    # empty-variance reduction of the Eldar construction.
+    x = np.zeros(0)
+    cov = np.zeros((0, 0))
+    assert _shrinkage.matmul(x, cov, A=np.zeros((0, 0)), enhance=False).shape == (0,)
+    assert _shrinkage.matmul(x, cov, A=np.zeros((0, 0)), enhance=True).shape == (0,)
+
+
+def test_empty_matrices_still_validated():
+    # The empty short-circuit sits after the common validation, so a bad
+    # offset, a bad dirs shape, or a bad gamma specification must still raise
+    # even when there are no coordinates.
+    x = np.zeros(0)
+    cov = np.zeros((0, 0))
+    with pytest.raises(ValueError, match="offset must have shape"):
+        s.shrink(x, cov, offset=np.zeros(3))
+    with pytest.raises(ValueError, match="dirs must have shape"):
+        s.shrink(x, cov, dirs=np.zeros((0, 0)))
+    with pytest.raises(ValueError, match="Unknown gamma specification"):
+        s.shrink(x, cov, method="bayes", gamma="bogus")
+    with pytest.raises(ValueError, match="offset must have shape"):
+        _shrinkage.matmul(x, cov, A=np.zeros((0, 0)), offset=np.zeros(3))
+    with pytest.raises(ValueError, match="matmul does not support dirs"):
+        _shrinkage.matmul(x, cov, A=np.zeros((0, 0)), dirs=np.zeros((0, 0)))
+
+
 def test_berger_shape_error():
     with pytest.raises(ValueError, match="covariance matrix must have shape"):
         _shrinkage.berger(rng().normal(size=3), np.eye(4))
@@ -896,6 +939,22 @@ def test_estimate_risk_bad_shapes_raise():
         _shrinkage.estimate_risk(
             rng().normal(size=3), np.eye(3), s.shrink, truth_cov=-np.eye(3), n_reps=100
         )
+
+
+def test_estimate_risk_empty_problem():
+    # An empty coordinate set has an identically zero loss: the risk is
+    # exactly zero with zero standard error (numpy refuses to draw from a
+    # (0, 0) covariance, so the samples are empty rows).
+    x = np.zeros(0)
+    cov = np.zeros((0, 0))
+    res = _shrinkage.estimate_risk(x, cov, ["berger", "tan"], n_reps=50, seed=0)
+    assert res.shape == (2, 2)
+    assert np.all(res == 0.0)
+    bayes_res = _shrinkage.estimate_risk(
+        x, cov, "bayes", truth_cov=np.zeros((0, 0)), n_reps=50, seed=0
+    )
+    assert bayes_res.shape == (2,)
+    assert np.all(bayes_res == 0.0)
 
 
 def test_estimate_risk_berger_beats_identity():

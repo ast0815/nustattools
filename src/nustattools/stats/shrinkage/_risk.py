@@ -76,6 +76,26 @@ def _normalize_estimators(
     raise TypeError(_ESTIMATOR_ERROR)
 
 
+def _draw_normal(
+    gen: np.random.Generator,
+    mean: NDArray[Any],
+    cova: NDArray[Any],
+    size: int,
+) -> NDArray[Any]:
+    """Draw ``size`` samples from ``N(mean, cova)`` as rows of ``(size, p)``.
+
+    An empty problem (``p == 0``) draws nothing: numpy's
+    :meth:`numpy.random.Generator.multivariate_normal` refuses a ``(0, 0)``
+    covariance, but the samples are simply empty rows and the risk machinery
+    treats the loss of an empty vector as exactly zero.
+
+    """
+
+    if mean.shape[-1] == 0:
+        return np.empty((size, 0))
+    return gen.multivariate_normal(mean, cova, size=size)
+
+
 def estimate_risk(
     theta: ArrayLike,
     cov: ArrayLike,
@@ -201,15 +221,15 @@ def estimate_risk(
 
     gen = np.random.default_rng(seed)
     if truth_cov is None:
-        x = gen.multivariate_normal(theta_arr, cova, size=n_reps)
+        x = _draw_normal(gen, theta_arr, cova, n_reps)
         theta_used = theta_arr
     else:
         truth_cova = _validate_sympd(truth_cov, (p, p), "truth_cov")
         # Constant data covariance: draw the noise and the true-mean offsets
         # independently and add them, so the truth and the data vary jointly
         # within the same n_reps budget.
-        truth_off = gen.multivariate_normal(np.zeros(p), truth_cova, size=n_reps)
-        noise = gen.multivariate_normal(np.zeros(p), cova, size=n_reps)
+        truth_off = _draw_normal(gen, np.zeros(p), truth_cova, n_reps)
+        noise = _draw_normal(gen, np.zeros(p), cova, n_reps)
         theta_used = theta_arr + truth_off
         x = theta_used + noise
 

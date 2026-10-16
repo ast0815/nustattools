@@ -270,6 +270,12 @@ def matmul(
     if not np.all(np.isfinite(aa)):
         msg = "A must contain only finite values."
         raise ValueError(msg)
+    if p == 0:
+        # An empty problem has no coordinates: the affine map
+        # delta = offset + A (x - offset) is the input itself.  The offset is
+        # validated here because the downstream solvers are never reached.
+        _validate_offset(offset, p)
+        return xa.copy()
     if not _is_positive_definite(qa):
         # A singular loss admits no canonical frame: whitening against it
         # would mean inverting it.  The plain transformation does not need

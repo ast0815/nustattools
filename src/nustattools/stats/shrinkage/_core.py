@@ -616,15 +616,31 @@ def _estimate_pd(
     already the loss-free complement residual, so the preset scale reflects
     that reduced problem.
 
+    An empty problem (``p == 0``) is short-circuited to the input after the
+    common validation (gamma specification, dirs, offset) and before any
+    frame construction, so nothing downstream may assume non-empty input --
+    and conversely every helper below this point may rely on ``p >= 1``.
+
     """
 
     xa = np.asarray(x, dtype=float)
     cova = np.asarray(cov, dtype=float)
     qa = np.asarray(q, dtype=float)
     p = qa.shape[0]
+    # Validate dirs and the offset up front, before the empty-problem
+    # short-circuit below: every entry point reports the same message whether
+    # or not the problem has coordinates.
+    o = _validate_offset(offset, p)
+    dirs_cols = None if dirs is None else _validate_dirs(dirs, p)
+    if p == 0:
+        # An empty problem has no coordinates: the input is the only possible
+        # estimate.  Every input (the gamma specification is validated in
+        # _estimate, dirs and the offset above) has been checked, and nothing
+        # downstream -- frame construction and the canonical estimators
+        # included -- is ever reached with empty input.
+        return xa.copy()
     b, binv, d, pi = _canonical_frame(cova, qa, prior_cov)
     x_star = xa @ b.T
-    o = _validate_offset(offset, p)
     offset_star = np.zeros(p) if o is None else o @ b.T
     y = x_star - offset_star
     # A named preset or callable prior scale is resolved per observation: each
@@ -647,7 +663,7 @@ def _estimate_pd(
             kwargs["pi"] = pi
         delta_star = canonical_estimator(y, d, **kwargs) + offset_star
     else:
-        v = b @ _validate_dirs(dirs, p)
+        v = b @ dirs_cols
         kept, eta, d_perp, l2, pmat = _reduce_dirs(y, np.diag(d), v)
         # The reduced problem's prior, restricted to the residual subspace in
         # the orthonormal residual basis l2.  The data residuals (I - P) y
