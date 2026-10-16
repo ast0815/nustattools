@@ -12,7 +12,7 @@ build:
     python: "3.11"
   jobs:
     pre_build:
-      - sphinx-apidoc -o docs/api/ src/
+      - sphinx-apidoc -o docs/api/ --separate src/
 
 sphinx:
   configuration: docs/conf.py

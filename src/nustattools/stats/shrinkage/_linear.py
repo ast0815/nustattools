@@ -1,0 +1,308 @@
+"""Linear-transformation estimators in canonical form.
+
+This private module implements the :func:`matmul` linear-transformation
+estimator, which applies an arbitrary user-supplied matrix in the original
+coordinates, together with its canonical-form implementation
+(:func:`_matmul_canonical`) and the dominating-improvement helper
+(:func:`_enhance_canonical`).
+
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+from ._core import _canonical_frame, _estimate
+from ._validate import _is_positive_definite, _validate, _validate_offset
+
+
+def _matmul_canonical(
+    y: NDArray[Any],
+    _d: NDArray[Any],
+    *,
+    A: NDArray[Any],
+) -> NDArray[Any]:
+    """Matrix multiply in canonical form.
+
+    ``A`` has shape ``(p, p)`` and is the user-supplied matrix transformed to
+    canonical coordinates (:math:`A^* = B A B^{-1}`), applied to the centered
+    canonical data ``y`` as :math:`\\delta = A y`.
+
+    """
+
+    return cast(NDArray[Any], y @ A.T)
+
+
+# Relative tolerance for the isotropic-variance shortcut below.  The gate must
+# be relative: an absolute floor would make "are the canonical variances
+# isotropic?" depend on the unit system, so the same standardized problem could
+# either enforce or skip condition (91) depending on the scale of ``d``.
+_ENHANCE_ISOTROPY_RTOL = 1e-9
+
+_ENHANCE_CONDITION_FAILED = (
+    "`enhance=True` requires the Eldar (2006) dominance condition "
+    "`lambda_max(D^{-1/2} (D (I - A^*)^T (I - A^*) D)^{1/2} D^{-1/2}) <= 1` "
+    "to hold in the canonical coordinates (eq. (91)). It does not for "
+    "this A, so the analytical improvement is not guaranteed to "
+    "dominate and is not applied."
+)
+
+
+def _enhance_canonical(g: NDArray[Any], d: NDArray[Any]) -> NDArray[Any]:
+    """Dominating linear improvement of ``g`` in the canonical coordinates.
+
+    Applies the closed-form improvement of [Eldar2006]_ (Theorem 9) to the
+    canonical ``(p, p)`` matrix ``g`` whose coordinates have canonical
+    variances ``d``.  Writing :math:`E = (I - g)^T (I - g)` for the loss
+    matrix of the bias and :math:`D = \\operatorname{diag}(d)` for the
+    canonical covariance, it returns
+
+    .. math::
+
+        g^* = I - (D E D)^{1/2}\\, D^{-1},
+
+    where a positive-semidefinite square root is taken.  Pointwise
+    :math:`(I - g^*)^T (I - g^*) = E`, so the bias term is left unchanged
+    while the variance :math:`\\operatorname{tr}(g D g^T)` is not increased
+    provided the dominance condition
+
+    .. math::
+
+        \\lambda_{\\max}\\left(D^{-1/2} (D E D)^{1/2} D^{-1/2}\\right) \\le 1
+
+    (eq. (91)) holds.  When the canonical variances are isotropic (``cov``
+    proportional to :math:`Q^{-1}`) the construction reduces to the classical
+    improvement of [Cohen1966]_ (Theorem 2.1), :math:`I - E^{1/2}`, which
+    dominates unconditionally, so the condition is not enforced there.
+
+    Parameters
+    ----------
+    g : numpy.ndarray
+        The canonical transformation matrix of shape ``(p, p)``.
+    d : numpy.ndarray
+        The canonical variances of shape ``(p,)`` (usually ordered decreasing).
+
+    Returns
+    -------
+    g_enh : numpy.ndarray
+        The improved matrix of shape ``(p, p)``.
+
+    Raises
+    ------
+    ValueError
+        If the canonical variances are genuinely heteroscedastic and the
+        dominance condition (91) of [Eldar2006]_ fails.
+
+    """
+
+    p = g.shape[0]
+    c = np.eye(p) - g
+    a = c.T @ c
+    evals, evecs = np.linalg.eigh(np.diag(d) @ a @ np.diag(d))
+    s = (evecs * np.sqrt(np.maximum(evals, 0.0))) @ evecs.T
+    if np.ptp(d) > _ENHANCE_ISOTROPY_RTOL * float(np.max(d)):
+        # Condition (91): lambda_max(D^{-1/2} (D A D)^{1/2} D^{-1/2}) <= 1,
+        # the D-weighted analogue of lambda_max(A) <= 1 in the isotropic case.
+        # Skipping this check for isotropic ``d`` is deliberate: there the
+        # condition degenerates to ``||I - g||_2 <= 1``, which is not what
+        # Cohen (1966) needs, so the construction dominates unconditionally.
+        winv = np.diag(1.0 / np.sqrt(d))
+        cond = np.linalg.eigvalsh(winv @ s @ winv)[-1]
+        if cond > 1.0 + 1e-9:
+            raise ValueError(_ENHANCE_CONDITION_FAILED)
+    return cast(NDArray[Any], np.eye(p) - s @ np.diag(1.0 / d))
+
+
+def _affine_map(
+    x: NDArray[Any], a: NDArray[Any], offset: ArrayLike | None
+) -> NDArray[Any]:
+    """Apply ``delta = offset + A (x - offset)`` without a canonical frame.
+
+    The canonical frame used for the positive-definite loss cancels out of
+    this expression exactly, so a singular loss -- which admits no such frame
+    -- can be handled by the plain affine map.  The ``offset`` shape and
+    finiteness checks are shared with the solvers via
+    :func:`~nustattools.stats.shrinkage._validate._validate_offset`.
+
+    """
+
+    o = _validate_offset(offset, x.shape[-1])
+    if o is None:
+        return cast(NDArray[Any], x @ a.T)
+    return cast(NDArray[Any], o + (x - o) @ a.T)
+
+
+def matmul(
+    x: ArrayLike,
+    cov: ArrayLike | None = None,
+    *,
+    Q: ArrayLike | None = None,
+    A: ArrayLike,
+    offset: ArrayLike | None = None,
+    dirs: ArrayLike | None = None,
+    enhance: bool = False,
+) -> NDArray[Any]:
+    """Apply a user-specified linear transformation to the data.
+
+    Computes :math:`\\vec \\delta = \\vec o + A (\\vec x - \\vec o)` where
+    :math:`\\vec o` is the ``offset``: like the shrinkage target of the other
+    estimators, it shifts the coordinate zero, so the point is added back after
+    applying ``A``.  With the default offset of zero the estimator is the plain
+    linear map :math:`\\vec \\delta = A \\vec x`.
+
+    ``A`` has shape ``(p, p)`` and need not have any special properties (e.g.
+    invertibility, symmetry, or positive-definiteness). Ensuring it does
+    something useful is the user's responsibility.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed data.  A single vector of shape ``(p,)`` or a stack of
+        observations of shape ``(..., p)``.  The transformation is applied to
+        each observation over the last axis.
+    cov : array_like, default=None
+        The known covariance matrix of ``x``, of shape ``(p, p)``.  Must be
+        symmetric and positive definite.  Defaults to the identity matrix.
+    Q : array_like, default=None
+        The known loss matrix, of shape ``(p, p)``.  May be positive
+        semi-definite: the plain transformation does not depend on the loss
+        and is computed without a canonical frame (see *Notes*), so a
+        singular ``Q`` behaves exactly like any other.  Must be positive
+        definite when ``enhance=True``.  Defaults to the identity.
+    A : array_like
+        The transformation matrix, of shape ``(p, p)``.  Must contain only
+        finite values.
+    offset : array_like, default=None
+        The point of shape ``(p,)`` the transformation is applied around, i.e.
+        it shifts the coordinate zero like the shrinkage target of the other
+        estimators.  It is subtracted from ``x`` before applying ``A`` and
+        added back afterwards.  Defaults to zero.
+    dirs : array_like, default=None
+        Not supported.  Must be ``None``; passing a value raises
+        :class:`ValueError`.
+    enhance : bool, default=False
+        If ``True``, replace ``A`` by a linear estimator that dominates it in
+        the canonical coordinates (the construction of [Eldar2006]_,
+        Theorem 9): it leaves the bias term unchanged while not increasing the
+        variance, provided a dominance condition holds.  See *Notes*.
+
+    Returns
+    -------
+    delta : numpy.ndarray
+        The transformed estimate, with the same shape as ``x``.
+
+    Raises
+    ------
+    ValueError
+        If ``dirs`` is not ``None``; if ``A`` is not a finite ``(p, p)``
+        matrix; if ``offset`` has the wrong shape; if ``enhance=True`` while
+        ``Q`` is not positive definite; or if the dominance condition of
+        *Notes* fails for a heteroscedastic problem.
+
+    Notes
+    -----
+    With a positive semi-definite ``Q`` and ``enhance=False`` no canonical
+    frame is built: ``Q`` would have to be inverted to whiten against it.
+    None is needed, because the frame cancels out of
+    :math:`\\vec\\delta = \\vec o + A(\\vec x - \\vec o)` exactly, so the
+    transformation is applied directly in the original coordinates and gives
+    the documented result for any ``Q``.
+
+    ``enhance`` replaces :math:`A^*` in the canonical coordinates by the
+    dominating linear estimator of [Eldar2006]_ (Theorem 9).  Writing :math:`D
+    = \\operatorname{diag}(d)` for the diagonal canonical covariance of the
+    coordinates and :math:`E = (I - A^*)^T (I - A^*)` for the loss matrix of
+    the bias, it returns
+
+    .. math::
+
+        A_{\\mathrm{enh}} = I - (D E D)^{1/2}\\, D^{-1}.
+
+    Pointwise,
+
+    .. math::
+
+        (I - A_{\\mathrm{enh}})^T (I - A_{\\mathrm{enh}}) = E,
+
+    so the bias term :math:`\\theta^T E \\theta` is left unchanged for every
+    true mean :math:`\\theta` while the variance
+    :math:`\\operatorname{tr}(A_{\\mathrm{enh}} D A_{\\mathrm{enh}}^T)` is not
+    increased whenever the dominance condition holds:
+
+    .. math::
+
+        \\lambda_{\\max}\\left(D^{-1/2} (D E D)^{1/2} D^{-1/2}\\right) \\le 1
+        \\qquad \\text{(Eldar 2006, eq. (91))}.
+
+    Under this condition the estimate dominates :math:`A` in the quadratic
+    risk.  When the canonical variances are isotropic (``cov`` proportional to
+    :math:`Q^{-1}`) the construction reduces to the classical improvement of
+    [Cohen1966]_ (Theorem 2.1), :math:`I - E^{1/2}`, which dominates
+    unconditionally, so the condition is not enforced.  For a genuinely
+    heteroscedastic problem with the condition violated, ``enhance=True``
+    raises :class:`ValueError` instead of silently degrading the estimate. When
+    :math:`A^*` is symmetric in the canonical coordinates with all eigenvalues
+    in :math:`[0, 1]` (a shrinkage kernel), ``enhance`` is a no-op *only* if
+    :math:`A^*` commutes with :math:`D`.  Conversely, an :math:`A` that is
+    symmetric in the *original* coordinates and commutes with ``cov`` -- in
+    particular any symmetric :math:`A` with the default ``cov = I``, such as
+    a shrinkage kernel built in that basis -- is a fixed point of the
+    construction: when the condition holds ``enhance`` returns it unchanged,
+    and when it does not it raises as above. Otherwise the construction still
+    reduces its variance in the :math:`D`-metric.
+
+    """
+
+    if dirs is not None:
+        msg = "matmul does not support dirs; pass dirs=None."
+        raise ValueError(msg)
+    aa = np.asarray(A, dtype=float)
+    if aa.ndim != 2:
+        msg = f"A must be a 2-D matrix, got {aa.ndim}-D."
+        raise ValueError(msg)
+    xa, cova, qa, p = _validate(x, cov, Q)
+    if aa.shape != (p, p):
+        msg = f"A must have shape ({p}, {p}), got {aa.shape}."
+        raise ValueError(msg)
+    if not np.all(np.isfinite(aa)):
+        msg = "A must contain only finite values."
+        raise ValueError(msg)
+    if p == 0:
+        # An empty problem has no coordinates: the affine map
+        # delta = offset + A (x - offset) is the input itself.  The offset is
+        # validated here because the downstream solvers are never reached.
+        _validate_offset(offset, p)
+        return xa.copy()
+    if not _is_positive_definite(qa):
+        # A singular loss admits no canonical frame: whitening against it
+        # would mean inverting it.  The plain transformation does not need
+        # one either, because the frame cancels out of
+        # delta = offset + A (x - offset) exactly, so the documented result is
+        # computed directly instead of dying in the Cholesky factorisation.
+        if enhance:
+            msg = (
+                "enhance=True requires a positive definite loss matrix Q: the "
+                "Eldar (2006) improvement is formulated in the canonical "
+                "coordinates, which do not exist for a singular Q.  Pass "
+                "enhance=False, or give a positive definite Q."
+            )
+            raise ValueError(msg)
+        return _affine_map(xa, aa, offset)
+    # The offset shifts the coordinate zero: _estimate (like _estimate_pd for
+    # the shrinkage estimators) centers the canonical data on the offset and
+    # adds it back afterwards, yielding delta = offset + A @ (x - offset).
+    b, binv, d, _pi = _canonical_frame(cova, qa, None)
+    a_star = b @ aa @ binv
+    if enhance:
+        a_star = _enhance_canonical(a_star, d)
+    return _estimate(
+        xa,
+        cov,
+        Q,
+        _matmul_canonical,
+        A=a_star,
+        offset=offset,
+    )
