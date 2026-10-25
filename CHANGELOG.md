@@ -10,8 +10,8 @@ and this project adheres to
 
 ### Removed
 
-- Dropped support for Python 3.8 and 3.9. The minimum required Python version is
-  now 3.10.
+- Dropped support for Python 3.8, 3.9 and 3.10. The minimum required Python
+  version is now 3.11.
 
 ### Added
 
@@ -22,6 +22,11 @@ and this project adheres to
   and sweep of shrinkage risks.
 - `stats.regularize`: regularize a data set towards a model shape.
 - Support for Python 3.14.
+
+### Security
+
+- Pinned `pillow` to `>= 13.0.0` (as a uv constraint) to clear the open Pillow
+  security advisories.
 
 ## [0.8.0]
 
