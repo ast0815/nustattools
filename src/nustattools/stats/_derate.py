@@ -268,10 +268,11 @@ def derate_covariance(
     goodness_of_fit : bool, default=False
         The derating factor for the Goodness of Fit test is different from the
         derating factor for model parameter estimation. If this parameter is
-        set to `True`, The provided model `jacobian` will be used to construct
-        the null space of the model in the data space. This is then used to
-        calculate the necessary derating factor for the Goodness of Fit or
-        Composite Hypothesis test.
+        set to `True`, the provided model `jacobian` will be used to construct
+        the residual space of the generalized least-squares fit (the null
+        space of ``jacobian.T @ inv(S)`` for the assumed covariance `S`) in
+        the data space. This is then used to calculate the necessary derating
+        factor for the Goodness of Fit or Composite Hypothesis test.
 
     Returns
     -------
@@ -321,9 +322,13 @@ def derate_covariance(
         jacobian = np.asarray(jacobian)
 
     if goodness_of_fit:
-        # Calculate base of null space using SVD
-        U, _, _ = svd(jacobian)
-        # First k columns are image space, rest are null space
+        # Residual space of the generalized least-squares fit: the trailing
+        # left singular vectors of cov_0_inv @ A span ker(A.T @ cov_0_inv),
+        # the image of I - P. Using A alone would give the Euclidean
+        # complement of col(A), which differs whenever cov_0 is not
+        # proportional to the identity (#52).
+        U, _, _ = svd(cov_0_inv @ jacobian)
+        # First k columns span the image, the rest the residual space
         k = jacobian.shape[1]
         jacobian = np.asarray(U[:, k:])
 

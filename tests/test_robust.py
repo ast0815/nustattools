@@ -179,6 +179,44 @@ def test_derate_multi_covariance_fit():
     )
 
 
+def _line_units_toy(c: float) -> tuple[np.ndarray, np.ndarray]:
+    """Covariance and Jacobian of two experiments measuring a line.
+
+    Both measure ``y = a + b x`` at four points each, their cross-correlation
+    is unknown. Experiment 2 reports its data in units of ``c``, so its
+    covariance block scales by ``c**2`` and the matching Jacobian rows by
+    ``c``. Neither chi squared nor any p-value depends on ``c``, therefore no
+    derating factor may depend on it either.
+    """
+    x = np.array([0.0, 1.0, 2.0, 3.0, 0.5, 1.5, 2.5, 3.5])
+    scale = np.diag(np.r_[np.ones(4), c * np.ones(4)])
+    cov = scale @ scale
+    cov[:4, 4:] = cov[4:, :4] = np.nan
+    jacobian = scale @ np.column_stack([np.ones(8), x])
+    return cov, jacobian
+
+
+@pytest.mark.parametrize(
+    ("goodness_of_fit", "expected"),
+    [(False, 1.9759), (True, 1.6104)],
+    ids=["parameters", "goodness_of_fit"],
+)
+def test_derate_units_invariance(goodness_of_fit: bool, expected: float) -> None:
+    """The derating factor must not depend on the units of the data (#52)."""
+    cov, jacobian = _line_units_toy(1.0)
+    reference = r.derate_covariance(
+        cov, jacobian=jacobian, goodness_of_fit=goodness_of_fit
+    )
+    assert reference == pytest.approx(expected, abs=1e-3)
+
+    for c in (0.01, 10.0, 100.0):
+        scaled_cov, scaled_jacobian = _line_units_toy(c)
+        derated = r.derate_covariance(
+            scaled_cov, jacobian=scaled_jacobian, goodness_of_fit=goodness_of_fit
+        )
+        assert derated == pytest.approx(reference, rel=1e-6)
+
+
 def test_fitted_fmax():
     fitted = r.FMaxStatistic(k=[7, 13])
     assert fitted.calculate([17, 19]) == 19
