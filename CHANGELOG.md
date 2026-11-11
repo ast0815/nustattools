@@ -23,6 +23,11 @@ and this project adheres to
 - `stats.regularize`: regularize a data set towards a model shape.
 - Support for Python 3.14.
 
+### Fixed
+
+- `derate_covariance(..., goodness_of_fit=True)`: derating factor no longer
+  depends on the units of the data.
+
 ### Security
 
 - Pinned `pillow` to `>= 13.0.0` (as a uv constraint) to clear the open Pillow

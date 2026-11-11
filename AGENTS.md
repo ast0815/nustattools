@@ -18,6 +18,9 @@
 
 # Build/Lint/Test:
 
+- After a fresh clone, initialize the `src/nustattools/stats/gx2` submodule
+  (`git submodule update --init`) — without it, importing `nustattools.stats`
+  fails with `ModuleNotFoundError: nustattools.stats.gx2.functions`.
 - Run all tests: `nox -s tests-3.13`
 - Run all tests with all available Python versions: `nox -s tests`
 - Run single test: `nox -s tests-3.13 -- tests/test_file.py::test_name`
