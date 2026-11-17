@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.9.0]
+
 ### Removed
 
 - Dropped support for Python 3.8, 3.9 and 3.10. The minimum required Python
