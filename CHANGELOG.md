@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.9.1]
+
+### Fixed
+
+- `derate_covariance(..., goodness_of_fit=True)`: derating factor no longer
+  depends on the units of the data.
+
 ## [0.9.0]
 
 ### Removed
