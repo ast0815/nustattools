@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.9.2]
+
+### Fixed
+
+- Fixed an accuracy issue in gx2 quantile calculation.
+
 ## [0.9.1]
 
 ### Fixed
